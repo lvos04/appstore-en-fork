@@ -218,7 +218,9 @@ class FakeHub:
     # B08-002: appcatalogus van de Hub
     apps_mode: str = "dienst"  # dienst | alleen_gebruikers | ontbreekt
     catalog_apps: list[dict[str, Any]] = field(default_factory=list)
-    inventory_state: dict[str, Any] = field(default_factory=dict)  # leeg = vers, status ok, observed_at = nu
+    inventory_state: dict[str, Any] = field(default_factory=dict)  # leeg = vers, status ok, observed_at = meting
+    # tijdstip van de laatste (gesimuleerde) meting: zoals de echte Hub gelijk op elke pagina tot een nieuwe meting
+    inventory_observed_at: str | None = None
     apps_status: int | None = None  # forceer een status op de lijst (bv. 500, 302, 401)
     apps_failures: int = 0  # zoveel keer eerst 503 (herhaalbeleid)
     detail_status: dict[str, int] = field(default_factory=dict)  # runtime_id → status voor de detailroute
@@ -516,9 +518,14 @@ class FakeHub:
         return self._error(404, "not_found")
 
     # -------------------------------------------------------------- appcatalogus (B01-002) voor B08-002
+    def measure_inventory(self) -> str:
+        """Nieuwe meting door de Hub (``app.query``): vanaf nu dit ``observed_at`` op elke pagina."""
+        self.inventory_observed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return self.inventory_observed_at
+
     def _inventory(self) -> dict[str, Any]:
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        base = {"status": "ok", "reason_code": None, "observed_at": now, "verouderd": False}
+        observed = self.inventory_observed_at or self.measure_inventory()
+        base = {"status": "ok", "reason_code": None, "observed_at": observed, "verouderd": False}
         return {**base, **self.inventory_state}
 
     def _apps(self, request: httpx.Request, path: str) -> httpx.Response:

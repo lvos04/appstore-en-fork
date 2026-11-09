@@ -7,7 +7,8 @@ en verzint geen versies of eigenaren; onbekende apps blijven 'onbekend'.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -306,6 +307,55 @@ def test_pagination_is_followed_and_capped(linked: TestClient, hub: FakeHub, wor
     finally:
         hubinventory.MAX_PAGES = monkey
     assert (body["status"], body["reason_code"]) == ("unknown", "inventaris_te_groot")
+
+
+def test_mixed_or_truncated_pages_are_never_used(linked: TestClient, hub: FakeHub, worker_ctx: AppContext) -> None:
+    """Review P1: de Hub pagineert met een offset over zijn laatste meting. Een nieuwe meting tussen twee pagina's of
+    een afgekapte lijst mag nooit tot 'verdwenen' of een andere wijziging leiden (alleen een volledige meting telt)."""
+    seed(hub)
+    hub.apps_page_size = 3
+    assert run_import(linked, hub)["counts"]["nieuw"] == 8
+    before = {n: (r.row_version, r.present) for n, r in rows(worker_ctx).items()}
+
+    def from_page(n: int, change: Callable[[dict[str, Any]], dict[str, Any]]) -> Callable[[dict[str, Any]], Any]:
+        seen = {"pagina": 0}
+
+        def patch(body: dict[str, Any]) -> dict[str, Any]:
+            seen["pagina"] += 1
+            return change(body) if seen["pagina"] >= n else body
+
+        return patch
+
+    # tussen pagina 1 en 2 meet de Hub opnieuw (nog vers, maar een andere meting)
+    hub.apps_body_patch = from_page(2, lambda b: {**b, "inventaris": {**b["inventaris"], "observed_at": _later(b)}})
+    body = run_import(linked, hub)
+    assert (body["status"], body["reason_code"], body["counts"]) == (
+        "unknown",
+        "inventaris_gewijzigd_tijdens_lezen",
+        None,
+    )
+    assert body["gewijzigd"] is False and body["melding_nl"]
+    # een ander totaal op een latere pagina (de lijst veranderde tijdens het lezen)
+    hub.apps_body_patch = from_page(2, lambda b: {**b, "totaal": b["totaal"] + 1})
+    body = run_import(linked, hub)
+    assert (body["status"], body["reason_code"]) == ("unknown", "inventaris_gewijzigd_tijdens_lezen")
+    # afgekapt: de eerste pagina zegt 'geen volgende' terwijl het totaal groter is → de rest nooit als verdwenen zien
+    hub.apps_body_patch = lambda b: {**b, "next_cursor": None}
+    body = run_import(linked, hub)
+    assert (body["status"], body["reason_code"]) == ("unknown", "inventaris_onvolledig")
+    assert body["detail"] == "3 gelezen, totaal 8"
+
+    hub.apps_body_patch = None
+    assert {n: (r.row_version, r.present) for n, r in rows(worker_ctx).items()} == before
+    # zonder storing weer gewoon idempotent
+    again = run_import(linked, hub)
+    assert again["status"] == "ok" and again["counts"]["ongewijzigd"] == 8 and again["gewijzigd"] is False
+
+
+def _later(body: dict[str, Any]) -> str:
+    """Een meettijd één minuut na die van ``body`` (nog vers, maar een andere meting)."""
+    observed = datetime.fromisoformat(str(body["inventaris"]["observed_at"]).replace("Z", "+00:00"))
+    return (observed + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def test_gone_apps_are_never_deleted_and_image_updates_are_tracked(

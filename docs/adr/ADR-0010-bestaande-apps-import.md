@@ -15,6 +15,9 @@
    proxy, antwoordgrootte begrensd (lijst 4 MiB, detail 1 MiB, ≤ 10 pagina's, ≤ 1000 apps), hooguit 3 pogingen bij
    5xx/429/netwerk (§5). Alleen een **volledige, verse** meting (`inventaris.status = ok`, niet verouderd, ≤ 15 min
    oud, niet in de toekomst) wordt verwerkt; anders `unknown` en verandert er **niets** (ook geen "verdwenen").
+   "Volledig" (aangescherpt in de P1-review): de Hub pagineert met een offset over zijn laatste meting, dus elke pagina
+   moet dezelfde `inventaris` en hetzelfde `totaal` melden en het aantal gelezen apps moet gelijk zijn aan `totaal`;
+   anders `inventaris_gewijzigd_tijdens_lezen` of `inventaris_onvolledig` (`unknown`).
 2. **Uitkomsten zijn nooit gesimuleerd succes.** Niet gekoppeld, 403 (de Hub geeft dit niet aan diensten) of 404
    (oude Hub) → `capability_unavailable`; storing, 401, redirect, ongeldig of onvolledig antwoord → `unknown`. Elke
    ronde legt bewijs (`hub_import`), audit en een event vast: `catalog.import.completed` of

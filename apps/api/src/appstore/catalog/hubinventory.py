@@ -13,6 +13,11 @@ antwoordgrootte, hooguit 3 pogingen bij een storing (§5). Alles wat niet klopt 
 
 * niet gekoppeld, of de Hub geeft dit niet aan diensten (403) of kent het niet (404) → ``capability_unavailable``;
 * storing, 401, ongeldig antwoord, verouderde of onvolledige inventaris → ``unknown`` (er verandert dan niets).
+
+Alleen een **volledige lijst uit één meting** telt: de Hub pagineert met een offset over zijn laatste meting, dus elke
+pagina moet dezelfde meting (``inventaris``) en hetzelfde ``totaal`` melden, en het aantal gelezen apps moet gelijk zijn
+aan ``totaal``. Anders ``unknown`` (``inventaris_gewijzigd_tijdens_lezen``/``inventaris_onvolledig``): een mengsel van
+twee metingen of een afgekapte lijst zou apps ten onrechte als verdwenen markeren.
 """
 
 from __future__ import annotations
@@ -70,7 +75,11 @@ REASONS_NL: dict[str, str] = {
     "inventaris_in_toekomst": "De meettijd van de Hub ligt in de toekomst (klokverschil); de meting is niet te vertrouwen.",
     "inventaris_te_groot": "De Hub meldt meer apps dan de appstore in één keer leest; er is niets gewijzigd.",
     "inventaris_gewijzigd_tijdens_lezen": (
-        "De inventaris van de Hub veranderde tijdens het lezen (een app verdween); probeer het opnieuw."
+        "De inventaris van de Hub veranderde tijdens het lezen (nieuwe meting of een app verdween); probeer het "
+        "opnieuw."
+    ),
+    "inventaris_onvolledig": (
+        "De Hub leverde een ander aantal apps dan hij zelf telt; een onvolledige lijst wordt nooit gebruikt."
     ),
 }
 
@@ -149,6 +158,7 @@ class HubInventoryState(_Lenient):
 class HubListPage(_Lenient):
     items: list[HubAppSummary] = Field(max_length=PAGE_LIMIT)
     next_cursor: str | None = Field(default=None, max_length=512)
+    totaal: int | None = Field(default=None, ge=0)
     inventaris: HubInventoryState
 
 
@@ -189,6 +199,13 @@ class _StopError(Exception):
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _snapshot(page: HubListPage) -> tuple[Any, ...]:
+    """Kenmerken van de meting waar een pagina uit komt; moeten op elke pagina gelijk zijn."""
+    inv = page.inventaris
+    observed = _aware(inv.observed_at) if inv.observed_at else None
+    return inv.status, inv.reason_code, observed, inv.verouderd, page.totaal
 
 
 class HubInventoryClient:
@@ -250,7 +267,7 @@ class HubInventoryClient:
             raise _StopError("capability_unavailable", "niet_gekoppeld")
         summaries: list[HubAppSummary] = []
         cursor: str | None = None
-        state: HubInventoryState | None = None
+        first: HubListPage | None = None
         for page_no in range(MAX_PAGES + 1):
             if page_no == MAX_PAGES:
                 raise _StopError("unknown", "inventaris_te_groot", f"meer dan {MAX_PAGES} pagina's")
@@ -262,15 +279,23 @@ class HubInventoryClient:
                 page = HubListPage.model_validate(raw)
             except ValidationError as exc:
                 raise _StopError("unknown", "hub_antwoord_ongeldig", f"lijst: {exc.error_count()} fout(en)") from exc
-            if state is None:
-                state = page.inventaris
+            if first is None:
+                first = page
+            elif _snapshot(page) != _snapshot(first):
+                # de Hub pagineert met een offset over de laatste meting: een nieuwe meting (of een ander totaal)
+                # tussen twee pagina's geeft een mengsel van twee metingen → nooit gebruiken (anders lijken apps
+                # 'verdwenen' die alleen tussen de pagina's verschoven)
+                raise _StopError("unknown", "inventaris_gewijzigd_tijdens_lezen", f"pagina {page_no + 1}")
             summaries.extend(page.items)
             if len(summaries) > MAX_APPS:
                 raise _StopError("unknown", "inventaris_te_groot", f"meer dan {MAX_APPS} apps")
             if not page.next_cursor:
                 break
             cursor = page.next_cursor
-        assert state is not None
+        assert first is not None
+        state = first.inventaris
+        if first.totaal is not None and len(summaries) != first.totaal:
+            raise _StopError("unknown", "inventaris_onvolledig", f"{len(summaries)} gelezen, totaal {first.totaal}")
         observed = self._check_fresh(state, now)
         ids = [s.runtime_id for s in summaries]
         if len(ids) != len(set(ids)):

@@ -12,7 +12,9 @@ een container) loopt alleen via voorstel → policy → goedkeuring → executor
    Hub. De worker doet dit ook elke 15 minuten (`APPSTORE_IMPORT_INTERVAL_S`, 0 = uit) zodra de koppeling bevestigd
    is. Uitkomst `status`:
    - `ok` — register bijgewerkt (`counts`: nieuw, bijgewerkt, ongewijzigd, verdwenen);
-   - `unknown` — storing, verouderde of onvolledige meting: **niets** gewijzigd;
+   - `unknown` — storing, verouderde of onvolledige meting: **niets** gewijzigd. Dat geldt ook als de pagina's van de
+     lijst niet uit één meting komen (`inventaris_gewijzigd_tijdens_lezen`) of als het aantal gelezen apps afwijkt van
+     het `totaal` van de Hub (`inventaris_onvolledig`): zo wordt een app nooit ten onrechte "verdwenen";
    - `capability_unavailable` — niet gekoppeld, of de Hub geeft zijn inventaris niet aan diensten
      (`hub_inventaris_niet_voor_diensten`, zo is het nu bij de Hub) of kent de route niet.
 2. **Bekijken** — `GET /catalog/v1/existing-apps` (standaard alleen aanwezige apps; `alleen_aanwezig=false` toont ook
