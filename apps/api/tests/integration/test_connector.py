@@ -6,11 +6,12 @@ from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, update
+from sqlalchemy import create_engine, select, text, update
 
 from appstore.api.common import AppContext
 from appstore.events import emit
-from appstore.models import OutboxEvent
+from appstore.hublink_store import LinkState
+from appstore.models import CatalogSource, OutboxEvent
 from appstore.timeutil import utcnow
 from appstore.worker import push_outbox, run_once, startup
 from tests.fakehub import FakeHub
@@ -32,9 +33,61 @@ def test_discover_and_health(client: TestClient, linked: FakeHub) -> None:
     assert d["app_id"] == "appstore-en-fork" and d["schema_version"] == "1.0" and d["capabilities"] == ["read"]
     assert {"propose", "apply", "rollback", "stream"} <= set(d["unavailable_capabilities"])
     h = client.get("/connector/v1/health", headers=linked.service_auth()).json()
-    assert h["status"] in ("healthy", "degraded") and {c["name"] for c in h["checks"]} >= {"database", "hub_link"}
+    assert {c["name"] for c in h["checks"]} >= {"database", "schema", "hub_link", "catalog_sources", "outbox"}
     assert all("observed_at" in c for c in h["checks"])
     assert next(c for c in h["checks"] if c["name"] == "hub_link")["status"] == "healthy"
+    # gekoppeld, bevestigd, ingebouwde catalogus gesynchroniseerd, geen dead-letter → pas dan 'healthy'
+    assert {c["name"]: c["status"] for c in h["checks"]} == dict.fromkeys(
+        ("database", "schema", "hub_link", "catalog_sources", "outbox"), "healthy"
+    )
+    assert (h["status"], h["reason_code"]) == ("healthy", "ok")
+
+
+def test_health_total_is_worst_check_and_unknown_is_never_healthy(
+    client: TestClient, linked: FakeHub, worker_ctx: AppContext
+) -> None:
+    """Review P1: het totaal is de slechtste check (healthy < unknown < degraded < down), zoals de statuspagina;
+    een onbekende check mag het totaal nooit 'healthy' laten (contract 1.2 §1, 'onbekend nooit groen')."""
+    svc = linked.service_auth()
+    # een ingeschakelde bron die nog nooit is gesynchroniseerd → onbekend, niet gezond
+    with worker_ctx.sessions() as db:
+        db.execute(update(CatalogSource).values(last_sync_status="never"))
+        db.commit()
+    h = client.get("/connector/v1/health", headers=svc).json()
+    assert (h["status"], h["reason_code"]) == ("unknown", "catalog_sources")
+
+    # gekoppeld maar (nog) niet bevestigd door de Hub → onbekend
+    def unconfirm(st: LinkState) -> LinkState:
+        st.confirmed_at = None
+        return st
+
+    worker_ctx.store.update(unconfirm)
+    h = client.get("/connector/v1/health", headers=svc).json()
+    assert h["status"] == "unknown" and h["reason_code"] in ("hub_link", "catalog_sources")
+    # een mislukte bron (degraded) weegt zwaarder dan onbekend
+    with worker_ctx.sessions() as db:
+        db.execute(update(CatalogSource).values(last_sync_status="failed"))
+        db.commit()
+    h = client.get("/connector/v1/health", headers=svc).json()
+    assert (h["status"], h["reason_code"]) == ("degraded", "catalog_sources")
+
+
+def test_health_schema_behind_is_down(client: TestClient, linked: FakeHub, database_url: str) -> None:
+    """Een openstaande migratie is geen gezonde dienst (zelfde meting als /readyz en de statuspagina)."""
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as conn:
+            current = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            conn.execute(text("UPDATE alembic_version SET version_num = '0001'"))
+        h = client.get("/connector/v1/health", headers=linked.service_auth()).json()
+        schema = next(c for c in h["checks"] if c["name"] == "schema")
+        assert schema["status"] == "down" and "0001" in schema["detail"]
+        assert (h["status"], h["reason_code"]) == ("down", "schema")
+        assert client.get("/readyz").status_code == 503
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE alembic_version SET version_num = :v"), {"v": current})
+        engine.dispose()
 
 
 def test_items_types(client: TestClient, linked: FakeHub) -> None:

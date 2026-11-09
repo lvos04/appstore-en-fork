@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from .. import APP_ID, __version__
 from ..auth import Principal, require, require_service_or_admin
-from ..db import ping
 from ..errors import ApiError
 from ..events import envelope, redact
 from ..hublink_store import LinkState
@@ -33,6 +32,7 @@ from ..timeutil import iso, utcnow
 from .catalog import entry_out, source_out, version_summary
 from .common import check_limit, ctx, decode_cursor, encode_cursor, get_db, tid
 from .existing_apps import decision_summary, existing_out
+from .health import measure
 
 router = APIRouter(prefix="/connector/v1", tags=["connector"])
 DB = Annotated[Session, Depends(get_db)]
@@ -69,11 +69,16 @@ def discover(_: Reader) -> dict[str, Any]:
     }
 
 
-@router.get("/health", summary="Gezondheid (healthy/degraded/down/unknown)")
+#: ernst van een check; het totaal is de slechtste (zoals de statuspagina): onbekend is nooit 'healthy' (contract §1)
+SEVERITY = {"healthy": 0, "unknown": 1, "degraded": 2, "down": 3}
+
+
+@router.get("/health", summary="Gezondheid (healthy/degraded/down/unknown; totaal = slechtste check)")
 def health(request: Request, db: DB, _: Reader) -> dict[str, Any]:
     now = iso(utcnow())
     checks: list[dict[str, Any]] = []
-    db_ok = ping(ctx(request).engine)
+    ready = measure(ctx(request))
+    db_ok = ready.database
     checks.append(
         {
             "name": "database",
@@ -82,6 +87,12 @@ def health(request: Request, db: DB, _: Reader) -> dict[str, Any]:
             "detail": "PostgreSQL bereikbaar" if db_ok else "PostgreSQL niet bereikbaar",
         }
     )
+    if db_ok:
+        schema_status, schema_detail = {
+            "ok": ("healthy", "schema up-to-date"),
+            "verouderd": ("down", f"migratie niet uitgevoerd ({ready.current or 'leeg'} ≠ {ready.head})"),
+        }.get(ready.schema or "", ("unknown", "schemaversie niet leesbaar"))
+        checks.append({"name": "schema", "status": schema_status, "observed_at": now, "detail": schema_detail})
     link = ctx(request).store.read()
     checks.append(
         {
@@ -95,7 +106,7 @@ def health(request: Request, db: DB, _: Reader) -> dict[str, Any]:
             ),
         }
     )
-    if db_ok:
+    if db_ok and ready.schema == "ok":
         failed = (
             db.scalar(
                 select(func.count())
@@ -129,12 +140,13 @@ def health(request: Request, db: DB, _: Reader) -> dict[str, Any]:
                 "detail": f"{dead} event(s) in dead-letter",
             }
         )
+    status = max((c["status"] for c in checks), key=SEVERITY.__getitem__)
     if not db_ok:
-        status, reason = "down", "database_unreachable"
-    elif any(c["status"] == "degraded" for c in checks):
-        status, reason = "degraded", next(c["name"] for c in checks if c["status"] == "degraded")
+        reason = "database_unreachable"
+    elif status == "healthy":
+        reason = "ok"
     else:
-        status, reason = "healthy", "ok"
+        reason = next(c["name"] for c in checks if c["status"] == status)
     return {"status": status, "observed_at": now, "reason_code": reason, "checks": checks}
 
 

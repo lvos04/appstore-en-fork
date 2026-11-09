@@ -2135,7 +2135,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Gezondheid (healthy/degraded/down/unknown)",
+        "summary": "Gezondheid (healthy/degraded/down/unknown; totaal = slechtste check)",
         "tags": [
           "connector"
         ]
