@@ -1,4 +1,4 @@
-# appstore-en-fork installeren als standaard TrueNAS Custom App
+# appstore-en-fork installeren als standaard TrueNAS Custom App (platformcontract 1.2)
 
 **Geen YAML, geen "Install via YAML", geen compose, geen terminal.** De app is één alles-in-één image (ingebouwde
 PostgreSQL 16 op een unix-socket, API en worker) met één poort en één opslagmap.
@@ -17,8 +17,12 @@ PostgreSQL 16 op een unix-socket, API en worker) met één poort en één opslag
 - De image `ghcr.io/lvos04/appstore-en-fork:<versie>` bestaat pas nadat de release-workflow voor tag `v<versie>` is
   gedraaid (`release/digests.json` in de GitHub-release noemt de digest). Zolang die release er niet is, kan deze app
   niet worden geïnstalleerd.
-- GitHub maakt een nieuw pakket eerst **privé**. Eenmalig: GitHub → Packages → `appstore-en-fork` → Package settings →
-  Change visibility → Public.
+- **Publieke image (contract 1.2 §2.1, besluit 3):** na de scan van de volledige historie worden repo en GHCR-pakket
+  publiek; installeren gebruikt dan **geen** registry-login. Tot de zichtbaarheid echt is omgezet, is installeren op
+  een echte NAS NIET GEVALIDEERD (en voor een privé-pakket geblokkeerd).
+- *Alleen als terugvaloptie:* een registry-login in TrueNAS (Apps → Configuration → Manage Container Images /
+  registry-instelling) met een token dat **alleen pakketten mag lezen**. Gedrag met GHCR-tokens is NIET GEVALIDEERD.
+  Zo'n token is een geheim van jou in TrueNAS — nooit in het formulier van de app, een manifest, Git of een log.
 
 ## 1. Dataset
 
@@ -32,18 +36,18 @@ eigen submappen (`postgres`, `secrets`, `backups`) en verder niets.
 |---|---|---|
 | — | Application Name | `appstore-en-fork` |
 | Image Configuration | Repository | `ghcr.io/lvos04/appstore-en-fork` |
-| | Tag | de exacte versie, bv. `0.1.0` — **nooit `latest`**. Wil je de digest vastzetten: `0.1.0@sha256:<digest uit release/digests.json>` |
+| | Tag | **`<versie>@sha256:<digest>`** uit `release/digests.json`, bv. `0.1.0@sha256:…` (64 hex) — zo draait precies de geteste image (contract 1.2 §2.2). Weigert het formulier het `@`-teken, vul dan alleen de exacte versie in (bv. `0.1.0`); de Hub controleert de digest na installatie (NIET GEVALIDEERD op een echte NAS). **Nooit `latest`.** |
 | | Pull Policy | *Pull the image if it is not already present on the host* (`missing`) |
 | Container Configuration | Hostname, Entrypoint, Command | leeg laten |
 | | Timezone | jouw tijdzone (uit de keuzelijst) |
-| | Environment Variables | **leeg laten** (geen verplichte variabelen; nooit wachtwoorden of tokens hier) |
+| | Environment Variables | Geen verplichte variabelen. Alleen om te koppelen (aanbevolen, zie stap 3): `HUB_URL` = `http://<adres-van-de-Hub>:<poort>` (zonder pad), `HUB_ENROLLMENT_TOKEN` = het **eenmalige** token uit de Hub (`enr_…`, 60 min geldig) en `HUB_KEY_FINGERPRINT` = de vingerafdruk die de Hub erbij toont (`XXXX-XXXX-XXXX-XXXX`). Nooit wachtwoorden of andere geheimen. |
 | | Restart Policy | *Unless Stopped* |
 | | Disable Builtin Healthcheck | **uit** (de image heeft een eigen healthcheck op `/readyz`) |
 | | TTY / Stdin | uit |
 | | Devices | geen |
 | Security Context Configuration | Privileged | **uit** |
 | | Capabilities → Add | niets toevoegen |
-| | Custom User | **uit** (de app start als root alléén om `/appdata` aan 568 te geven en draait daarna als 568 zonder capabilities) |
+| | Custom User | **uit** (de app start als root alléén om `/appdata` aan 568 te geven; daarna draaien alle processen — ook PID 1 — als 568 zonder capabilities). Het formulier zet zelf geen *no-new-privileges* en geen *cap_drop*; de image zet `PR_SET_NO_NEW_PRIVS` zelf (contract 1.2 §2.2). |
 | Network Configuration | Host Network | **uit** |
 | | Ports → Add | Port Bind Mode *Publish*, Host Port `30430` (voorstel; kies een vrije poort als die bezet is), Container Port `30430`, Protocol *TCP*, Host IPs leeg |
 | | Networks / Custom DNS Setup | leeg laten |
@@ -60,12 +64,22 @@ eigen submappen (`postgres`, `secrets`, `backups`) en verder niets.
 **Install.** De eerste start duurt ongeveer 10–20 seconden (database aanmaken). Daarna *Running* en na de healthcheck
 *Healthy*.
 
-## 3. Openen en koppelen
+## 3. Openen en koppelen (contract 1.2 §3.2, §3.7)
 
-Open `http://<adres-van-je-NAS>:<Host Port>`. De statuspagina toont de status en **Niet gekoppeld**. Maak in de Hub
-(Instellingen → Diensten) een koppelcode voor `appstore-en-fork`, vul op de statuspagina het Hub-adres en de koppelcode in
-en kies **Koppelen**. Daarna toont de pagina **Gekoppeld** (alleen de laatste 4 tekens van het service-token).
-Installeert de Hub de app zelf, dan geeft hij `HUB_URL` en een eenmalig token mee en koppelt de app automatisch.
+Open `http://<adres-van-je-NAS>:<Host Port>`. De statuspagina toont de status en **Niet gekoppeld**.
+
+- **Aanbevolen (geen wedloop):** maak in de Hub (Instellingen → Diensten) een enrollment-token voor
+  `appstore-en-fork` en zet `HUB_URL`, `HUB_ENROLLMENT_TOKEN` en `HUB_KEY_FINGERPRINT` in het formulier (stap 2). De
+  app koppelt zichzelf, controleert de vingerafdruk en bevestigt bij de Hub. Installeert de Hub de app zelf, dan
+  geeft hij die drie waarden altijd mee.
+- **Alternatief, alleen zolang de app nog nooit gekoppeld is:** maak in de Hub een **koppelcode** en vul op de
+  statuspagina het Hub-adres, de koppelcode (`XXXX-XXXX-XXXX`) én de **Hub-vingerafdruk** in die de Hub ernaast toont.
+  Na de eerste koppeling verdwijnt dit formulier.
+
+Daarna toont de pagina **Gekoppeld**, de Hub-vingerafdruk (vergelijk die met de Hub-UI) en alleen de laatste 4 tekens
+van het service-token. **Ontkoppelen of opnieuw koppelen gaat daarna alleen via de Hub** (of met een nieuw
+`HUB_ENROLLMENT_TOKEN` in het formulier: wie het formulier kan wijzigen is TrueNAS-beheerder). Er is geen
+"ontkoppelen" op de statuspagina.
 
 ## Updaten en terugdraaien
 
@@ -86,3 +100,8 @@ Installeert de Hub de app zelf, dan geeft hij `HUB_URL` en een eenmalig token me
 | `back-up vóór de databasemigratie is mislukt` | Maak ruimte vrij op de dataset of zet de vorige tag terug; de database is niet aangeraakt. |
 | Poort bezet bij opslaan | Kies een andere vrije Host Port (Container Port blijft `30430`). |
 | Image ophalen mislukt (`denied`) | Het GHCR-pakket is nog privé (stap 0) of de release bestaat nog niet. |
+| Formulier weigert de tag met `@sha256:` | Vul alleen de exacte versie in; de Hub leest de digest na installatie terug. |
+| Statuspagina: "De sleutelset-vingerafdruk van de Hub klopt niet" | De ingevulde vingerafdruk (of `HUB_KEY_FINGERPRINT`) past niet bij de Hub op dat adres: controleer het adres en neem de vingerafdruk opnieuw over uit de Hub-UI. Er is niets opgeslagen. |
+| Statuspagina: "Het token is na 60 minuten niet gelukt" of "onbekend, verlopen of al gebruikt" | Maak in de Hub een nieuw enrollment-token en zet het in `HUB_ENROLLMENT_TOKEN`; een gebruikt of geweigerd token wordt nooit opnieuw geprobeerd. |
+| Statuspagina: "Koppeling ingetrokken door de Hub" | De app vertrouwt de Hub niet meer (fail-closed) en houdt zijn eigen data; opnieuw koppelen gaat via de Hub. |
+| `HUB_URL wordt niet gebruikt` in de app-log | Het adres heeft een pad, is een loopback-/link-local-adres of bevat inloggegevens; gebruik `http(s)://adres[:poort]`. |

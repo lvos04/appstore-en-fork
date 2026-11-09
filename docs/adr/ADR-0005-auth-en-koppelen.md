@@ -1,6 +1,10 @@
 # ADR-0005 — Authenticatie en koppelen met de Hub
 
-- **Status:** aangenomen · 2026-11-09 · Sim-getest tegen een Hub-simulator, niet tegen de echte Hub
+- **Status:** **vervangen** door [ADR-0008](ADR-0008-contract-1-2.md) (platformcontract 1.2, 2026-11-09). Punten 1–4
+  hieronder gelden niet meer: geen `capabilities` in het verzoek, opslag in `/appdata/secrets/hub-link.json` in plaats
+  van de database, de Hub meldt zich met een dienst-JWT (het service-token wordt inkomend geweigerd) en sleutels zijn
+  gepind (geen JWKS-cache via HTTP). Punt 5 (rollen) en 6 (statuspagina, nu strenger) blijven in aangescherpte vorm.
+  Oorspronkelijk: aangenomen · 2026-11-09 · Sim-getest tegen een Hub-simulator, niet tegen de echte Hub
 - **Context:** contract §3/§4 noemt enrollment, service-token, Hub-JWT via JWKS, maar niet het exacte
   verzoek/antwoord van `POST /api/v1/services/enroll`, de naam van de omgevingsvariabele voor het token, en welk token
   de Hub gebruikt als hij een dienst aanroept.

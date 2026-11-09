@@ -15,4 +15,20 @@
 - B08-002 (alleen-lezen kern): `POST /catalog/v1/import/preview` herkent bestaande apps aan de platformlabels,
   catalogusapp of image; een niet-ondersteunde app blijft unmanaged en de import plant nooit een actie. Het vastleggen
   van de eigenaarbevestiging is nog niet gebouwd (`capability_unavailable`).
+- **Platformcontract 1.2** (ADR-0008):
+  - Manifeststandaard: `network.joins_platform_network` en `custom_app.ports` vervallen (overgang met
+    `deprecated_field`, fout in `--strict`), poorten alleen uit `network.ports`, GPU als optionele parameter (`gpu`,
+    D08, begrensd door `privileges.gpu`), digest-readback in de preview en `version_unavailable` bij een verdwenen
+    catalogus- of `ix-app`-versie.
+  - Koppelen: enroll-verzoek en -antwoord exact §3.3 met sleutelset-vingerafdruk (`HUB_KEY_FINGERPRINT`) en
+    bevestiging via `services/self`; koppelstatus in `/appdata/secrets/hub-link.json` (eenmalig overgezet uit de
+    database); herstart halverwege, intrekking (pas na 401 op `services/self`), rotatie van het service-token en
+    ondertekende sleutelrotaties.
+  - Inkomend alleen Hub-JWT's tegen gepinde sleutels (gebruiker of dienst-JWT van de Hub); het service-token wordt
+    geweigerd; `token_use` en `jti` verplicht met een replaycache in de database; vaste `reason`-waarden.
+  - Statuspagina: formulier alleen vóór de eerste koppeling, met verplichte vingerafdruk, `Origin`-controle en
+    5 pogingen/15 min per bron-IP + 20 per dienst. `GET /catalog/v1/hub-link` → `GET /connector/v1/hub-link` +
+    `POST /connector/v1/hub-link/unlink`.
+  - Image: geen `dumb-init` meer; de bewaker is PID 1 en draait, zoals alle processen, als 568 zonder capabilities
+    met `no_new_privs`.
 - Status: Sim-getest; NIET GEVALIDEERD op een echte NAS.

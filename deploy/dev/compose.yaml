@@ -18,3 +18,4 @@ services:
       # optioneel: koppelen met een lokale Hub in ontwikkeling
       HUB_URL: ${HUB_URL:-}
       HUB_ENROLLMENT_TOKEN: ${HUB_ENROLLMENT_TOKEN:-}
+      HUB_KEY_FINGERPRINT: ${HUB_KEY_FINGERPRINT:-}
