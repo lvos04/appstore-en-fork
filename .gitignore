@@ -11,8 +11,11 @@ venv/
 htmlcov/
 build/
 dist/
-# Node (niet gebruikt in deze repo, voor de zekerheid)
+# Node (alleen tests/ui: Playwright + axe-core)
 node_modules/
+/tests/ui/uit/
+/tests/ui/test-results/
+/tests/ui/playwright-report/
 # lokale data en geheimen
 /appdata/
 /.appdata/
@@ -20,4 +23,6 @@ node_modules/
 !.env.example
 secrets/
 # test-artefacten
+# in de image staat de Peil-kopie naast het pakket; in de broncode alleen in design/ontwerptaal/
+/apps/api/src/appstore/ontwerptaal/
 /tests/e2e/.artifacts/

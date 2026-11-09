@@ -1,0 +1,14 @@
+{
+  "name": "appstore-en-fork-statuspagina-ui",
+  "private": true,
+  "description": "Statuspagina in Peil: axe-core, overloop (320 px), CSP, aanraakdoelen en schermafdrukken over de echte uitvoer van de app. Eerst: python tests/ui/genereer_toestanden.py",
+  "scripts": {
+    "test": "playwright test",
+    "schermafdrukken": "SCHERMAFDRUKKEN=1 playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.65.0",
+    "axe-core": "4.14.0"
+  }
+}
