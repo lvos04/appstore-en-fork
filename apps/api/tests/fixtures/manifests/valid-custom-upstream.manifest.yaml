@@ -1,0 +1,61 @@
+# TESTFIXTURE — fictieve upstream-app; image, digest en versies zijn testwaarden, geen catalogusgegevens.
+manifest_version: "1"
+app_id: voorbeeld-web
+name: Voorbeeld web
+owner_repo: lvos04/appstore-en-fork
+category: other
+description_nl: Fictieve upstream-app voor de tests van de manifestvalidator.
+version: "1.27.3"
+install: {method: custom_app}
+image:
+  repository: docker.io/library/nginx
+  tag: "1.27.3"
+  digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+custom_app:
+  ports:
+    - {name: web, container_port: 8080, host_port: {param: web_port}, protocol: tcp}
+  storage:
+    - {name: config, type: host_path, host_path: {param: config_path}}
+    - {name: media, type: host_path, host_path: {param: media_path}, read_only: true}
+    - {name: cache, type: tmpfs, tmpfs_size_mib: 256}
+  env:
+    - {name: LOG_LEVEL, value: info}
+    - {name: PUBLIC_URL, value_from: {param: public_url}}
+  resources: {cpus: 2, memory_mib: 1024}
+  gpu: intel_render
+  run_as: {mode: custom, user: 568, group: 568}
+  timezone: {param: timezone}
+  restart_policy: unless-stopped
+  portal: {port: web, scheme: http, path: /, name: Web UI}
+parameters:
+  - {name: web_port, type: port, source: default, default: 30999, required: true, description_nl: Hostpoort voor de webinterface.}
+  - {name: config_path, type: path, source: dataset_picker, dataset_role: voorbeeld_config, decision: D02, required: true, description_nl: Dataset voor configuratie.}
+  - {name: media_path, type: path, source: dataset_picker, dataset_role: media_library, decision: D02, required: true, description_nl: Mediadataset (alleen lezen).}
+  - {name: public_url, type: url, source: wizard, decision: D03, required: true, description_nl: Adres waarop de app bereikbaar is.}
+  - {name: timezone, type: timezone, source: wizard, required: true, description_nl: Tijdzone van de NAS.}
+storage:
+  - {name: config, mount: /config, kind: config, required_dataset_role: voorbeeld_config}
+  - {name: media, mount: /media, kind: media, required_dataset_role: media_library}
+  - {name: cache, mount: /cache, kind: scratch, required_dataset_role: null}
+network:
+  ports:
+    - {name: web, container_port: 8080, host_port: {param: web_port}, protocol: tcp}
+  host_network: false
+  host_network_reason: null
+  joins_platform_network: false
+privileges: {privileged: false, cap_add: [], devices: [], gpu: intel_render}
+privilege_reason: Hardware-transcodering via de Intel-GPU (/dev/dri).
+healthcheck: {type: http, path: /healthz, port: web, interval_s: 30, timeout_s: 5, retries: 3}
+backup:
+  db_export: {method: none}
+  snapshot_datasets: [config]
+  rpo: PT24H
+  rto: PT4H
+dependencies: []
+sso: native
+risk: {install: R2, update: R2, uninstall: R2}
+upgrade: {migrations: false, tag_only_rollback_safe: true}
+decisions_required: [D02, D03]
+docs: [B08_APPSTORE_LIFECYCLE]
+validation_status: unvalidated
+compatibility: {truenas_min_version: "24.10.2.2", truenas_max_version: null, ix_app_min_version: "1.2.0"}

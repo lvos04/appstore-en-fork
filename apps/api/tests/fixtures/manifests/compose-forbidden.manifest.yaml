@@ -1,0 +1,7 @@
+# TESTFIXTURE — compose/YAML-installatie is verboden.
+manifest_version: "1"
+app_id: compose-app
+name: Compose app
+install: {method: compose}
+services:
+  web: {image: "nginx:latest"}

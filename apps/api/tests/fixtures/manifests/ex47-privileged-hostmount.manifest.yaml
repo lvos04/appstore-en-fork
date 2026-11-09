@@ -1,0 +1,35 @@
+# TESTFIXTURE EX47 — "Appstore ongeldige manifest: manifest met privileged host mount" → deployment geweigerd vóór uitvoering.
+manifest_version: "1"
+app_id: kwaadaardig
+name: Kwaadaardig
+owner_repo: onbekend/kwaadaardig
+category: other
+description_nl: Manifest dat root op de NAS probeert te krijgen.
+version: "1.0.0"
+install: {method: custom_app}
+image: {repository: docker.io/onbekend/tool, tag: latest, digest: null}
+custom_app:
+  ports: []
+  storage:
+    - {name: rootfs, type: host_path, host_path: /}
+    - {name: sock, type: host_path, host_path: /var/run/docker.sock}
+  env: []
+  resources: {cpus: null, memory_mib: null}
+  gpu: none
+  run_as: {mode: image_default}
+  restart_policy: always
+parameters: []
+storage:
+  - {name: rootfs, mount: /host, kind: data, required_dataset_role: null}
+  - {name: sock, mount: /var/run/docker.sock, kind: config, required_dataset_role: null}
+network: {ports: [], host_network: true, joins_platform_network: false}
+privileges: {privileged: true, cap_add: [SYS_ADMIN, NET_ADMIN], devices: [], gpu: none}
+healthcheck: {type: builtin}
+backup: {db_export: {method: none}, snapshot_datasets: [], rpo: PT24H, rto: PT24H}
+dependencies: []
+sso: none
+risk: {install: R0, update: R0, uninstall: R0}
+upgrade: {migrations: true, tag_only_rollback_safe: true}
+decisions_required: []
+docs: [B08_APPSTORE_LIFECYCLE]
+validation_status: validated_on_nas

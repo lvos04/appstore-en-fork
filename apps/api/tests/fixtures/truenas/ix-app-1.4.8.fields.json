@@ -1,0 +1,515 @@
+{
+ "_bron": "Afgeleid (veldnamen/types/enums, geen kopie) uit github.com/truenas/apps ix-dev/stable/ix-app/questions.yaml, ix-app 1.4.8, commit f142a16a1e15da5f8517658f5a9ad34400972fc4 (2026-11-06). GPU-subvelden uit middleware schema_normalization (definitions/gpu_configuration): use_all_gpus, nvidia_gpu_selection.",
+ "fields": {
+  "TZ": {
+   "ref": [
+    "definitions/timezone"
+   ],
+   "required": true,
+   "type": "string"
+  },
+  "capabilities": {
+   "type": "dict"
+  },
+  "capabilities.add": {
+   "type": "list"
+  },
+  "capabilities.add[]": {
+   "required": true,
+   "type": "string"
+  },
+  "command": {
+   "type": "list"
+  },
+  "command[]": {
+   "required": true,
+   "type": "string"
+  },
+  "devices": {
+   "type": "list"
+  },
+  "devices[]": {
+   "type": "dict"
+  },
+  "devices[].container_device": {
+   "required": true,
+   "type": "string"
+  },
+  "devices[].host_device": {
+   "required": true,
+   "type": "string"
+  },
+  "disable_builtin_healthcheck": {
+   "type": "boolean"
+  },
+  "dns_config": {
+   "type": "dict"
+  },
+  "dns_config.nameservers": {
+   "type": "list"
+  },
+  "dns_config.nameservers[]": {
+   "required": true,
+   "type": "string"
+  },
+  "dns_config.options": {
+   "type": "list"
+  },
+  "dns_config.options[]": {
+   "required": true,
+   "type": "string"
+  },
+  "dns_config.searches": {
+   "type": "list"
+  },
+  "dns_config.searches[]": {
+   "required": true,
+   "type": "string"
+  },
+  "entrypoint": {
+   "type": "list"
+  },
+  "entrypoint[]": {
+   "required": true,
+   "type": "string"
+  },
+  "envs": {
+   "type": "list"
+  },
+  "envs[]": {
+   "type": "dict"
+  },
+  "envs[].name": {
+   "required": true,
+   "type": "string"
+  },
+  "envs[].value": {
+   "type": "string"
+  },
+  "host_network": {
+   "type": "boolean"
+  },
+  "hostname": {
+   "type": "string"
+  },
+  "image": {
+   "type": "dict"
+  },
+  "image.pull_policy": {
+   "enum": [
+    "missing",
+    "always",
+    "never"
+   ],
+   "required": true,
+   "type": "string"
+  },
+  "image.repository": {
+   "required": true,
+   "type": "string"
+  },
+  "image.tag": {
+   "type": "string"
+  },
+  "labels": {
+   "type": "list"
+  },
+  "labels[]": {
+   "type": "dict"
+  },
+  "labels[].key": {
+   "required": true,
+   "type": "string"
+  },
+  "labels[].value": {
+   "required": true,
+   "type": "string"
+  },
+  "max_retry_count": {
+   "required": true,
+   "show_if": [
+    [
+     "restart_policy",
+     "=",
+     "on-failure"
+    ]
+   ],
+   "type": "int"
+  },
+  "networks": {
+   "show_if": [
+    [
+     "host_network",
+     "=",
+     false
+    ]
+   ],
+   "type": "list"
+  },
+  "networks[]": {
+   "type": "dict"
+  },
+  "networks[].config": {
+   "type": "dict"
+  },
+  "networks[].config.aliases": {
+   "type": "list"
+  },
+  "networks[].config.aliases[]": {
+   "type": "string"
+  },
+  "networks[].config.gw_priority": {
+   "type": "int"
+  },
+  "networks[].config.interface_name": {
+   "type": "string"
+  },
+  "networks[].config.ipv4_address": {
+   "type": "string"
+  },
+  "networks[].config.ipv6_address": {
+   "type": "string"
+  },
+  "networks[].config.mac_address": {
+   "type": "string"
+  },
+  "networks[].config.priority": {
+   "type": "int"
+  },
+  "networks[].name": {
+   "required": true,
+   "type": "string"
+  },
+  "notes": {
+   "type": "text"
+  },
+  "portals": {
+   "type": "list"
+  },
+  "portals[]": {
+   "type": "dict"
+  },
+  "portals[].host": {
+   "required": true,
+   "show_if": [
+    [
+     "use_node_ip",
+     "=",
+     false
+    ]
+   ],
+   "type": "string"
+  },
+  "portals[].name": {
+   "required": true,
+   "type": "string"
+  },
+  "portals[].path": {
+   "required": true,
+   "type": "string"
+  },
+  "portals[].port": {
+   "required": true,
+   "type": "int"
+  },
+  "portals[].scheme": {
+   "enum": [
+    "http",
+    "https"
+   ],
+   "required": true,
+   "type": "string"
+  },
+  "portals[].use_node_ip": {
+   "required": true,
+   "type": "boolean"
+  },
+  "ports": {
+   "show_if": [
+    [
+     "host_network",
+     "=",
+     false
+    ]
+   ],
+   "type": "list"
+  },
+  "ports[]": {
+   "type": "dict"
+  },
+  "ports[].bind_mode": {
+   "enum": [
+    "published",
+    "exposed"
+   ],
+   "type": "string"
+  },
+  "ports[].container_port": {
+   "required": true,
+   "type": "int"
+  },
+  "ports[].host_ips": {
+   "show_if": [
+    [
+     "bind_mode",
+     "=",
+     "published"
+    ]
+   ],
+   "type": "list"
+  },
+  "ports[].host_ips[]": {
+   "ref": [
+    "definitions/node_bind_ip"
+   ],
+   "required": true,
+   "type": "string"
+  },
+  "ports[].port_number": {
+   "required": true,
+   "type": "int"
+  },
+  "ports[].protocol": {
+   "enum": [
+    "tcp",
+    "udp"
+   ],
+   "required": true,
+   "type": "string"
+  },
+  "privileged": {
+   "type": "boolean"
+  },
+  "resources": {
+   "type": "dict"
+  },
+  "resources.enable_resource_limits": {
+   "type": "boolean"
+  },
+  "resources.gpus": {
+   "ref": [
+    "definitions/gpu_configuration"
+   ],
+   "type": "dict"
+  },
+  "resources.gpus.nvidia_gpu_selection": {
+   "ref_origin": "definitions/gpu_configuration",
+   "type": "dict"
+  },
+  "resources.gpus.use_all_gpus": {
+   "ref_origin": "definitions/gpu_configuration",
+   "type": "boolean"
+  },
+  "resources.limits": {
+   "show_if": [
+    [
+     "enable_resource_limits",
+     "=",
+     true
+    ]
+   ],
+   "type": "dict"
+  },
+  "resources.limits.cpus": {
+   "required": true,
+   "type": "int"
+  },
+  "resources.limits.memory": {
+   "required": true,
+   "type": "int"
+  },
+  "restart_policy": {
+   "enum": [
+    "no",
+    "unless-stopped",
+    "on-failure",
+    "always"
+   ],
+   "required": true,
+   "type": "string"
+  },
+  "run_as": {
+   "show_if": [
+    [
+     "run_as_custom_user",
+     "=",
+     true
+    ]
+   ],
+   "type": "dict"
+  },
+  "run_as.group": {
+   "required": true,
+   "type": "int"
+  },
+  "run_as.user": {
+   "required": true,
+   "type": "int"
+  },
+  "run_as_custom_user": {
+   "type": "boolean"
+  },
+  "stdin": {
+   "type": "boolean"
+  },
+  "storage": {
+   "type": "list"
+  },
+  "storage[]": {
+   "type": "dict"
+  },
+  "storage[].cifs_config": {
+   "show_if": [
+    [
+     "type",
+     "=",
+     "cifs"
+    ]
+   ],
+   "type": "dict"
+  },
+  "storage[].cifs_config.domain": {
+   "type": "string"
+  },
+  "storage[].cifs_config.password": {
+   "required": true,
+   "type": "string"
+  },
+  "storage[].cifs_config.path": {
+   "required": true,
+   "type": "string"
+  },
+  "storage[].cifs_config.server": {
+   "required": true,
+   "type": "string"
+  },
+  "storage[].cifs_config.username": {
+   "required": true,
+   "type": "string"
+  },
+  "storage[].host_path_config": {
+   "show_if": [
+    [
+     "type",
+     "=",
+     "host_path"
+    ]
+   ],
+   "type": "dict"
+  },
+  "storage[].host_path_config.acl": {
+   "ref": [
+    "normalize/acl"
+   ],
+   "show_if": [
+    [
+     "acl_enable",
+     "=",
+     true
+    ]
+   ],
+   "type": "dict"
+  },
+  "storage[].host_path_config.acl_enable": {
+   "type": "boolean"
+  },
+  "storage[].host_path_config.path": {
+   "required": true,
+   "show_if": [
+    [
+     "acl_enable",
+     "=",
+     false
+    ]
+   ],
+   "type": "hostpath"
+  },
+  "storage[].ix_volume_config": {
+   "ref": [
+    "normalize/ix_volume"
+   ],
+   "show_if": [
+    [
+     "type",
+     "=",
+     "ix_volume"
+    ]
+   ],
+   "type": "dict"
+  },
+  "storage[].ix_volume_config.acl_enable": {
+   "type": "boolean"
+  },
+  "storage[].ix_volume_config.acl_entries": {
+   "ref": [
+    "normalize/acl"
+   ],
+   "show_if": [
+    [
+     "acl_enable",
+     "=",
+     true
+    ]
+   ],
+   "type": "dict"
+  },
+  "storage[].ix_volume_config.dataset_name": {
+   "required": true,
+   "type": "string"
+  },
+  "storage[].mount_path": {
+   "required": true,
+   "type": "path"
+  },
+  "storage[].nfs_config": {
+   "show_if": [
+    [
+     "type",
+     "=",
+     "nfs"
+    ]
+   ],
+   "type": "dict"
+  },
+  "storage[].nfs_config.path": {
+   "required": true,
+   "type": "string"
+  },
+  "storage[].nfs_config.server": {
+   "required": true,
+   "type": "string"
+  },
+  "storage[].read_only": {
+   "type": "boolean"
+  },
+  "storage[].tmpfs_config": {
+   "show_if": [
+    [
+     "type",
+     "=",
+     "tmpfs"
+    ]
+   ],
+   "type": "dict"
+  },
+  "storage[].tmpfs_config.size": {
+   "required": true,
+   "type": "int"
+  },
+  "storage[].type": {
+   "enum": [
+    "host_path",
+    "ix_volume",
+    "cifs",
+    "nfs",
+    "tmpfs"
+   ],
+   "required": true,
+   "type": "string"
+  },
+  "tty": {
+   "type": "boolean"
+  }
+ },
+ "ix_app_version": "1.4.8"
+}

@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appstore-en-fork"
+version = "0.1.0"
+description = "Appstore-catalogus van het TrueNAS Home Platform V2: manifeststandaard (B08-001), catalogus-API en connectorcontract."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+# Exacte versies: dezelfde set wordt in de alles-in-één image geïnstalleerd (zie requirements.lock).
+dependencies = [
+  "fastapi==0.162.2",
+  "starlette==1.10.0",
+  "uvicorn==0.54.0",
+  "pydantic==2.14.3",
+  "SQLAlchemy==2.1.8",
+  "alembic==1.20.1",
+  "psycopg[binary]==3.3.8",
+  "PyYAML==6.0.3",
+  "jsonschema==4.26.0",
+  "httpx==0.28.1",
+  "PyJWT==2.15.1",
+  "cryptography==50.0.2",
+  "python-multipart==0.0.33",
+  "dulwich==1.2.21",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.2.0",
+  "ruff==0.17.4",
+  "mypy==2.4.1",
+  "types-PyYAML==6.0.12.20261103",
+  "types-jsonschema==4.26.0.20261006",
+  "pip-audit==2.10.1",
+]
+
+[project.scripts]
+appstore = "appstore.__main__:main"
+jl-manifest = "appstore.manifest.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+appstore = ["py.typed", "manifest/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "integration: vereist PostgreSQL (APPSTORE_TEST_DATABASE_URL of 127.0.0.1:5432)",
+]
+filterwarnings = ["error::DeprecationWarning:appstore.*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "N", "RUF", "SIM", "PL"]
+ignore = [
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415",
+  "RUF001", "RUF002", "RUF003",  # Nederlandse tekst met typografische tekens
+  "S101",
+  "E501",  # de formatter bewaakt de regellengte; lange Nederlandse meldingen blijven leesbaar heel
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR", "N", "B011"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+packages = ["appstore"]
+
+[[tool.mypy.overrides]]
+module = ["dulwich.*"]
+ignore_missing_imports = true
