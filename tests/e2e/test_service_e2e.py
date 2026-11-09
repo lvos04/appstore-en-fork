@@ -1,5 +1,6 @@
 """Dienst-E2E (Sim-getest): enrollment met eenmalig token + HUB_KEY_FINGERPRINT → gepinde sleutels → gebruikers-JWT
-en dienst-JWT → ingebouwde catalogus → EX47 via HTTP → events in de Hub-inbox → hub-link → ontkoppelen door de Hub.
+en dienst-JWT → ingebouwde catalogus → EX47 via HTTP → bestaande apps importeren en adopteren (B08-002) → events in de
+Hub-inbox → hub-link → ontkoppelen door de Hub.
 Echte processen (API + worker) en echte HTTP, gesimuleerde Hub volgens contract 1.2; geen echte NAS of echte Hub."""
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Any
 import httpx
 
 from conftest import FIXTURES, wait_for
-from tests.fakehub import FakeHub
+from tests.fakehub import FakeHub, hub_app
 
 
 def _linked(url: str) -> bool:
@@ -86,6 +87,57 @@ def test_enrollment_and_catalog_flow(service: str, hub: FakeHub) -> None:
         f"{service}/connector/v1/discover", headers={"Authorization": f"Bearer {hub.last_service_token}"}, timeout=5
     )
     assert refused.status_code == 401 and refused.json()["details"]["reason"] == "service_token_not_accepted"
+
+
+def test_import_and_adopt_existing_apps_over_real_http(service: str, hub: FakeHub) -> None:
+    """B08-002 over echte HTTP: de appstore leest de inventaris van de Hub (service-token, alleen GET), herkent Plex
+    aan de catalogusapp, laat een onbekende app onbekend, en een beheerder bevestigt de eigenaar. Niets op de NAS."""
+    wait_for(lambda: _linked(service), 60)
+    seen = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    hub.catalog_apps = [
+        hub_app(
+            "plex",
+            installatiewijze="catalog_app",
+            repository="plexinc/pms-docker",
+            tag="e2e-tag",
+            digest="sha256:" + "12" * 32,
+            catalogus={"app": "plex", "trein": "stable", "versie": "0.0.1", "app_versie": "e2e"},
+            laatst_gezien=seen,
+        ),
+        hub_app("onbekende-app", repository="ghcr.io/iemand/iets", tag="1", laatst_gezien=seen),
+    ]
+    hub.apps_mode = "alleen_gebruikers"  # zoals de echte Hub nu: geen inventaris voor diensten
+    resp = httpx.post(
+        f"{service}/catalog/v1/existing-apps/import", headers={**hub.auth(roles=["operator"]), **_idem()}, timeout=60
+    )
+    body = resp.json()
+    assert resp.status_code == 200 and body["status"] == "capability_unavailable", body
+    assert body["reason_code"] == "hub_inventaris_niet_voor_diensten"
+    hub.apps_mode = "dienst"
+    body = httpx.post(
+        f"{service}/catalog/v1/existing-apps/import", headers={**hub.auth(roles=["operator"]), **_idem()}, timeout=60
+    ).json()
+    assert body["status"] == "ok" and body["counts"]["nieuw"] == 2 and body["nas_gewijzigd"] is False
+    assert {m for m, p in hub.requests if p.startswith("/api/v1/apps")} == {"GET"}
+    listed = httpx.get(f"{service}/catalog/v1/existing-apps", headers=hub.auth(roles=["viewer"]), timeout=10).json()
+    apps = {a["runtime_name"]: a for a in listed["items"]}
+    assert apps["plex"]["status"] == "kandidaat" and apps["onbekende-app"]["status"] == "onbekend"
+    adopted = httpx.post(
+        f"{service}/catalog/v1/existing-apps/{apps['plex']['id']}/adopt",
+        headers={**hub.auth(roles=["admin"]), **_idem(), "If-Match": apps["plex"]["etag"]},
+        json={"app_id": "plex", "eigenaar_bevestigd": True},
+        timeout=10,
+    )
+    assert adopted.status_code == 200 and adopted.json()["status_nl"] == "Geïmporteerd"
+    manifest = httpx.get(
+        f"{service}/catalog/v1/existing-apps/{apps['plex']['id']}/manifest",
+        headers=hub.auth(roles=["viewer"]),
+        timeout=10,
+    ).json()
+    assert manifest["manifest"]["catalog"] == {"train": "stable", "app": "plex", "version": "0.0.1"}
+    decisions = httpx.get(f"{service}/catalog/v1/decisions", headers=hub.auth(roles=["viewer"]), timeout=10).json()
+    assert len(decisions["items"]) == 20
+    wait_for(lambda: any(e["event_type"] == "catalog.app.adopted" for e in hub.inbox), 30)
 
 
 def test_unauthenticated_wrong_audience_and_replay(service: str, hub: FakeHub) -> None:
