@@ -221,5 +221,8 @@ def test_review_unreadable_link_file_message_has_no_english_jargon() -> None:
     lnk = LinkState(first_linked_at="2026-11-09T00:00:00Z")
     lnk._corrupt = True
     m = sp.koppel_melding(lnk)
-    assert m is not None and "enrollment" not in m.tekst and "HUB_ENROLLMENT_TOKEN" in m.tekst
-    assert "nieuw koppeltoken" in m.tekst and "hub-link.json" not in m.tekst  # afbreken op "hub-" bij 320 px
+    assert m is not None and "enrollment" not in m.tekst and "nieuw koppeltoken" in m.tekst
+    # geen lange namen zonder afbreekpunt in meldingstekst (op 320 px buiten de melding met een breder lettertype)
+    assert "hub-link.json" not in m.tekst and "HUB_ENROLLMENT_TOKEN" not in m.tekst
+    loopt = link(pending=Pending(kind="token", secret_sha256="ab" * 32, hub_url="http://h.test", started_at="x"))
+    assert "HUB_ENROLLMENT_TOKEN" not in sp.koppel_melding(loopt).tekst  # type: ignore[union-attr]

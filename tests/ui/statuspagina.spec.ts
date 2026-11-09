@@ -9,7 +9,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { AFDRUK_BREEDTES, BREEDTES, THEMAS, controleer } from './meting';
+import { AFDRUK_BREEDTES, BREEDTES, THEMAS, controleer, controleerBreedLettertype } from './meting';
 
 const UIT = process.env.STATUSPAGINA_UIT ?? path.join(__dirname, 'uit');
 const AFDRUKKEN = path.resolve(__dirname, '../../docs/screenshots/peil/statuspagina');
@@ -71,6 +71,9 @@ for (const { naam, body, meta } of toestanden()) {
             : undefined;
         await controleer(page, plek, { focus: breedte === 390 || breedte === 1440, eersteTabIsSkiplink: true, afdruk });
       }
+      await page.setViewportSize({ width: 320, height: 900 });
+      await page.goto(ADRES);
+      await controleerBreedLettertype(page, `${naam} · ${thema.naam} · 320px`);
       expect(csp, 'CSP-overtredingen').toEqual([]);
       expect(fouten, 'paginafouten').toEqual([]);
       expect(extern, 'externe verzoeken').toEqual([]);

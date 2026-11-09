@@ -426,3 +426,18 @@ export async function controleer(
   }
   return uit;
 }
+
+/** Breed lettertype (DejaVu Sans, zoals op een kale Linux-machine of de CI-runner): het systeemlettertype verschilt
+ *  per apparaat, en een lange naam zonder afbreekpunt kan dan op 320 px buiten zijn kaart steken (gevonden in CI).
+ *  Alleen de reflow-eisen; de pagina zelf verandert niet (stijl alleen in deze browser toegevoegd). */
+export async function controleerBreedLettertype(page: Page, plek: string): Promise<void> {
+  await page.addStyleTag({
+    content:
+      'body, body *:not(code):not(.mono) { font-family: "DejaVu Sans", sans-serif !important } ' +
+      'code, .mono { font-family: "DejaVu Sans Mono", monospace !important }',
+  });
+  const m = await meet(page);
+  expect.soft(m.overloopPagina, `${plek} (breed lettertype): horizontale overloop`).toBeLessThanOrEqual(0);
+  expect.soft(m.buitenKader, `${plek} (breed lettertype): tekst buiten zijn kaart`).toEqual([]);
+  expect.soft(m.doelen, `${plek} (breed lettertype): doelen < 44 × 44 px`).toEqual([]);
+}

@@ -484,17 +484,17 @@ def koppel_melding(link: LinkState) -> Melding | None:
         return Melding(
             "fout",
             "Koppelstatus onleesbaar",
+            # geen lange namen zonder afbreekpunt (HUB_ENROLLMENT_TOKEN) in meldingstekst: die steken op 320 px met een
+            # breder lettertype buiten de melding (gevonden in CI); de variabele staat in CUSTOM_APP.md
             "Het koppelbestand in /appdata/secrets is onleesbaar. Daarom vertrouwt deze dienst niets van de Hub en voert "
-            "hij niets uit. Herstel: maak in de Hub een nieuw koppeltoken en vul het in bij HUB_ENROLLMENT_TOKEN in het "
-            "formulier van de Custom App.",
+            "hij niets uit. Herstel: maak in de Hub een nieuw koppeltoken en zet het in het formulier van de Custom "
+            "App.",
             "koppelstatus_onleesbaar",
         )
     fout = link.last_error
     if link.pending is not None:
         via = (
-            "het koppeltoken uit het formulier van de Custom App (HUB_ENROLLMENT_TOKEN)"
-            if link.pending.kind == "token"
-            else "een koppelcode"
+            "het koppeltoken uit het formulier van de Custom App" if link.pending.kind == "token" else "een koppelcode"
         )
         tekst = f"Er loopt een koppelpoging via {via}. Laad de pagina over een minuut opnieuw."
         if fout is not None:

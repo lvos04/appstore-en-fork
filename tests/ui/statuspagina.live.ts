@@ -9,7 +9,7 @@
 import { expect, test, type Response } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { AFDRUK_BREEDTES, BREEDTES, THEMAS, controleer, focusNu, type Samenvatting } from './meting';
+import { AFDRUK_BREEDTES, BREEDTES, THEMAS, controleer, controleerBreedLettertype, focusNu, type Samenvatting } from './meting';
 
 const env = (naam: string, standaard?: string): string => {
   const waarde = process.env[naam] ?? standaard;
@@ -98,6 +98,9 @@ test(`${process.env.TOESTAND ?? 'live'} (draaiende dienst)`, async ({ browser })
       samenvatting.push({ toestand, thema: thema.naam, breedte, ...uit });
     }
   }
+  // als laatste (de toegevoegde stijl blijft in dit document): breed lettertype op 320 px
+  await page.setViewportSize({ width: 320, height: 900 });
+  await controleerBreedLettertype(page, `${toestand} · donker · 320px`);
   expect(csp, 'CSP-overtredingen').toEqual([]);
   expect(fouten, 'paginafouten').toEqual([]);
   expect(extern, 'verzoeken buiten de dienst').toEqual([]);
