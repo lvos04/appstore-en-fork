@@ -9,8 +9,8 @@ model; er wordt niets uitgevoerd of opgehaald.
 from __future__ import annotations
 
 import ipaddress
-import posixpath
 import re
+import unicodedata
 from collections.abc import Iterable, Iterator
 from typing import Any
 
@@ -50,6 +50,28 @@ MUTABLE_TAGS = frozenset(
         "rc",
     }
 )
+#: Woorden die als *onderdeel* van een tag op een verschuivende tag wijzen (``alpine-latest``, ``stable-alpine``).
+#: Niet: alpha/beta/rc/release/preview/next (komen ook voor in vastgezette voorversies zoals ``2.0.0-rc.1``).
+MUTABLE_TAG_PARTS = frozenset(
+    {
+        "latest",
+        "stable",
+        "edge",
+        "nightly",
+        "main",
+        "master",
+        "dev",
+        "develop",
+        "rolling",
+        "current",
+        "head",
+        "testing",
+        "unstable",
+        "lts",
+    }
+)
+_TAG_SPLIT = re.compile(r"[._-]")
+_DOTTED_VERSION = re.compile(r"\d+\.\d+\.\d+")
 _IMPRECISE_TAG = re.compile(r"^v?\d+(\.\d+)?(-[a-z][a-z0-9.]*)?$")
 _EXACT_VERSION = re.compile(r"^v?\d+\.\d+\.\d+([.+_-][0-9A-Za-z.+_-]+)?$")
 
@@ -183,6 +205,23 @@ _FORBIDDEN_DEVICE_PATTERNS = (
 )
 #: TrueNAS staat deze niet toe als handmatig apparaat; GPU gaat via ``gpu: intel_render``.
 _FORM_MANAGED_DEVICES = ("/dev/dri", "/dev/kfd", "/dev/bus/usb", "/dev/snd", "/dev/net/tun")
+#: Hostapparaten die met ``privilege_reason`` mogen (allowlist; veiligste uitleg van contract §9 ``devices: []``):
+#: seriële USB-adapters (Zigbee/Z-Wave/P1-meter), video-capture, DVB-tuners en de Coral-TPU. Al het andere
+#: (schijven, /dev/mem, watchdog, IPMI, Intel ME, vfio, consoles, …) wordt geweigerd (ADR-0007).
+_ALLOWED_HOST_DEVICES = (
+    re.compile(r"^/dev/tty(USB|ACM|AMA)\d{1,3}$"),
+    re.compile(r"^/dev/serial/by-(id|path)/[A-Za-z0-9][A-Za-z0-9._:+-]{0,200}$"),
+    re.compile(r"^/dev/video\d{1,3}$"),
+    re.compile(r"^/dev/dvb/adapter\d{1,2}/(frontend|demux|dvr|ca|net)\d{1,2}$"),
+    re.compile(r"^/dev/apex_\d{1,2}$"),
+)
+#: Capabilities die samen met host network het netwerk van de NAS zelf kunnen wijzigen.
+_HOST_NETWORK_FORBIDDEN_CAPS = frozenset({"NET_ADMIN"})
+#: Hidden mappen en TrueNAS-systeemdatasets die nooit gekoppeld mogen worden (ook niet via de datasetkiezer).
+_SYSTEM_DATASET_NAMES = frozenset({"ix-applications", "ix-apps", "ix-virt"})
+
+#: Variabele-interpolatie (compose/shell): ``$VAR``, ``${VAR}``, ``$(cmd)``, ``$$``.
+_INTERPOLATION = re.compile(r"\$[{(A-Za-z_$]")
 
 _SECRET_ENV = re.compile(r"(PASS(WORD|WD)?|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|CREDENTIAL|AUTH_KEY|SALT)$", re.I)
 _PLACEHOLDER = re.compile(r"<[A-Za-z0-9_ -]{1,40}>|\$\{[^}]*\}|\{\{[^}]*\}\}|%\([a-z_]+\)s|\bCHANGEME\b|\bchangeme\b")
@@ -191,6 +230,7 @@ _EXAMPLE_HOSTS = re.compile(
     re.I,
 )
 _EXAMPLE_POOL = re.compile(r"(^|/)mnt/(tank|pool|pool1|data|nas|zpool|main|storage|POOL|<POOL>)(/|$)")
+_TIMEZONE = re.compile(r"^(UTC|Etc/UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+){1,2})$")
 _IPV4 = re.compile(r"(?<![0-9.])(\d{1,3}(?:\.\d{1,3}){3})(?![0-9.])")
 
 
@@ -217,13 +257,43 @@ def example_reason(value: str) -> str | None:
     return None
 
 
+def _has_bad_char(value: str) -> bool:
+    """Stuur- en opmaaktekens (Unicode-categorie C*, o.a. NUL, tab, newline, bidi/zero-width) en backslashes."""
+    return any(ch == "\\" or unicodedata.category(ch).startswith("C") for ch in value)
+
+
 def normalize_abs_path(path: str) -> str | None:
-    """Normaliseer een absoluut POSIX-pad; ``None`` bij relatieve paden, ``..``-segmenten of lege paden."""
-    if not path.startswith("/") or "\x00" in path:
+    """Normaliseer een absoluut POSIX-pad, of ``None`` als het pad niet eenduidig is.
+
+    Geweigerd (``None``): relatieve paden, ``.``/``..``-segmenten, lege segmenten (``//etc`` blijft volgens POSIX
+    ``//etc`` en zou zo elke prefixvergelijking omzeilen), stuur-/opmaaktekens, backslashes en segmenten met spaties
+    aan begin of eind. Eén afsluitende ``/`` is toegestaan.
+    """
+    if not path.startswith("/") or _has_bad_char(path):
         return None
-    if any(part in (".", "..") for part in path.split("/")):
+    if path == "/":
+        return "/"
+    parts = path.split("/")[1:]
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    if not parts or any(part in ("", ".", "..") or part != part.strip() for part in parts):
         return None
-    return posixpath.normpath(path) if path != "/" else "/"
+    return "/" + "/".join(parts)
+
+
+def mutable_tag_reason(tag: str) -> str | None:
+    """Nederlandse reden als ``tag`` verschuift (``latest``, ``alpine-latest``, ``stable-alpine``, ``bookworm``)."""
+    low = tag.strip().lower()
+    if low in MUTABLE_TAGS or low.startswith("latest"):
+        return f"Tag {tag!r} verandert in de tijd; gebruik een exacte versie."
+    if _DOTTED_VERSION.search(low):
+        return None  # bevat een exacte versie (x.y.z), bv. 2.479.1-lts-jdk17
+    words = set(_TAG_SPLIT.split(low)) & MUTABLE_TAG_PARTS
+    if words:
+        return f"Tag {tag!r} bevat {sorted(words)[0]!r} en verschuift dus mee; gebruik een exacte versie."
+    if not any(ch.isdigit() for ch in low):
+        return f"Tag {tag!r} bevat geen versienummer en verschuift mee; gebruik een exacte versie."
+    return None
 
 
 def host_path_problem(path: str) -> tuple[str, str] | None:
@@ -233,21 +303,37 @@ def host_path_problem(path: str) -> tuple[str, str] | None:
     """
     norm = normalize_abs_path(path)
     if norm is None:
-        return "forbidden_host_path", f"Hostpad {path!r} is geen genormaliseerd absoluut pad (geen '.', '..')."
+        if any(marker in path.lower() for marker in _SOCKET_MARKERS):
+            return (
+                "docker_socket_forbidden",
+                f"Hostpad {path!r} is een container-runtime-socket; dat geeft root op de NAS.",
+            )
+        return (
+            "forbidden_host_path",
+            f"Hostpad {path!r} is geen genormaliseerd absoluut pad (geen '.', '..', '//', stuurtekens of backslash).",
+        )
+    # hoofdletterongevoelig vergelijken: SMB-datasets kunnen hoofdletterongevoelig zijn
     lowered = norm.lower()
     if any(marker in lowered for marker in _SOCKET_MARKERS):
         return "docker_socket_forbidden", f"Hostpad {path!r} is een container-runtime-socket; dat geeft root op de NAS."
-    if norm in FORBIDDEN_EXACT_HOST_PATHS:
+    if lowered in FORBIDDEN_EXACT_HOST_PATHS:
         return "forbidden_host_path", f"Hostpad {norm!r} is verboden (te breed: hele systeem of alle pools)."
     for forbidden in FORBIDDEN_HOST_PATHS:
-        if norm == forbidden or norm.startswith(forbidden + "/") or forbidden.startswith(norm + "/"):
+        if lowered == forbidden or lowered.startswith(forbidden + "/") or forbidden.startswith(lowered + "/"):
             return "forbidden_host_path", f"Hostpad {norm!r} valt in het verboden gebied {forbidden!r}."
-    parts = [p for p in norm.split("/") if p]
+    parts = norm.split("/")[1:]
     if parts[0] != "mnt" or len(parts) < 3:
         return (
             "forbidden_host_path",
             f"Hostpad {norm!r} ligt niet in een dataset (verwacht /mnt/<pool>/<dataset>/…).",
         )
+    for part in parts[1:]:
+        if part.startswith(".") or part.lower() in _SYSTEM_DATASET_NAMES:
+            return (
+                "forbidden_host_path",
+                f"Hostpad {norm!r} bevat {part!r}: verborgen mappen en systeemdatasets van TrueNAS "
+                "(.ix-apps, .zfs, .system, ix-applications) zijn verboden.",
+            )
     return None
 
 
@@ -262,8 +348,11 @@ def mount_path_problem(path: str) -> str | None:
     return None
 
 
-def device_problem(device: str) -> str | None:
-    norm = normalize_abs_path(device) or device
+def device_problem(device: str, *, host: bool = True) -> str | None:
+    """Controleer een apparaatpad. ``host=True``: het apparaat op de NAS (allowlist); ``False``: het pad in de container."""
+    norm = normalize_abs_path(device)
+    if norm is None or not norm.startswith("/dev/"):
+        return f"Apparaat {device!r} is geen genormaliseerd pad onder /dev (geen '.', '..', '//' of stuurtekens)."
     for managed in _FORM_MANAGED_DEVICES:
         if norm == managed or norm.startswith(managed + "/"):
             return (
@@ -273,34 +362,184 @@ def device_problem(device: str) -> str | None:
     for pattern in _FORBIDDEN_DEVICE_PATTERNS:
         if pattern.match(norm):
             return f"Apparaat {norm!r} geeft directe toegang tot opslag, geheugen of de kernel."
+    if host and not any(pattern.match(norm) for pattern in _ALLOWED_HOST_DEVICES):
+        return (
+            f"Apparaat {norm!r} staat niet op de lijst van toegestane apparaten (seriële USB-adapters, video-capture, "
+            "DVB-tuners, Coral-TPU); andere apparaten vereisen eerst een wijziging van het platformcontract."
+        )
     return None
 
 
-def _walk(value: Any, path: str) -> Iterator[tuple[str, Any]]:
-    """Loop recursief door JSON-achtige data; levert ``(pad, waarde)`` voor elke bladwaarde en elke sleutel."""
+def _nk(key: object) -> str:
+    """Sleutel normaliseren voor vergelijking: kleine letters, alleen letters/cijfers (``Host-Network`` → ``hostnetwork``)."""
+    return re.sub(r"[^a-z0-9]", "", str(key).lower())
+
+
+#: Docker-/compose-velden die in catalogus-waarden nooit (niet-leeg) mogen voorkomen: namespaces van de host delen
+#: (pid/ipc/uts/userns/netwerk), beveiligingsprofielen uitzetten, extra capabilities/sysctls, eigen opdrachten.
+#: Genormaliseerd met :func:`_nk`.
+FORBIDDEN_VALUE_KEYS = frozenset(
+    {
+        "pid",
+        "pidmode",
+        "hostpid",
+        "ipc",
+        "ipcmode",
+        "hostipc",
+        "uts",
+        "utsmode",
+        "userns",
+        "usernsmode",
+        "networkmode",
+        "net",
+        "cgroup",
+        "cgroupns",
+        "cgroupnsmode",
+        "cgroupparent",
+        "securityopt",
+        "securityopts",
+        "securityoptions",
+        "securitycontext",
+        "apparmor",
+        "apparmorprofile",
+        "seccomp",
+        "seccompprofile",
+        "capadd",
+        "capabilities",
+        "sysctls",
+        "devicecgrouprules",
+        "volumesfrom",
+        "runtime",
+        "command",
+        "entrypoint",
+        "allowprivilegeescalation",
+    }
+)
+_PATH_VALUE_KEYS = frozenset({"path", "hostpath"})
+_DEVICE_VALUE_KEYS = {"hostdevice": True, "containerdevice": False}
+
+
+def _has_content(value: Any) -> bool:
     if isinstance(value, dict):
-        for key, sub in value.items():
-            sub_path = f"{path}.{key}" if path else str(key)
-            yield sub_path, ("__key__", key)
-            yield from _walk(sub, sub_path)
-    elif isinstance(value, list):
-        for idx, sub in enumerate(value):
-            yield from _walk(sub, f"{path}[{idx}]")
-    else:
-        yield path, value
+        return any(_has_content(v) for v in value.values())
+    if isinstance(value, list):
+        return len(value) > 0
+    return value is not None and value is not False and value != ""
 
 
-def _param_refs(value: Any, path: str) -> Iterator[tuple[str, str]]:
-    """Alle ``{"param": "<naam>"}``-verwijzingen in vrije data (catalogus-``values``)."""
+def catalog_value_findings(values: Any, *, host_network_reason: str | None, resolved: bool) -> list[Finding]:
+    """Controleer vrije catalogus-``values`` (voor én na het invullen van parameters).
+
+    ``resolved=False`` (validator): letterlijke hostpaden, voorbeeldwaarden en geheimen zijn fout; ``{"param": …}``
+    wordt overgeslagen (dat controleert de validator apart). ``resolved=True`` (vertaling): de ingevulde waarden
+    komen uit wizard/datasetkiezer en worden opnieuw op verboden gebieden en velden gecontroleerd (verdediging in
+    de diepte; een parameter mag nooit iets verbodens binnensmokkelen).
+    """
+    out: list[Finding] = []
+    reason = (host_network_reason or "").strip()
+
+    def leaf(value: str, path: str, key: str, raw_key: str) -> None:
+        low = value.lower()
+        if any(marker in low for marker in _SOCKET_MARKERS):
+            out.append(error("docker_socket_forbidden", path, "Verwijzing naar een container-runtime-socket."))
+            return
+        if "unconfined" in low:
+            out.append(
+                error("catalog_value_forbidden", path, "Een beveiligingsprofiel uitzetten ('unconfined') is verboden.")
+            )
+        if _INTERPOLATION.search(value):
+            out.append(
+                error(
+                    "interpolation_forbidden",
+                    path,
+                    "Variabele-interpolatie ($VAR, ${…}, $(…), $$) is niet toegestaan; gebruik een getypte parameter.",
+                )
+            )
+        if key in _PATH_VALUE_KEYS and value.startswith("/"):
+            problem = host_path_problem(value)
+            if problem:
+                out.append(error(problem[0], path, problem[1]))
+            elif not resolved:
+                out.append(
+                    error(
+                        "literal_host_path",
+                        path,
+                        f"Hostpad {value!r} staat letterlijk in de waarden; gebruik een parameter.",
+                    )
+                )
+        elif key == "mountpath":
+            if problem_nl := mount_path_problem(value):
+                out.append(error("forbidden_mount_path", path, problem_nl))
+        elif key in _DEVICE_VALUE_KEYS or (key == "devices" and value.startswith("/")):
+            device = value.split(":", 1)[0] if key == "devices" else value
+            if problem_nl := device_problem(device, host=_DEVICE_VALUE_KEYS.get(key, True)):
+                out.append(error("device_forbidden", path, problem_nl))
+        elif key == "tag":
+            if tag_reason := mutable_tag_reason(value):
+                out.append(error("mutable_tag_forbidden", path, tag_reason))
+        elif not resolved and (example := example_reason(value)):
+            out.append(error("example_value_as_real", path, f"Waarde {example}."))
+        if not resolved and _SECRET_ENV.search(raw_key.lower()) and value.strip():
+            out.append(
+                error("secret_literal_forbidden", path, "Geheim als letterlijke waarde in de catalogus-waarden.")
+            )
+
+    def visit(value: Any, path: str, key: str, raw_key: str) -> None:
+        if isinstance(value, dict):
+            if not resolved and set(value) == {"param"} and isinstance(value["param"], str):
+                return
+            for k, sub in value.items():
+                sub_path = f"{path}.{k}"
+                nk = _nk(k)
+                if "compose" in nk or nk == "services":
+                    out.append(
+                        error("compose_forbidden", sub_path, "Compose-configuratie in catalogus-waarden is verboden.")
+                    )
+                elif nk == "privileged":
+                    if sub is not None and sub is not False:
+                        out.append(error("privileged_forbidden", sub_path, "Privileged-modus is verboden."))
+                elif nk == "hostnetwork":
+                    if sub is not None and sub is not False and not reason:
+                        out.append(
+                            error(
+                                "host_network_without_reason",
+                                sub_path,
+                                "Host network in catalogus-waarden zonder host_network_reason.",
+                            )
+                        )
+                elif nk in FORBIDDEN_VALUE_KEYS:
+                    if _has_content(sub):
+                        out.append(
+                            error(
+                                "catalog_value_forbidden",
+                                sub_path,
+                                f"Het veld {k!r} (host-namespaces, beveiligingsprofielen, capabilities, sysctls of eigen "
+                                "opdrachten) is in catalogus-waarden verboden.",
+                            )
+                        )
+                else:
+                    visit(sub, sub_path, nk, str(k))
+        elif isinstance(value, list):
+            for idx, sub in enumerate(value):
+                visit(sub, f"{path}[{idx}]", key, raw_key)
+        elif isinstance(value, str):
+            leaf(value, path, key, raw_key)
+
+    visit(values, "values", "", "")
+    return out
+
+
+def _param_refs(value: Any, path: str, key: str = "") -> Iterator[tuple[str, str, str]]:
+    """Alle ``{"param": "<naam>"}``-verwijzingen in vrije data (catalogus-``values``), met de genormaliseerde sleutel."""
     if isinstance(value, dict):
         if set(value) == {"param"} and isinstance(value["param"], str):
-            yield path, value["param"]
+            yield path, value["param"], key
             return
-        for key, sub in value.items():
-            yield from _param_refs(sub, f"{path}.{key}")
+        for sub_key, sub in value.items():
+            yield from _param_refs(sub, f"{path}.{sub_key}", _nk(sub_key))
     elif isinstance(value, list):
         for idx, sub in enumerate(value):
-            yield from _param_refs(sub, f"{path}[{idx}]")
+            yield from _param_refs(sub, f"{path}[{idx}]", key)
 
 
 # ---------------------------------------------------------------------------------------------- regels
@@ -416,15 +655,10 @@ class _Rules:
         m = self.m
         assert m.image is not None and m.custom_app is not None
         img, ca = m.image, m.custom_app
-        tag_l = img.tag.lower()
         if not img.tag.strip():
             self.err("tag_missing", "image.tag", "Image-tag ontbreekt; gebruik een exacte versie.")
-        elif tag_l in MUTABLE_TAGS or tag_l.startswith("latest"):
-            self.err(
-                "mutable_tag_forbidden",
-                "image.tag",
-                f"Tag {img.tag!r} verandert in de tijd; gebruik een exacte versie.",
-            )
+        elif tag_reason := mutable_tag_reason(img.tag):
+            self.err("mutable_tag_forbidden", "image.tag", tag_reason)
         elif _IMPRECISE_TAG.match(img.tag) and not _EXACT_VERSION.match(img.tag):
             self.warn(
                 "imprecise_version_tag",
@@ -533,6 +767,13 @@ class _Rules:
                     )
                 elif reason := example_reason(env.value):
                     self.err("example_value_as_real", f"{path}.value", f"Waarde van {env.name} {reason}.")
+                if _INTERPOLATION.search(env.value):
+                    self.err(
+                        "interpolation_forbidden",
+                        f"{path}.value",
+                        f"Waarde van {env.name} bevat variabele-interpolatie ($VAR, ${{…}}, $(…), $$); TrueNAS zet "
+                        "omgevingswaarden in een compose-bestand, dus dat is verboden. Gebruik een getypte parameter.",
+                    )
             if env.value_from is not None:
                 param = self.ref(
                     env.value_from,
@@ -559,6 +800,8 @@ class _Rules:
             self.warn("timezone_missing", "custom_app.timezone", "Geen tijdzone: het formulier krijgt 'Etc/UTC'.")
         elif isinstance(ca.timezone, ParamRef):
             self.ref(ca.timezone, "custom_app.timezone", ("timezone",), "Tijdzone")
+        elif not _TIMEZONE.match(ca.timezone):
+            self.err("invalid_value", "custom_app.timezone", f"Tijdzone {ca.timezone!r} is geen IANA-tijdzone.")
         elif ca.timezone != "Etc/UTC":
             self.warn(
                 "example_value_as_real",
@@ -582,6 +825,13 @@ class _Rules:
     def catalog_app(self) -> None:
         m = self.m
         assert m.catalog is not None and m.values is not None
+        if m.catalog.app == "ix-app":
+            self.err(
+                "install_method_forbidden",
+                "catalog.app",
+                "De catalogusapp 'ix-app' is het standaard Custom App-formulier; gebruik install.method 'custom_app' "
+                "(getypt formulier). Ruwe ix-app-waarden (privileged, command, devices, …) zijn verboden.",
+            )
         version = m.catalog.version.lower()
         if version in MUTABLE_TAGS or not _EXACT_VERSION.match(m.catalog.version):
             self.err(
@@ -589,47 +839,35 @@ class _Rules:
                 "catalog.version",
                 f"Catalogusversie {m.catalog.version!r} moet een exacte versie zijn (bv. 1.2.3).",
             )
-        for path, value in _walk(m.values, "values"):
-            if isinstance(value, tuple) and value and value[0] == "__key__":
-                key = str(value[1]).lower()
-                if key in ("privileged",):
-                    continue  # waarde wordt hieronder als bool gecontroleerd
-                if key in ("custom_compose_config", "custom_compose_config_string", "compose", "services"):
-                    self.err("compose_forbidden", path, "Compose-configuratie in catalogus-waarden is verboden.")
-                continue
-            leaf_key = path.rsplit(".", 1)[-1].split("[", 1)[0].lower()
-            if leaf_key == "privileged" and value is True:
-                self.err("privileged_forbidden", path, "Privileged-modus is verboden.")
-            if leaf_key == "host_network" and value is True and not m.network.host_network_reason:
-                self.err(
-                    "host_network_without_reason", path, "Host network in catalogus-waarden zonder host_network_reason."
-                )
-            if leaf_key == "tag" and isinstance(value, str) and value.lower() in MUTABLE_TAGS:
-                self.err("mutable_tag_forbidden", path, f"Tag {value!r} is veranderlijk.")
-            if isinstance(value, str):
-                low = value.lower()
-                if any(marker in low for marker in _SOCKET_MARKERS):
-                    self.err("docker_socket_forbidden", path, "Verwijzing naar een container-runtime-socket.")
-                elif value.startswith("/") and leaf_key in ("path", "host_path", "hostpath"):
-                    problem = host_path_problem(value)
-                    if problem:
-                        self.err(problem[0], path, problem[1])
-                    else:
-                        self.err(
-                            "literal_host_path",
-                            path,
-                            f"Hostpad {value!r} staat letterlijk in de waarden; gebruik een parameter.",
-                        )
-                elif reason := example_reason(value):
-                    self.err("example_value_as_real", path, f"Waarde {reason}.")
-                if _SECRET_ENV.search(leaf_key) and value.strip():
-                    self.err("secret_literal_forbidden", path, "Geheim als letterlijke waarde in de catalogus-waarden.")
-        for path, name in _param_refs(m.values, "values"):
+        self.out.extend(
+            catalog_value_findings(m.values, host_network_reason=m.network.host_network_reason, resolved=False)
+        )
+        for path, name, key in _param_refs(m.values, "values"):
             param = self.params.get(name)
             self.used_params.add(name)
             if param is None:
                 self.err("unknown_parameter", path, f"Waarde verwijst naar onbekende parameter {name!r}.")
-            elif param.source in ("secret", "generated") or param.type == "secret_ref":
+                continue
+            if key in _PATH_VALUE_KEYS:
+                if param.type != "path":
+                    self.err(
+                        "parameter_type_mismatch",
+                        path,
+                        f"Hostpad verwacht een parameter van type 'path'; {name!r} is {param.type!r}.",
+                    )
+                elif param.source != "dataset_picker":
+                    self.err(
+                        "host_path_param_wrong_source",
+                        path,
+                        f"Hostpad-parameter {name!r} moet source 'dataset_picker' hebben.",
+                    )
+            elif key in _DEVICE_VALUE_KEYS or key in ("devices", "mountpath"):
+                self.err(
+                    "catalog_value_forbidden",
+                    path,
+                    "Apparaten en koppelpaden moeten letterlijk (en dus beoordeelbaar) in het manifest staan.",
+                )
+            if param.source in ("secret", "generated") or param.type == "secret_ref":
                 self.warn(
                     "secret_in_form",
                     path,
@@ -686,17 +924,21 @@ class _Rules:
                 )
             elif name not in KNOWN_CAPABILITIES:
                 self.err("capability_unknown", path, f"Onbekende capability {cap!r}.")
+            elif name in _HOST_NETWORK_FORBIDDEN_CAPS and self.m.network.host_network:
+                self.err(
+                    "capability_forbidden",
+                    path,
+                    f"Capability {name} samen met host network kan het netwerk van de NAS zelf wijzigen; dat is verboden.",
+                )
             elif not reason:
                 self.err("capability_without_reason", path, f"Extra capability {name} zonder privilege_reason.")
         for idx, dev in enumerate(pr.devices):
             path = f"privileges.devices[{idx}]"
-            for which in (dev.host_device, dev.container_device):
-                if problem := device_problem(which):
-                    self.err("device_forbidden", path, problem)
-                    break
-            else:
-                if not reason:
-                    self.err("device_without_reason", path, f"Apparaat {dev.host_device} zonder privilege_reason.")
+            problem = device_problem(dev.host_device) or device_problem(dev.container_device, host=False)
+            if problem:
+                self.err("device_forbidden", path, problem)
+            elif not reason:
+                self.err("device_without_reason", path, f"Apparaat {dev.host_device} zonder privilege_reason.")
         if pr.gpu != "none" and not reason:
             self.err("gpu_without_reason", "privileges.gpu", "GPU-toegang (/dev/dri) zonder privilege_reason.")
 

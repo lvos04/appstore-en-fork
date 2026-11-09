@@ -28,6 +28,8 @@ PLATFORM_PORTS: dict[int, str] = {
     30460: "jelly-leon",
 }
 MAX_INVENTORY_AGE = timedelta(minutes=15)
+#: Een inventaris "uit de toekomst" (klokverschil) is niet te vertrouwen.
+MAX_INVENTORY_FUTURE = timedelta(minutes=2)
 
 
 class _Model(BaseModel):
@@ -87,15 +89,18 @@ def _overlap(a: str, b: str) -> bool:
     return a == b or a.startswith(b.rstrip("/") + "/") or b.startswith(a.rstrip("/") + "/")
 
 
-def _requested_ports(payload: AppCreatePayload | None) -> list[tuple[int, str]]:
+def _requested_ports(manifest: Manifest, payload: AppCreatePayload | None) -> list[tuple[int, str]]:
     if payload is None:
         return []
     values: dict[str, Any] = payload.values
     out: list[tuple[int, str]] = []
     for port in values.get("ports", []) or []:
         if isinstance(port, dict) and isinstance(port.get("port_number"), int):
-            out.append((port["port_number"], str(port.get("protocol", "tcp"))))
-    return out
+            out.append((port["port_number"], str(port.get("protocol", "tcp")).lower()))
+    if manifest.network.host_network or values.get("host_network") is True:
+        # host network: de container bindt zijn eigen poorten direct op de NAS (ports-lijst is dan leeg)
+        out.extend((p.container_port, p.protocol) for p in manifest.network.ports)
+    return sorted(set(out))
 
 
 def _requested_paths(payload: AppCreatePayload | None) -> list[tuple[str, bool]]:
@@ -138,6 +143,15 @@ def analyse(
                 f"Inventaris is van {observed.isoformat()}; ouder dan {int(MAX_INVENTORY_AGE.total_seconds() // 60)} min. Meet opnieuw.",
             )
         )
+    elif observed - now > MAX_INVENTORY_FUTURE:
+        stale = True
+        findings.append(
+            error(
+                "inventory_stale",
+                "inventory.observed_at",
+                f"Inventaris is van {observed.isoformat()}, dat ligt in de toekomst; controleer de klok en meet opnieuw.",
+            )
+        )
     name = payload.app_name if payload else manifest.app_id
     others = [a for a in inventory.apps if a.name != name]
     if len(others) != len(inventory.apps):
@@ -148,7 +162,7 @@ def analyse(
         for up in app.used_ports:
             for hp in up.host_ports:
                 in_use[(hp.host_port, up.protocol.lower())] = app.name
-    for port, proto in _requested_ports(payload):
+    for port, proto in _requested_ports(manifest, payload):
         if (port, proto) in in_use:
             findings.append(
                 error(

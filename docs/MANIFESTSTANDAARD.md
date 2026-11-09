@@ -33,6 +33,30 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | `backup` | `db_export` (`pg_dump, sqlite_backup, app_native, none`), `snapshot_datasets`, `rpo`/`rto` (ISO-8601 of parameter, D16) |
 | `dependencies`, `sso`, `risk` (≥ R2), `upgrade` (`migrations`, `tag_only_rollback_safe`), `decisions_required` (D01–D18), `docs`, `validation_status`, `compatibility`, `provenance` | beheer en herkomst |
 
+## Weigerregels in detail (aangescherpt na de review van fase P0, ADR-0007)
+
+- **Paden** worden eerst strikt genormaliseerd: geen `.`/`..`, geen lege segmenten (`//etc`, `/mnt//pool`), geen
+  stuur- of opmaaktekens (newline, tab, bidi, zero-width), geen backslash en geen spaties aan begin of eind van een
+  segment. Een hostpad moet onder `/mnt/<pool>/<dataset>` liggen; verborgen mappen (`.zfs`, `.system`, `.ix-apps`) en
+  TrueNAS-systeemdatasets (`ix-applications`, `ix-apps`, `ix-virt`) zijn verboden, hoofdletterongevoelig vergeleken.
+  Dezelfde controle geldt bij het invullen van een `path`-parameter (datasetkiezer) in `translate`/`preview`.
+- **Apparaten**: alleen een allowlist, met `privilege_reason`: `/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/ttyAMA*`,
+  `/dev/serial/by-id|by-path/…`, `/dev/video*`, `/dev/dvb/adapterN/…`, `/dev/apex_N`. GPU gaat via `gpu: intel_render`.
+- **Capabilities**: `NET_ADMIN` samen met `host_network` is verboden.
+- **Tags**: naast `latest`/`stable`/… ook samengestelde varianten (`alpine-latest`, `stable-alpine`, `nightly-2024`)
+  en tags zonder versienummer (`alpine`, `bookworm`). Een tag met een exacte versie (`2.479.1-lts-jdk17`) mag wel.
+- **Omgevingswaarden en catalogus-waarden**: geen variabele-interpolatie (`$VAR`, `${…}`, `$(…)`, `$$`); TrueNAS zet de
+  waarden in een compose-bestand.
+- **Catalogusapps**: `catalog.app: ix-app` is verboden (gebruik `install.method: custom_app`). In `values` zijn
+  verboden: `privileged` (elke waarde behalve `false`), host network zonder reden, `pid`/`ipc`/`uts`/`userns`/
+  `network_mode`, `security_opt`/`apparmor`/`seccomp` en elke `unconfined`-waarde, `cap_add`/`capabilities`, `sysctls`,
+  `command`/`entrypoint`, elk veld met `compose` in de naam, apparaten buiten de allowlist en koppelpaden over
+  systeemmappen. Een `{"param": …}` op een hostpad-veld moet een `path`-parameter uit de datasetkiezer zijn; apparaten
+  en koppelpaden moeten letterlijk in het manifest staan. Na het invullen van de parameters worden de waarden
+  opnieuw gecontroleerd.
+- **YAML**: naast ankers/aliassen ook merge-sleutels (`<<`, ook zonder anker), sleutels die geen tekst zijn
+  (`on:` → `True`, een lijst of object als sleutel) en nesting dieper dan 32 niveaus.
+
 ## Alle meldingscodes
 
 | Code | Betekenis |
@@ -41,6 +65,9 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | `yaml_alias_forbidden` | YAML-ankers/aliassen zijn niet toegestaan. |
 | `yaml_duplicate_key` | Een sleutel komt dubbel voor. |
 | `yaml_custom_tag_forbidden` | Eigen YAML-tags zijn niet toegestaan. |
+| `yaml_merge_key_forbidden` | YAML-merge-sleutels (<<) zijn niet toegestaan. |
+| `yaml_key_not_string` | Een sleutel moet tekst zijn. |
+| `yaml_too_deep` | Het manifest is te diep genest. |
 | `manifest_too_large` | Het manifest is te groot. |
 | `manifest_not_mapping` | Het manifest moet een object (mapping) zijn. |
 | `required_field_missing` | Verplicht veld ontbreekt. |
@@ -93,6 +120,7 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | `example_value_as_real` | Voorbeeldwaarde gebruikt als echte waarde. |
 | `secret_literal_forbidden` | Geheim als letterlijke waarde in het manifest. |
 | `secret_in_form` | Geheim zou in het Custom App-formulier terechtkomen. |
+| `interpolation_forbidden` | Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan. |
 | `decision_not_listed` | Besluit ontbreekt in decisions_required. |
 | `risk_below_policy_minimum` | Risicoklasse lager dan het platformminimum. |
 | `tag_only_rollback_with_migrations` | Tag-only rollback met databasemigraties is onveilig. |

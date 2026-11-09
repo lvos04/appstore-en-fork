@@ -63,3 +63,10 @@ def test_report_is_machine_readable() -> None:
     assert data["manifest_sha256"].startswith("sha256:")
     assert data["schema_sha256"].startswith("sha256:")
     assert set(data) >= {"valid", "app_id", "version", "errors", "warnings", "findings", "validator_version"}
+
+
+def test_every_code_is_in_the_author_documentation() -> None:
+    """docs/MANIFESTSTANDAARD.md mag niet achterlopen op de codes van de validator (review P0)."""
+    doc = (REPO_ROOT / "docs" / "MANIFESTSTANDAARD.md").read_text(encoding="utf-8")
+    missing = [code for code in CODES if f"| `{code}` |" not in doc]
+    assert not missing, missing

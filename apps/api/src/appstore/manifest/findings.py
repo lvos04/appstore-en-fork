@@ -40,6 +40,9 @@ CODES: dict[str, str] = {
     "yaml_alias_forbidden": "YAML-ankers/aliassen zijn niet toegestaan.",
     "yaml_duplicate_key": "Een sleutel komt dubbel voor.",
     "yaml_custom_tag_forbidden": "Eigen YAML-tags zijn niet toegestaan.",
+    "yaml_merge_key_forbidden": "YAML-merge-sleutels (<<) zijn niet toegestaan.",
+    "yaml_key_not_string": "Een sleutel moet tekst zijn.",
+    "yaml_too_deep": "Het manifest is te diep genest.",
     "manifest_too_large": "Het manifest is te groot.",
     "manifest_not_mapping": "Het manifest moet een object (mapping) zijn.",
     # schema
@@ -99,6 +102,7 @@ CODES: dict[str, str] = {
     "example_value_as_real": "Voorbeeldwaarde gebruikt als echte waarde.",
     "secret_literal_forbidden": "Geheim als letterlijke waarde in het manifest.",
     "secret_in_form": "Geheim zou in het Custom App-formulier terechtkomen.",
+    "interpolation_forbidden": "Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan.",
     "decision_not_listed": "Besluit ontbreekt in decisions_required.",
     # beheer
     "risk_below_policy_minimum": "Risicoklasse lager dan het platformminimum.",

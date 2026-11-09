@@ -1,6 +1,6 @@
 # ADR-0002 — Manifeststandaard v1 (B08-001)
 
-- **Status:** aangenomen · 2026-11-09
+- **Status:** aangenomen · 2026-11-09 · aangescherpt door [ADR-0007](ADR-0007-review-p0-validator-aanscherping.md)
 - **Context:** contract §9 en EX47: weigeren vóór uitvoering van compose/YAML, privileged, Docker-socket, gevaarlijke
   hostpaden, host network zonder reden, `latest`, ontbrekende digest; geen voorbeeldwaarden als echte waarde (D01–D18
   onbekend). Excel B08-001: "JSON Schema + signed manifest provenance + compatibility against TrueNAS release".

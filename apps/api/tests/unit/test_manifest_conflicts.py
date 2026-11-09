@@ -80,3 +80,27 @@ def test_platform_port_warning_and_dependencies(custom_manifest: dict[str, Any])
     assert {"port_reserved_platform", "dependency_version_too_low", "dependency_optional_missing"} <= set(codes)
     report = analyse(model, payload, _inv([]), now=NOW)
     assert "dependency_missing" in [f.code for f in report.findings]
+
+
+def test_future_inventory_is_unknown(custom_manifest: dict[str, Any]) -> None:
+    """Review P0: een inventaris met een tijdstip in de toekomst (klokfout of vervalst) is niet te vertrouwen."""
+    model, payload = _plan(custom_manifest)
+    report = analyse(model, payload, _inv([], age=timedelta(hours=-3)), now=NOW)
+    assert report.status == "unknown" and "inventory_stale" in [f.code for f in report.findings]
+
+
+def test_host_network_ports_are_checked_against_inventory(custom_manifest: dict[str, Any]) -> None:
+    """Review P0: bij host network is de ports-lijst leeg, maar de containerpoorten bezetten wél NAS-poorten."""
+    custom_manifest["network"].update(host_network=True, host_network_reason="mDNS-discovery")
+    model, payload = _plan(custom_manifest)
+    assert payload is not None and payload.values["ports"] == []
+    apps = [
+        {
+            "name": "andere",
+            "used_ports": [
+                {"container_port": 80, "protocol": "tcp", "host_ports": [{"host_port": 8080, "host_ip": "0.0.0.0"}]}
+            ],
+        }
+    ]
+    report = analyse(model, payload, _inv(apps), now=NOW)
+    assert report.status == "conflict" and "port_in_use" in [f.code for f in report.findings]

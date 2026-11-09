@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from .canonical import sha256_digest
 from .findings import Finding, Severity, error, warning
 from .model import CustomApp, Manifest, Parameter, ParamRef
-from .rules import _PLACEHOLDER, host_path_problem, is_own_image
+from .rules import _INTERPOLATION, _PLACEHOLDER, catalog_value_findings, host_path_problem, is_own_image
 from .truenas import (
     IX_APP_CATALOG_APP,
     IX_APP_MAX_EXCLUSIVE,
@@ -53,7 +53,8 @@ _DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*(/[A-Za-z0-9_.:-]+)+$")
 _DURATION = re.compile(r"^P(?=\d|T\d)(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?$")
 _TZ = re.compile(r"^(UTC|Etc/UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+){1,2})$")
 _VAULT_REF = re.compile(r"^vault://[a-z0-9_-]{1,64}/[a-z0-9_.-]{1,128}$")
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+#: Alle stuurtekens, ook tab/newline/CR: een parameterwaarde is altijd één regel.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f\u0085\u2028\u2029]")
 
 
 class Target(BaseModel):
@@ -106,6 +107,8 @@ def _check_value(param: Parameter, value: Any) -> str | None:
         return "bevat stuurtekens of is te lang"
     if _PLACEHOLDER.search(value):
         return "bevat een plaatshouder in plaats van een echte waarde"
+    if _INTERPOLATION.search(value):
+        return "bevat variabele-interpolatie ($VAR, ${…}, $(…), $$)"
     if t == "path":
         problem = host_path_problem(value)
         return problem[1] if problem else None
@@ -432,6 +435,10 @@ def translate(
     else:
         assert manifest.catalog is not None and manifest.values is not None
         values_any = _substitute(manifest.values, resolver, "values")
+        # verdediging in de diepte: de ingevulde waarden opnieuw controleren (een parameter smokkelt niets binnen)
+        resolver.findings.extend(
+            catalog_value_findings(values_any, host_network_reason=manifest.network.host_network_reason, resolved=True)
+        )
         if not any(f.severity is Severity.ERROR for f in resolver.findings):
             payload = AppCreatePayload(
                 app_name=name,
