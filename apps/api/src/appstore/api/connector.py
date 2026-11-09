@@ -40,7 +40,7 @@ def discover(_: Reader) -> dict[str, Any]:
         "schema_version": "1.0",
         "capabilities": CAPABILITIES,
         "unavailable_capabilities": [*sorted(NOT_BUILT), "stream"],
-        "permissions": ["catalog:read", "catalog:validate", "catalog:preview"],
+        "permissions": ["catalog:read", "catalog:validate", "catalog:preview", "catalog:import_preview"],
         "limits": {"page_max": 200, "manifest_max_bytes": 262144, "heavy_requests_per_minute": 120},
         "item_types": ["catalog_entry", "manifest_version", "catalog_source"],
         "timestamp_utc": iso(utcnow()),

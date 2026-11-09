@@ -19,6 +19,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import Principal, require, require_user
+from ..catalog.importer import CatalogCandidate, classify_inventory
 from ..catalog.service import requirements, trusted_key_id, verify_stored_provenance
 from ..catalog.sources import SourceError, check_remote_url
 from ..errors import ApiError
@@ -96,6 +97,11 @@ class ValidateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     manifest_yaml: Annotated[str | None, Field(max_length=MAX_MANIFEST_BYTES)] = None
     manifest: dict[str, Any] | None = None
+
+
+class ImportPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    inventory: Inventory
 
 
 class PreviewRequest(BaseModel):
@@ -547,6 +553,60 @@ def preview(body: PreviewRequest, request: Request, db: DB, principal: Operator)
     db.commit()
     result["evidence_id"] = str(evidence_id)
     return result
+
+
+# ---------------------------------------------------------------------------------------------- import (B08-002)
+def _catalog_candidates(db: Session) -> list[CatalogCandidate]:
+    entries = db.scalars(select(CatalogEntry).order_by(CatalogEntry.app_id)).all()
+    versions = {
+        v.id: v
+        for v in db.scalars(
+            select(ManifestVersion).where(
+                ManifestVersion.id.in_([e.latest_version_id for e in entries if e.latest_version_id])
+            )
+        )
+    }
+    out: list[CatalogCandidate] = []
+    for e in entries:
+        v = versions.get(e.latest_version_id) if e.latest_version_id else None
+        manifest = (v.manifest or {}) if v is not None else {}
+        out.append(
+            CatalogCandidate(
+                app_id=e.app_id,
+                install_method=e.install_method,
+                manifest_sha256=v.manifest_sha256 if v is not None else None,
+                catalog_app=(manifest.get("catalog") or {}).get("app"),
+                image_repository=(manifest.get("image") or {}).get("repository"),
+                valid=e.status == "valid" and v is not None and v.valid,
+            )
+        )
+    return out
+
+
+@router.post(
+    "/import/preview",
+    summary="Bestaande apps herkennen (B08-002, alleen lezen; niet-ondersteunde apps blijven unmanaged)",
+)
+def import_preview(body: ImportPreviewRequest, request: Request, db: DB, principal: Operator) -> dict[str, Any]:
+    request.app.state.heavy_limiter.check(principal.label())
+    report = classify_inventory(body.inventory, _catalog_candidates(db))
+    evidence_id = record_evidence(
+        db,
+        "import_preview",
+        principal,
+        tid(request),
+        {
+            "inventory_observed_at": iso(report.inventory_observed_at),
+            "inventory_source": body.inventory.source,
+            "status": report.status,
+            "counts": report.counts,
+            "apps": [{"name": a.name, "status": a.status, "matched_app_id": a.matched_app_id} for a in report.apps],
+        },
+    )
+    db.commit()
+    out = report.model_dump(mode="json")
+    out["evidence_id"] = str(evidence_id)
+    return out
 
 
 # ---------------------------------------------------------------------------------------------- koppeling

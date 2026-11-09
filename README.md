@@ -1,7 +1,8 @@
 # appstore-en-fork
 
-Appstore-catalogus van het **TrueNAS Home Platform V2**: B08-001 manifeststandaard (deze fase), later B08-002 import
-van bestaande apps en B08-005 forkbeheer. Zelfstandige API-dienst met alleen een kleine Nederlandse statuspagina; alle
+Appstore-catalogus van het **TrueNAS Home Platform V2**: B08-001 manifeststandaard en de alleen-lezen kern van B08-002
+(bestaande apps herkennen; niet-ondersteunde apps blijven unmanaged), later het vastleggen van de eigenaar (B08-002) en
+B08-005 forkbeheer. Zelfstandige API-dienst met alleen een kleine Nederlandse statuspagina; alle
 schermen staan in de Hub-UI van `ai-server-manager`.
 
 > **Status (eerlijk):** code, unit-, integratie- en E2E-tests met simulators zijn groen in de bouwomgeving
@@ -16,13 +17,14 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 | CLI `jl-manifest validate|translate|sign|verify` | `appstore.manifest.cli` |
 | Vertaling naar TrueNAS `app.create` (standaard Custom App = `ix-app`, of catalogusapp) + conflictanalyse | `manifest/translate.py`, `manifest/conflicts.py`, [`docs/TRUENAS_APP_VALUES.md`](docs/TRUENAS_APP_VALUES.md) |
 | Catalogus-API `/catalog/v1` (bronnen bundled/git/http, entries, versiegeschiedenis, valideren, voorbeeld) | `apps/api/src/appstore/api/catalog.py` |
+| B08-002 bestaande apps herkennen: `POST /catalog/v1/import/preview` (alleen lezen, plant geen acties) | `catalog/importer.py` |
 | Connectorcontract `/connector/v1` (read; propose/apply/rollback → `capability_unavailable`) | `api/connector.py` |
 | Koppelen met de Hub (enrollment-token of koppelcode), Hub-JWT via JWKS, service-token | `hublink.py`, `auth.py` |
 | Alles-in-één image (PostgreSQL 16 + API + worker) | `deploy/allinone/` |
 | Installatie als standaard TrueNAS Custom App (formuliervelden, geen YAML) | [`deploy/truenas/CUSTOM_APP.md`](deploy/truenas/CUSTOM_APP.md) |
 | Eigen manifest | `deploy/manifest/appstore-en-fork.manifest.yaml` |
 | OpenAPI | `docs/openapi/appstore-en-fork.openapi.json` |
-| Besluiten | `docs/adr/ADR-0001` … `ADR-0006` |
+| Besluiten | `docs/adr/ADR-0001` … `ADR-0007` (ADR-0007: aanscherping na de review van fase P0) |
 
 ## Installeren
 

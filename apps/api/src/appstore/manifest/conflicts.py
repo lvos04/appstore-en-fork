@@ -60,6 +60,7 @@ class InstalledApp(_Model):
     catalog_app: str | None = None
     version: str | None = None
     platform_app_id: str | None = None  # label nl.lvos04.platform.app_id indien aanwezig
+    labels: dict[str, str] = Field(default_factory=dict)  # labels uit app.config (o.a. nl.lvos04.platform.*)
     used_ports: list[UsedPort] = Field(default_factory=list)
     volumes: list[Volume] = Field(default_factory=list)
     images: list[str] = Field(default_factory=list)

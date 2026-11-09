@@ -32,6 +32,19 @@
         "title": "HostPort",
         "type": "object"
       },
+      "ImportPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "inventory": {
+            "$ref": "#/components/schemas/Inventory"
+          }
+        },
+        "required": [
+          "inventory"
+        ],
+        "title": "ImportPreviewRequest",
+        "type": "object"
+      },
       "InstalledApp": {
         "properties": {
           "catalog_app": {
@@ -51,6 +64,13 @@
             },
             "title": "Images",
             "type": "array"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
           },
           "name": {
             "title": "Name",
@@ -793,6 +813,49 @@
           }
         },
         "summary": "Koppelstatus met de Hub (zonder geheimen)",
+        "tags": [
+          "catalogus"
+        ]
+      }
+    },
+    "/catalog/v1/import/preview": {
+      "post": {
+        "operationId": "import_preview_catalog_v1_import_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Import Preview Catalog V1 Import Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bestaande apps herkennen (B08-002, alleen lezen; niet-ondersteunde apps blijven unmanaged)",
         "tags": [
           "catalogus"
         ]
