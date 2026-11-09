@@ -32,7 +32,7 @@ def peil_pagina(resp: object) -> str:
     headers = resp.headers  # type: ignore[attr-defined]
     assert headers["content-type"].startswith("text/html")
     assert headers["content-security-policy"] == CSP and headers["cache-control"] == "no-store"
-    assert headers["x-content-type-options"] == "nosniff" and headers["referrer-policy"] == "no-referrer"
+    assert headers["x-content-type-options"] == "nosniff" and headers["referrer-policy"] == "same-origin"
     assert html.startswith("<!doctype html>\n<!-- Peil statuspagina-sjabloon 1.1.0")
     assert "<script" not in html.lower() and "Herkomst:" not in html
     assert "{{" not in html and "<!--ALS:" not in html and "<!--ELK:" not in html and "<!--NIET:" not in html
@@ -101,6 +101,17 @@ def test_rate_limited_and_session_pages(client: TestClient, hub: FakeHub) -> Non
     resp = post_form(client, code="ABCD-EFGH-JKMN", fingerprint=hub.fingerprint())
     assert resp.status_code == 429 and resp.headers["retry-after"] == "900"
     assert melding_code(resp) == "te_veel_pogingen" and "Wacht 15 minuten" in peil_pagina(resp)
+
+
+def test_referrer_policy_keeps_the_browser_origin_and_null_origin_stays_refused(
+    client: TestClient, hub: FakeHub
+) -> None:
+    """Ontwerpreview (docs/ontwerp/PEIL_REVIEW.md): met ``Referrer-Policy: no-referrer`` stuurt Chromium bij de
+    formulier-POST ``Origin: null`` en faalde elke echte koppelpoging met ``sessie_verlopen``. Met ``same-origin``
+    stuurt de browser het eigen adres; ``Origin: null`` (sandbox, ander document) blijft geweigerd."""
+    assert client.get("/").headers["referrer-policy"] == "same-origin"
+    resp = post_form(client, code="ABCD-EFGH-JKMN", fingerprint=hub.fingerprint(), origin={"Origin": "null"})
+    assert resp.status_code == 403 and melding_code(resp) == "sessie_verlopen"
 
 
 def test_linked_page_has_no_form_and_neutral_linked_pill(client: TestClient, hub: FakeHub) -> None:

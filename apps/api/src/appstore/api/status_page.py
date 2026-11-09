@@ -66,7 +66,10 @@ HEADERS = {
     "Cache-Control": "no-store",
     "Content-Security-Policy": CSP,
     "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
+    # same-origin, niet no-referrer: bij no-referrer stuurt een browser bij de formulier-POST ``Origin: null`` (Fetch,
+    # "serializing a request origin") en weigert de Origin-controle elke echte koppelpoging (gevonden in de
+    # ontwerpreview met een echte browser, docs/ontwerp/PEIL_REVIEW.md). Naar andere sites gaat nog steeds geen referrer.
+    "Referrer-Policy": "same-origin",
 }
 MAANDEN = ("jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec")
 ERNST = {"gezond": 0, "onbekend": 1, "beperkt": 2, "storing": 3}
