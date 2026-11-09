@@ -9,7 +9,6 @@ version: "1.0.0"
 install: {method: custom_app}
 image: {repository: docker.io/onbekend/tool, tag: latest, digest: null}
 custom_app:
-  ports: []
   storage:
     - {name: rootfs, type: host_path, host_path: /}
     - {name: sock, type: host_path, host_path: /var/run/docker.sock}
@@ -22,7 +21,7 @@ parameters: []
 storage:
   - {name: rootfs, mount: /host, kind: data, required_dataset_role: null}
   - {name: sock, mount: /var/run/docker.sock, kind: config, required_dataset_role: null}
-network: {ports: [], host_network: true, joins_platform_network: false}
+network: {ports: [], host_network: true}
 privileges: {privileged: true, cap_add: [SYS_ADMIN, NET_ADMIN], devices: [], gpu: none}
 healthcheck: {type: builtin}
 backup: {db_export: {method: none}, snapshot_datasets: [], rpo: PT24H, rto: PT24H}

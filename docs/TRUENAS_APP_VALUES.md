@@ -33,7 +33,7 @@ Catalogusapp (bijv. meerdere containers): `catalog_app`/`train`/`version` uit he
 
 | Formulier (UI) | `values`-sleutel | Uit manifest |
 |---|---|---|
-| Image → Repository / Tag / Pull Policy | `image.repository`, `image.tag`, `image.pull_policy` | `image.repository`; `image.tag` + `@<digest>` (ADR-0004); altijd `missing` |
+| Image → Repository / Tag / Pull Policy | `image.repository`, `image.tag`, `image.pull_policy` | `image.repository`; `image.tag` + `@<digest>` (ADR-0004, contract 1.2 §2.2) met digest-readback na installatie; altijd `missing` |
 | Timezone | `TZ` | `custom_app.timezone` (parameter, wizard); zonder: `Etc/UTC` + waarschuwing |
 | Environment Variables | `envs[] {name, value}` | `custom_app.env` (letterlijk of getypte parameter; geheimen verboden) |
 | Restart Policy (+ Maximum Retry Count) | `restart_policy` (`no`/`unless-stopped`/`on-failure`/`always`), `max_retry_count` alleen bij `on-failure` | `custom_app.restart_policy` |
@@ -43,14 +43,14 @@ Catalogusapp (bijv. meerdere containers): `catalog_app`/`train`/`version` uit he
 | Capabilities → Add | `capabilities.add[]` | `privileges.cap_add` (met reden; SYS_ADMIN e.d. verboden) |
 | Custom User + User/Group ID | `run_as_custom_user`, `run_as {user, group}` | `custom_app.run_as` (`custom` → 568:568 e.d.; root kan niet) |
 | Host Network | `host_network` | `network.host_network` (alleen met reden) |
-| Ports | `ports[] {bind_mode: published, port_number, container_port, protocol, host_ips: []}` | `custom_app.ports` (hostpoort via parameter, standaard het contractvoorstel) |
+| Ports | `ports[] {bind_mode: published, port_number, container_port, protocol, host_ips: []}` | `network.ports` (contract 1.2 §9: de enige bron; hostpoort via parameter, standaard het contractvoorstel) |
 | Networks / Custom DNS | `networks: []`, `dns_config {nameservers, searches, options}` | leeg (geen gedeeld Docker-netwerk, contract §2) |
 | Portals | `portals[] {name, scheme, use_node_ip: true, host: "", port, path}` | `custom_app.portal` |
 | Storage → Host Path | `storage[] {type: host_path, read_only, mount_path, host_path_config {acl_enable: false, path}}` | `custom_app.storage` + `storage[].mount`; pad uit de datasetkiezer |
 | Storage → ixVolume | `… {type: ix_volume, ix_volume_config {acl_enable: false, dataset_name}}` | idem |
 | Storage → tmpfs | `… {type: tmpfs, tmpfs_config {size}}` (MiB) | alleen voor `kind: scratch` |
 | Labels | `labels[] {key, value}` | `nl.lvos04.platform.app_id`, `.manifest_sha256`, `.managed_by` (herkenning bij import, B08-002) |
-| Resources | `resources {enable_resource_limits, limits {cpus, memory (MB)}, gpus {use_all_gpus, nvidia_gpu_selection}}` | `custom_app.resources`; `gpu: intel_render` → `use_all_gpus: true` |
+| Resources | `resources {enable_resource_limits, limits {cpus, memory (MB)}, gpus {use_all_gpus, nvidia_gpu_selection}}` | `custom_app.resources`; `custom_app.gpu` (letterlijk of `gpu`-parameter) = `intel_render` → `use_all_gpus: true`, alleen met door D08 gemeten render-node |
 | Notes | `notes` | korte NL-notitie met manifest-hash |
 
 SMB/NFS-opslag (`cifs`/`nfs`) wordt bewust niet ondersteund: die vereisen een wachtwoord in het formulier.
@@ -65,6 +65,11 @@ SMB/NFS-opslag (`cifs`/`nfs`) wordt bewust niet ondersteund: die vereisen een wa
   de manifestvalidator is strenger (ook `/etc`, `/var/run`, `/run`, sockets, alles buiten `/mnt/<pool>/<dataset>`).
 
 ## Compatibiliteit
+
+- **Verdwijnende versies (contract 1.2 §2.2, bronwaarneming, NIET GEVALIDEERD):** in de gelezen catalogus-commit houdt
+  een trein alleen de nieuwste versie per app. Zonder gemeten lijst (`target.available_versions`) waarschuwt de
+  vertaling (`version_availability_unknown`); met een lijst waarin de vastgezette versie of elke geteste `ix-app`-versie
+  ontbreekt, blokkeert ze (`version_unavailable`).
 
 - Ondersteunde ix-app-reeks: `>= 1.2.0` en `< 2.0.0` (zelfde formulierstructuur); letterlijk nagelopen: `1.4.8`.
   Andere versies binnen de reeks geven `ix_app_version_unverified` (waarschuwing); de executor moet dan zelf het

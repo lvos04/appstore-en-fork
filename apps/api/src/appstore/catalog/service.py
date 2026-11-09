@@ -328,7 +328,12 @@ def requirements(m: Manifest) -> dict[str, Any]:
         "storage": [s.model_dump() for s in m.storage],
         "privileges": m.privileges.model_dump(),
         "privilege_reason": m.privilege_reason,
-        "gpu": m.privileges.gpu,
+        "gpu": m.privileges.gpu,  # het maximum (contract 1.2 §9)
+        "gpu_request": (
+            None
+            if m.custom_app is None
+            else ({"param": m.custom_app.gpu.param} if isinstance(m.custom_app.gpu, ParamRef) else m.custom_app.gpu)
+        ),
         "resources": m.custom_app.resources.model_dump() if m.custom_app else None,
         "run_as": m.custom_app.run_as.model_dump() if m.custom_app else None,
         "backup": m.backup.model_dump(mode="json"),

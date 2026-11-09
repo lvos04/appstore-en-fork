@@ -54,6 +54,7 @@ CODES: dict[str, str] = {
     "out_of_range": "Waarde buiten het toegestane bereik.",
     "forbidden_combination": "Deze velden mogen niet samen voorkomen.",
     "model_mismatch": "Intern: schema en model oordelen verschillend.",
+    "deprecated_field": "Vervallen veld uit een eerdere contractversie (waarschuwing; fout in --strict).",
     # installatiemethode
     "compose_forbidden": "Compose/YAML-installatie is verboden.",
     "install_method_forbidden": "Installatiemethode is niet toegestaan.",
@@ -73,14 +74,16 @@ CODES: dict[str, str] = {
     "capability_unknown": "Onbekende Linux-capability.",
     "device_forbidden": "Dit apparaat mag niet aan een container worden gegeven.",
     "device_without_reason": "Apparaat zonder privilege_reason.",
-    "gpu_inconsistent": "GPU-instelling verschilt tussen privileges en custom_app.",
+    "gpu_exceeds_privileges": "custom_app.gpu vraagt meer GPU dan privileges.gpu toestaat.",
     "gpu_without_reason": "GPU-toegang zonder privilege_reason.",
+    "gpu_decision_missing": "GPU-toegang zonder D08 in decisions_required.",
+    "gpu_param_invalid": "GPU-parameter moet uit de wizard komen, met D08 en niet verplicht.",
     "run_as_image_default_upstream": "Upstream-image draait als de standaardgebruiker van de image.",
     # netwerk
     "host_network_without_reason": "Host network zonder host_network_reason.",
     "host_network_requested": "Host network gevraagd.",
     "platform_network_not_supported": "Apps zitten niet in een gedeeld Docker-netwerk.",
-    "ports_inconsistent": "Poorten in custom_app en network verschillen.",
+    "ports_inconsistent": "Vervallen custom_app.ports wijkt af van network.ports.",
     "duplicate_port": "Poort komt dubbel voor.",
     "port_privileged_range": "Hostpoort onder 1024.",
     # opslag
@@ -133,6 +136,10 @@ CODES: dict[str, str] = {
     "truenas_version_incompatible": "App is niet compatibel met deze TrueNAS-versie.",
     "truenas_version_invalid": "TrueNAS-versie heeft een onbekend formaat.",
     "digest_not_pinned": "Image zonder digest; installatie zou een veranderlijke tag gebruiken.",
+    "version_unavailable": "De vastgezette versie staat niet (meer) in de gemeten TrueNAS-catalogus.",
+    "version_availability_unknown": "Niet gemeten welke versies de TrueNAS-catalogus nog heeft.",
+    "gpu_not_measured": "GPU gevraagd, maar D08 heeft geen render-node gemeten.",
+    "gpu_all_render_devices": "De app krijgt elke render-GPU van de NAS (het formulier kan niet per GPU kiezen).",
     # conflictanalyse
     "inventory_missing": "Geen gemeten TrueNAS-inventaris; conflicten zijn onbekend.",
     "inventory_stale": "TrueNAS-inventaris is verouderd.",

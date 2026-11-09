@@ -70,3 +70,28 @@ def test_every_code_is_in_the_author_documentation() -> None:
     doc = (REPO_ROOT / "docs" / "MANIFESTSTANDAARD.md").read_text(encoding="utf-8")
     missing = [code for code in CODES if f"| `{code}` |" not in doc]
     assert not missing, missing
+
+
+def test_legacy_1_1_manifest_is_accepted_with_deprecated_fields() -> None:
+    """Contract 1.2 §9: overgang — custom_app.ports (gelijk) en joins_platform_network: false → deprecated_field."""
+    report, model, _ = validate_text((FIXTURES / "manifests" / "legacy-1-1-custom.manifest.yaml").read_bytes())
+    assert report.valid and model is not None, report.as_text()
+    assert sorted((f.code, f.path) for f in report.findings) == [
+        ("deprecated_field", "custom_app.ports"),
+        ("deprecated_field", "network.joins_platform_network"),
+    ]
+    assert all(f.severity.value == "warning" for f in report.findings)
+
+
+def test_new_schema_no_longer_requires_removed_fields() -> None:
+    required_network = schema()["$defs"]["Network"]["required"]
+    required_custom = schema()["$defs"]["CustomApp"]["required"]
+    assert "joins_platform_network" not in required_network and "ports" not in required_custom
+    assert "gpu" in schema()["$defs"]["Parameter"]["properties"]["type"]["enum"]
+
+
+def test_own_manifest_has_no_deprecated_fields(own_manifest_text: str) -> None:
+    assert "joins_platform_network" not in own_manifest_text
+    report, _, data = validate_text(own_manifest_text)
+    assert data is not None and "ports" not in data["custom_app"]
+    assert "deprecated_field" not in report.codes()

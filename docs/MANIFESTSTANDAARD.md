@@ -1,4 +1,4 @@
-# Manifeststandaard v1 — handleiding voor app-auteurs (B08-001)
+# Manifeststandaard v1 — handleiding voor app-auteurs (B08-001, platformcontract 1.2 §9)
 
 Normatief: [`schemas/manifest-v1.schema.json`](../schemas/manifest-v1.schema.json) (JSON Schema draft 2020-12) plus de
 regels in `apps/api/src/appstore/manifest/rules.py`. Keuzes en redenen: [ADR-0002](adr/ADR-0002-manifeststandaard-v1.md),
@@ -20,18 +20,38 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | Veld | Betekenis |
 |---|---|
 | `manifest_version` | altijd `"1"` |
-| `app_id`, `name`, `owner_repo`, `category`, `description_nl`, `version` | identiteit; `app_id` = TrueNAS-appnaam (`^[a-z]([-a-z0-9]*[a-z0-9])?$`, max 40) |
+| `app_id`, `name`, `owner_repo`, `category`, `description_nl`, `version` | identiteit; `app_id` = vaste naam van de app en voorgestelde TrueNAS-appnaam (`^[a-z]([-a-z0-9]*[a-z0-9])?$`, max 40) |
 | `install.method` | `custom_app` (één image + formulierwaarden) of `catalog_app` (officiële TrueNAS-catalogus); compose/YAML is verboden |
 | `image` | `repository` (zonder tag), `tag` (exacte versie, nooit `latest`), `digest` (`sha256:…`, verplicht voor upstream; eigen GHCR-images: release-CI) |
-| `custom_app` | het standaardformulier: `ports`, `storage` (host_path via parameter, ix_volume, tmpfs), `env`, `resources`, `gpu`, `run_as`, `timezone`, `restart_policy`, `portal` |
+| `custom_app` | het standaardformulier: `storage` (host_path via parameter, ix_volume, tmpfs), `env`, `resources`, `gpu` (`none`, `intel_render` of `{param: …}` naar een `gpu`-parameter), `run_as`, `timezone`, `restart_policy`, `portal`; **geen** `ports` meer (1.2) |
 | `catalog` + `values` | `train`/`app`/exacte `version` + waarden; parameters als `{"param": "<naam>"}` |
-| `parameters` | getypt (`string, integer, boolean, port, path, dataset, url, timezone, duration, secret_ref`) met `source: wizard, dataset_picker, secret, generated, default`; alleen `default` mag een default hebben; `example` wordt nooit als waarde gebruikt |
+| `parameters` | getypt (`string, integer, boolean, port, path, dataset, url, timezone, duration, secret_ref, gpu`) met `source: wizard, dataset_picker, secret, generated, default`; alleen `default` mag een default hebben; `example` wordt nooit als waarde gebruikt |
 | `storage` | `name`, `mount` (in de container), `kind: config, data, media, scratch`, `required_dataset_role` |
-| `network` | `ports` (gelijk aan `custom_app.ports`), `host_network` (+ `host_network_reason`), `joins_platform_network: false` |
-| `privileges` + `privilege_reason` | `privileged: false`, `cap_add`, `devices`, `gpu: none, intel_render`; alles behalve niets vereist een reden |
+| `network` | `ports` — **de enige bron** voor de poorten van het formulier —, `host_network` (+ `host_network_reason`) |
+| `privileges` + `privilege_reason` | `privileged: false`, `cap_add`, `devices`, `gpu: none, intel_render` (het **maximum**; `intel_render` vereist een reden én D08 in `decisions_required`); alles behalve niets vereist een reden |
 | `healthcheck` | `http` (pad + poort), `tcp` (poort) of `builtin` (HEALTHCHECK van de image) |
 | `backup` | `db_export` (`pg_dump, sqlite_backup, app_native, none`), `snapshot_datasets`, `rpo`/`rto` (ISO-8601 of parameter, D16) |
 | `dependencies`, `sso`, `risk` (≥ R2), `upgrade` (`migrations`, `tag_only_rollback_safe`), `decisions_required` (D01–D18), `docs`, `validation_status`, `compatibility`, `provenance` | beheer en herkomst |
+
+## Wijzigingen in contract 1.2 (overgang, ADR-0008)
+
+- `network.joins_platform_network` **vervalt** (apps delen nooit een Docker-netwerk). Staat het er nog met `false`, dan
+  geeft de validator `deprecated_field` (waarschuwing); met `true` blijft het de fout `platform_network_not_supported`.
+- `custom_app.ports` **vervalt**: de vertaling bouwt de formulierpoorten uit `network.ports`. Staat het er nog en is het
+  gelijk aan `network.ports`, dan `deprecated_field`; wijkt het af, dan de fout `ports_inconsistent`.
+  `custom_app.portal.port` en `healthcheck.port` verwijzen naar een naam in `network.ports`.
+- **GPU als optionele parameter:** `privileges.gpu` is het maximum. `custom_app.gpu` is `none`, `intel_render` of
+  `{param: <naam>}` naar een parameter van type `gpu` (waarden `none|intel_render`, `source: wizard`,
+  `decision: D08`, `required: false`); ontbreekt de waarde, dan `none`. Vraagt `custom_app.gpu` meer dan het maximum:
+  `gpu_exceeds_privileges`. Bij de vertaling (`preview`) kan `intel_render` alleen als het doel een door D08 **gemeten**
+  render-node meldt (`target.gpu_render_node: measured`), anders `gpu_not_measured`; met meting geeft de preview
+  `gpu_all_render_devices` (het formulier zet `use_all_gpus` en kan niet per GPU kiezen; NIET GEVALIDEERD).
+- `jl-manifest validate --strict` (release-CI) faalt op elke waarschuwing, dus ook op `deprecated_field`.
+- **Vertaling:** de tag wordt `<tag>@sha256:<digest>`; de preview bevat een verplichte digest-readback
+  (`digest_readback`: `app.image.query`, `repo_digests`, verwachte digest, terugvaltag zonder digest; afwijking → stop
+  en incident). Meldt het doel welke versies de catalogus nog heeft (`target.available_versions`) en ontbreekt de
+  vastgezette versie (of bij een Custom App elke geteste `ix-app`-versie), dan de blokkade `version_unavailable` met
+  een voorstel; er wordt nooit stil een nieuwere versie gekozen. Niet gemeten: `version_availability_unknown`.
 
 ## Weigerregels in detail (aangescherpt na de review van fase P0, ADR-0007)
 
@@ -78,6 +98,7 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | `out_of_range` | Waarde buiten het toegestane bereik. |
 | `forbidden_combination` | Deze velden mogen niet samen voorkomen. |
 | `model_mismatch` | Intern: schema en model oordelen verschillend. |
+| `deprecated_field` | Vervallen veld uit een eerdere contractversie (waarschuwing; fout in --strict). |
 | `compose_forbidden` | Compose/YAML-installatie is verboden. |
 | `install_method_forbidden` | Installatiemethode is niet toegestaan. |
 | `tag_missing` | Image-tag ontbreekt. |
@@ -94,13 +115,15 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | `capability_unknown` | Onbekende Linux-capability. |
 | `device_forbidden` | Dit apparaat mag niet aan een container worden gegeven. |
 | `device_without_reason` | Apparaat zonder privilege_reason. |
-| `gpu_inconsistent` | GPU-instelling verschilt tussen privileges en custom_app. |
+| `gpu_exceeds_privileges` | custom_app.gpu vraagt meer GPU dan privileges.gpu toestaat. |
 | `gpu_without_reason` | GPU-toegang zonder privilege_reason. |
+| `gpu_decision_missing` | GPU-toegang zonder D08 in decisions_required. |
+| `gpu_param_invalid` | GPU-parameter moet uit de wizard komen, met D08 en niet verplicht. |
 | `run_as_image_default_upstream` | Upstream-image draait als de standaardgebruiker van de image. |
 | `host_network_without_reason` | Host network zonder host_network_reason. |
 | `host_network_requested` | Host network gevraagd. |
 | `platform_network_not_supported` | Apps zitten niet in een gedeeld Docker-netwerk. |
-| `ports_inconsistent` | Poorten in custom_app en network verschillen. |
+| `ports_inconsistent` | Vervallen custom_app.ports wijkt af van network.ports. |
 | `duplicate_port` | Poort komt dubbel voor. |
 | `port_privileged_range` | Hostpoort onder 1024. |
 | `literal_host_path` | Hostpad moet uit de datasetkiezer komen. |
@@ -149,6 +172,10 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | `truenas_version_incompatible` | App is niet compatibel met deze TrueNAS-versie. |
 | `truenas_version_invalid` | TrueNAS-versie heeft een onbekend formaat. |
 | `digest_not_pinned` | Image zonder digest; installatie zou een veranderlijke tag gebruiken. |
+| `version_unavailable` | De vastgezette versie staat niet (meer) in de gemeten TrueNAS-catalogus. |
+| `version_availability_unknown` | Niet gemeten welke versies de TrueNAS-catalogus nog heeft. |
+| `gpu_not_measured` | GPU gevraagd, maar D08 heeft geen render-node gemeten. |
+| `gpu_all_render_devices` | De app krijgt elke render-GPU van de NAS (het formulier kan niet per GPU kiezen). |
 | `inventory_missing` | Geen gemeten TrueNAS-inventaris; conflicten zijn onbekend. |
 | `inventory_stale` | TrueNAS-inventaris is verouderd. |
 | `app_name_taken` | Er bestaat al een app met deze naam. |

@@ -188,6 +188,33 @@ def test_preview_ready_and_unknowns(linked: TestClient, hub: FakeHub) -> None:
     assert "digest_not_pinned" in {f["code"] for f in own["translation"]["findings"]}
 
 
+def test_preview_contract_1_2_readback_gpu_and_unavailable_version(linked: TestClient, hub: FakeHub) -> None:
+    """M3/M5 via de API: digest-readback, GPU alleen met gemeten render-node, verdwenen ix-app-versie blokkeert."""
+    inventory = {"observed_at": datetime.now(UTC).isoformat(), "source": "simulator", "apps": []}
+    target = {"truenas_version": "25.10.1", "ix_app_version": "1.4.8", "available_versions": ["1.4.8"]}
+    body = {"app_id": "voorbeeld-web", "parameters": PARAMS, "target": target, "inventory": inventory}
+    op = hub.auth(roles=["operator"])
+    ok = linked.post("/catalog/v1/preview", json=body, headers=op).json()
+    assert ok["ready_for_install"] is True, ok
+    readback = ok["translation"]["digest_readback"]
+    assert readback["method"] == "app.image.query" and readback["expected_digest"].startswith("sha256:")
+    assert ok["translation"]["payload"]["values"]["image"]["tag"] == readback["form_tag"]
+    gpu = linked.post(
+        "/catalog/v1/preview",
+        json={**body, "parameters": {**PARAMS, "gpu": "intel_render"}},
+        headers=hub.auth(roles=["operator"]),
+    ).json()
+    assert gpu["ready_for_install"] is False
+    assert "gpu_not_measured" in {f["code"] for f in gpu["translation"]["findings"]}
+    gone = linked.post(
+        "/catalog/v1/preview",
+        json={**body, "target": {**target, "available_versions": ["1.5.0"]}},
+        headers=hub.auth(roles=["operator"]),
+    ).json()
+    assert gone["ready_for_install"] is False
+    assert "version_unavailable" in {f["code"] for f in gone["translation"]["findings"]}
+
+
 def test_sources_crud_idempotency_and_etag(linked: TestClient, hub: FakeHub) -> None:
     body = {"name": "eigen-bron", "kind": "http", "url": "http://bron.test/catalogus/index.json"}
     key = idem()

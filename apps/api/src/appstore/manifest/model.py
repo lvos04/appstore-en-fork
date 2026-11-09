@@ -88,12 +88,17 @@ class Portal(_Strict):
     name: str = "Web UI"
 
 
+GpuChoice = Literal["none", "intel_render"]
+
+
 class CustomApp(_Strict):
-    ports: list[PortBinding]
+    #: Vervallen in contract 1.2 §9 (poorten alleen in ``network.ports``); alleen voor de overgang toegestaan.
+    ports: list[PortBinding] | None = None
     storage: list[StorageBinding]
     env: list[EnvVar]
     resources: Resources
-    gpu: Literal["none", "intel_render"]
+    #: ``none``, ``intel_render`` of een verwijzing naar een parameter van type ``gpu`` (contract 1.2 §9).
+    gpu: GpuChoice | ParamRef
     run_as: RunAs
     timezone: str | ParamRef | None = None
     restart_policy: Literal["unless-stopped", "on-failure", "always", "no"] = "unless-stopped"
@@ -107,7 +112,7 @@ class Catalog(_Strict):
 
 
 ParamType = Literal[
-    "string", "integer", "boolean", "port", "path", "dataset", "url", "timezone", "duration", "secret_ref"
+    "string", "integer", "boolean", "port", "path", "dataset", "url", "timezone", "duration", "secret_ref", "gpu"
 ]
 ParamSource = Literal["wizard", "dataset_picker", "secret", "generated", "default"]
 
@@ -133,10 +138,12 @@ class StorageDecl(_Strict):
 
 
 class Network(_Strict):
+    #: De enige bron voor de poorten van het formulier (contract 1.2 §9).
     ports: list[PortBinding]
     host_network: bool
     host_network_reason: str | None = None
-    joins_platform_network: bool
+    #: Vervallen in contract 1.2 §9; ``false`` → ``deprecated_field``, ``true`` → ``platform_network_not_supported``.
+    joins_platform_network: bool | None = None
 
 
 class Device(_Strict):
@@ -148,7 +155,8 @@ class Privileges(_Strict):
     privileged: bool
     cap_add: list[str]
     devices: list[Device]
-    gpu: Literal["none", "intel_render"]
+    #: Het maximum (contract 1.2 §9); ``custom_app.gpu`` mag nooit meer vragen.
+    gpu: GpuChoice
 
 
 class Healthcheck(_Strict):

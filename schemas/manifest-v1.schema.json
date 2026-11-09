@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/lvos04/appstore-en-fork/schemas/manifest-v1.schema.json",
   "title": "TrueNAS Home Platform V2 — app-manifest v1",
-  "description": "Manifeststandaard B08-001 (platformcontracten 1.1 §9). Installatie uitsluitend als standaard TrueNAS Custom App (ix-app) of officiële catalogusapp; compose/YAML is verboden. Semantische veiligheidsregels (privileged, Docker-socket, hostpaden, latest, digest, voorbeeldwaarden) staan in de validator (appstore.manifest.rules).",
+  "description": "Manifeststandaard B08-001 (platformcontracten 1.2 §9). Installatie uitsluitend als standaard TrueNAS Custom App (ix-app) of officiële catalogusapp; compose/YAML is verboden. Poorten staan alleen in network.ports; network.joins_platform_network en custom_app.ports zijn vervallen en worden alleen nog voor de overgang geaccepteerd (melding deprecated_field). Semantische veiligheidsregels (privileged, Docker-socket, hostpaden, latest, digest, voorbeeldwaarden, GPU) staan in de validator (appstore.manifest.rules).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -104,9 +104,13 @@
     "CustomApp": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ports", "storage", "env", "resources", "gpu", "run_as"],
+      "required": ["storage", "env", "resources", "gpu", "run_as"],
       "properties": {
-        "ports": {"type": "array", "items": {"$ref": "#/$defs/PortBinding"}},
+        "ports": {
+          "description": "Vervallen in contract 1.2 (§9): poorten staan alleen in network.ports. Alleen nog geaccepteerd voor de overgang (deprecated_field als gelijk, anders ports_inconsistent).",
+          "type": "array",
+          "items": {"$ref": "#/$defs/PortBinding"}
+        },
         "storage": {"type": "array", "items": {"$ref": "#/$defs/StorageBinding"}},
         "env": {"type": "array", "items": {"$ref": "#/$defs/EnvVar"}},
         "resources": {
@@ -118,7 +122,10 @@
             "memory_mib": {"type": ["integer", "null"], "minimum": 64, "maximum": 1048576}
           }
         },
-        "gpu": {"enum": ["none", "intel_render"]},
+        "gpu": {
+          "description": "none, intel_render of {param: <naam>} naar een parameter van type gpu (contract 1.2 §9); begrensd door privileges.gpu.",
+          "oneOf": [{"enum": ["none", "intel_render"]}, {"$ref": "#/$defs/ParamRef"}]
+        },
         "run_as": {
           "type": "object",
           "additionalProperties": false,
@@ -205,7 +212,7 @@
         "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"},
         "type": {
           "enum": ["string", "integer", "boolean", "port", "path", "dataset", "url", "timezone", "duration",
-                   "secret_ref"]
+                   "secret_ref", "gpu"]
         },
         "source": {"enum": ["wizard", "dataset_picker", "secret", "generated", "default"]},
         "description_nl": {"type": "string", "minLength": 3, "maxLength": 500},
@@ -231,12 +238,19 @@
     "Network": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ports", "host_network", "joins_platform_network"],
+      "required": ["ports", "host_network"],
       "properties": {
-        "ports": {"type": "array", "items": {"$ref": "#/$defs/PortBinding"}},
+        "ports": {
+          "description": "De enige bron voor de poorten van het Custom App-formulier (contract 1.2 §9).",
+          "type": "array",
+          "items": {"$ref": "#/$defs/PortBinding"}
+        },
         "host_network": {"type": "boolean"},
         "host_network_reason": {"type": ["string", "null"], "maxLength": 1000},
-        "joins_platform_network": {"type": "boolean"}
+        "joins_platform_network": {
+          "description": "Vervallen in contract 1.2 (§9): apps delen nooit een Docker-netwerk. false geeft deprecated_field, true de fout platform_network_not_supported.",
+          "type": "boolean"
+        }
       }
     },
     "Privileges": {
@@ -258,7 +272,10 @@
             }
           }
         },
-        "gpu": {"enum": ["none", "intel_render"]}
+        "gpu": {
+          "description": "Het maximum dat de app mag krijgen; intel_render vereist privilege_reason en D08 in decisions_required.",
+          "enum": ["none", "intel_render"]
+        }
       }
     },
     "Healthcheck": {

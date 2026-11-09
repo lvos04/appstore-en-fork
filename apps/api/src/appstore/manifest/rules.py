@@ -1,9 +1,11 @@
-"""Semantische veiligheidsregels van manifest v1 (platformcontract 1.1 §9, EX47).
+"""Semantische veiligheidsregels van manifest v1 (platformcontract 1.2 §9, EX47).
 
 Het JSON Schema controleert vorm en types; deze regels controleren betekenis: geen privileged, geen Docker-socket,
 geen gevaarlijke hostpaden, geen ``latest``, digest bij upstream-images, geen voorbeeldwaarden als echte waarde,
-volledige back-up/upgrade/risico-gegevens. Alle regels zijn deterministisch en werken uitsluitend op het getypte
-model; er wordt niets uitgevoerd of opgehaald.
+volledige back-up/upgrade/risico-gegevens, GPU alleen binnen ``privileges.gpu`` met D08. Vervallen velden uit 1.1
+(``network.joins_platform_network``, ``custom_app.ports``) geven tijdens de overgang ``deprecated_field``
+(waarschuwing; ``--strict`` maakt er een fout van). Alle regels zijn deterministisch en werken uitsluitend op het
+getypte model; er wordt niets uitgevoerd of opgehaald.
 """
 
 from __future__ import annotations
@@ -621,6 +623,13 @@ class _Rules:
                     f"{path}.source",
                     f"Pad-/datasetparameter {p.name!r} moet uit de datasetkiezer of wizard komen, niet uit {p.source!r}.",
                 )
+            if p.type == "gpu" and (p.source != "wizard" or p.decision != "D08" or p.required):
+                self.err(
+                    "gpu_param_invalid",
+                    path,
+                    f"GPU-parameter {p.name!r} moet source 'wizard', decision 'D08' en required false hebben: de wizard "
+                    "biedt intel_render alleen aan als D08 een render-node heeft gemeten (contract 1.2 §9).",
+                )
             if p.type == "secret_ref" and p.source not in ("secret", "generated"):
                 self.err(
                     "secret_literal_forbidden",
@@ -682,11 +691,22 @@ class _Rules:
                 self.err(
                     "digest_missing", "image.digest", f"Upstream-image {img.repository!r} vereist een sha256-digest."
                 )
-        # poorten: formulier == netwerkdeclaratie
-        if _ports_key(ca.ports) != _ports_key(m.network.ports):
-            self.err("ports_inconsistent", "custom_app.ports", "custom_app.ports moet gelijk zijn aan network.ports.")
-        for idx, port in enumerate(ca.ports):
-            self.port(port, f"custom_app.ports[{idx}]")
+        # poorten: alleen network.ports (contract 1.2 §9); custom_app.ports is vervallen (overgang)
+        if ca.ports is not None:
+            if _ports_key(ca.ports) != _ports_key(m.network.ports):
+                self.err(
+                    "ports_inconsistent",
+                    "custom_app.ports",
+                    "custom_app.ports is vervallen (contract 1.2 §9) en wijkt bovendien af van network.ports; "
+                    "verwijder custom_app.ports, de formulierpoorten komen uit network.ports.",
+                )
+            else:
+                self.warn(
+                    "deprecated_field",
+                    "custom_app.ports",
+                    "custom_app.ports is vervallen (contract 1.2 §9): de formulierpoorten komen uit network.ports. "
+                    "Verwijder dit veld (in --strict is dit een fout).",
+                )
         # opslag
         decls = {s.name: s for s in m.storage}
         bound: set[str] = set()
@@ -787,9 +807,18 @@ class _Rules:
                         path,
                         f"{env.name} zou een geheim ({param.name!r}) in het Custom App-formulier zetten; dat is verboden.",
                     )
-        # gpu, run_as, tijdzone, portal
-        if ca.gpu != m.privileges.gpu:
-            self.err("gpu_inconsistent", "custom_app.gpu", "custom_app.gpu moet gelijk zijn aan privileges.gpu.")
+        # gpu (contract 1.2 §9: privileges.gpu is het maximum), run_as, tijdzone, portal
+        if isinstance(ca.gpu, ParamRef):
+            self.ref(ca.gpu, "custom_app.gpu", ("gpu",), "GPU")
+            wants_gpu = True  # de wizard kan intel_render kiezen
+        else:
+            wants_gpu = ca.gpu != "none"
+        if wants_gpu and m.privileges.gpu != "intel_render":
+            self.err(
+                "gpu_exceeds_privileges",
+                "custom_app.gpu",
+                "custom_app.gpu vraagt (mogelijk) een GPU, maar privileges.gpu (het maximum) is 'none'.",
+            )
         if ca.run_as.mode == "image_default" and not is_own_image(img.repository):
             self.warn(
                 "run_as_image_default_upstream",
@@ -808,7 +837,7 @@ class _Rules:
                 "custom_app.timezone",
                 f"Vaste tijdzone {ca.timezone!r}; laat de wizard die kiezen (parameter met type 'timezone').",
             )
-        if ca.portal is not None and ca.portal.port not in {p.name for p in ca.ports}:
+        if ca.portal is not None and ca.portal.port not in {p.name for p in m.network.ports}:
             self.err(
                 "portal_unknown_port",
                 "custom_app.portal.port",
@@ -895,6 +924,13 @@ class _Rules:
                 "network.joins_platform_network",
                 "Apps zitten niet in een gedeeld Docker-netwerk (contract §2); ze bereiken elkaar via NAS-adres + hostpoort.",
             )
+        elif net.joins_platform_network is False:
+            self.warn(
+                "deprecated_field",
+                "network.joins_platform_network",
+                "network.joins_platform_network is vervallen (contract 1.2 §9): apps delen nooit een Docker-netwerk. "
+                "Verwijder dit veld (in --strict is dit een fout).",
+            )
         seen: set[tuple[int, str]] = set()
         for idx, port in enumerate(net.ports):
             if isinstance(port.host_port, int):
@@ -906,8 +942,7 @@ class _Rules:
                         f"Hostpoort {port.host_port}/{port.protocol} komt dubbel voor.",
                     )
                 seen.add(key)
-            if self.m.install.method == "catalog_app":
-                self.port(port, f"network.ports[{idx}]")
+            self.port(port, f"network.ports[{idx}]")
 
     # -- privileges
     def privileges(self) -> None:
@@ -939,8 +974,16 @@ class _Rules:
                 self.err("device_forbidden", path, problem)
             elif not reason:
                 self.err("device_without_reason", path, f"Apparaat {dev.host_device} zonder privilege_reason.")
-        if pr.gpu != "none" and not reason:
-            self.err("gpu_without_reason", "privileges.gpu", "GPU-toegang (/dev/dri) zonder privilege_reason.")
+        if pr.gpu != "none":
+            if not reason:
+                self.err("gpu_without_reason", "privileges.gpu", "GPU-toegang (/dev/dri) zonder privilege_reason.")
+            if "D08" not in self.m.decisions_required:
+                self.err(
+                    "gpu_decision_missing",
+                    "decisions_required",
+                    "privileges.gpu 'intel_render' vereist D08 (Intel-render-node, via de TrueNAS-API gemeten) in "
+                    "decisions_required (contract 1.2 §9).",
+                )
 
     # -- opslagdeclaraties
     def storage_decls(self) -> None:

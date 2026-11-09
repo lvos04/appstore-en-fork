@@ -1,6 +1,7 @@
-# Manifest (manifeststandaard v1, platformcontract 1.1 §9) van appstore-en-fork zelf.
+# Manifest (manifeststandaard v1, platformcontract 1.2 §9) van appstore-en-fork zelf.
 # Installatie uitsluitend als standaard TrueNAS Custom App (één image + formulierwaarden); nooit compose/YAML.
 # De digest van de eigen GHCR-image vult de release-CI in (release/digests.json); tot dan is installeren niet gereed.
+# Poorten staan alleen in network.ports (de vertaling bouwt daar de formulierpoorten uit); geen gedeeld Docker-netwerk.
 manifest_version: "1"
 app_id: appstore-en-fork
 name: Appstore en fork
@@ -18,12 +19,6 @@ image:
   tag: "0.1.0"
   digest: null
 custom_app:
-  ports:
-    - name: api
-      container_port: 30430
-      host_port: {param: host_port}
-      protocol: tcp
-      purpose_nl: API, connectorcontract en statuspagina
   storage:
     - name: appdata
       type: host_path
@@ -88,7 +83,6 @@ network:
       purpose_nl: API, connectorcontract en statuspagina
   host_network: false
   host_network_reason: null
-  joins_platform_network: false
 privileges:
   privileged: false
   cap_add: []

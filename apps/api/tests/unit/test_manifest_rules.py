@@ -30,9 +30,19 @@ def _set(path: str, value: Any) -> Mutator:
 
 
 def _both_ports(value: Any) -> Mutator:
+    """Contract 1.2 §9: network.ports is de enige poortbron (custom_app.ports is vervallen)."""
+
     def mutate(d: dict[str, Any]) -> None:
-        d["custom_app"]["ports"][0]["host_port"] = value
         d["network"]["ports"][0]["host_port"] = value
+
+    return mutate
+
+
+def _legacy_ports(**change: Any) -> Mutator:
+    """Vervallen custom_app.ports (vorm van contract 1.1) als kopie van network.ports, eventueel gewijzigd."""
+
+    def mutate(d: dict[str, Any]) -> None:
+        d["custom_app"]["ports"] = [{**dict(d["network"]["ports"][0]), **change}]
 
     return mutate
 
@@ -99,8 +109,25 @@ ERRORS: list[tuple[str, Mutator, str]] = [
         "device_without_reason",
     ),
     ("gpu zonder reden", _set("privilege_reason", None), "gpu_without_reason"),
-    ("gpu inconsistent", _set("custom_app.gpu", "none"), "gpu_inconsistent"),
-    ("poorten inconsistent", _set("custom_app.ports.0.container_port", 9090), "ports_inconsistent"),
+    ("gpu boven het maximum", _set("privileges.gpu", "none"), "gpu_exceeds_privileges"),
+    (
+        "gpu letterlijk boven het maximum",
+        lambda d: (d["custom_app"].update(gpu="intel_render"), d["privileges"].update(gpu="none")),
+        "gpu_exceeds_privileges",
+    ),
+    ("gpu zonder D08", _set("decisions_required", ["D02", "D03"]), "gpu_decision_missing"),
+    ("gpu-parameter uit default", _set("parameters.5.source", "default"), "gpu_param_invalid"),
+    ("gpu-parameter verplicht", _set("parameters.5.required", True), "gpu_param_invalid"),
+    ("gpu-parameter zonder D08", _set("parameters.5.decision", "D02"), "gpu_param_invalid"),
+    ("gpu naar verkeerd parametertype", _set("custom_app.gpu", {"param": "timezone"}), "parameter_type_mismatch"),
+    ("gpu naar onbekende parameter", _set("custom_app.gpu", {"param": "bestaat_niet"}), "unknown_parameter"),
+    ("gpu-waarde onbekend", _set("custom_app.gpu", "nvidia"), "invalid_value"),
+    ("vervallen poorten wijken af", _legacy_ports(container_port=9090), "ports_inconsistent"),
+    (
+        "portal naar vervallen poortnaam",
+        lambda d: (_legacy_ports(name="oud")(d), d["custom_app"]["portal"].update(port="oud")),
+        "portal_unknown_port",
+    ),
     ("onbekende parameter", _both_ports({"param": "bestaat_niet"}), "unknown_parameter"),
     ("parametertype", _both_ports({"param": "timezone"}), "parameter_type_mismatch"),
     ("default ontbreekt", lambda d: d["parameters"][0].pop("default"), "parameter_default_missing"),
@@ -211,6 +238,8 @@ WARNINGS: list[tuple[str, Mutator, str]] = [
         "host_network_requested",
     ),
     ("hostpoort < 1024", _both_ports(80), "port_privileged_range"),
+    ("vervallen custom_app.ports (gelijk)", _legacy_ports(), "deprecated_field"),
+    ("vervallen joins_platform_network", _set("network.joins_platform_network", False), "deprecated_field"),
     ("ongebruikte parameter", _add_param(name="ongebruikt", type="string", source="wizard"), "parameter_unused"),
     ("geclaimde status", _set("validation_status", "validated_on_nas"), "validation_status_claim_ignored"),
     ("geen compatibiliteit", lambda d: d.pop("compatibility"), "compatibility_missing"),

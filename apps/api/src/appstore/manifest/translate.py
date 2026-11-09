@@ -4,18 +4,21 @@
 * ``catalog_app`` → officiële catalogusapp met vaste versie en ``values``.
 
 Er bestaat géén string-templating: parameters worden als getypte waarde op hun plek gezet (``{"param": x}`` →
-waarde), gevalideerd per type. Ontbrekende of onbekende gegevens (TrueNAS-versie D01, ix-app-versie, digest)
-leveren een blokkerende bevinding op, nooit een aangenomen waarde. Deze module voert niets uit.
+waarde), gevalideerd per type. Ontbrekende of onbekende gegevens (TrueNAS-versie D01, ix-app-versie, digest,
+render-node D08) leveren een blokkerende bevinding op, nooit een aangenomen waarde. Contract 1.2: poorten komen
+alleen uit ``network.ports``, de tag wordt ``<tag>@<digest>`` met een verplichte digest-readback na installatie, en
+een vastgezette versie die niet meer in de gemeten catalogus staat geeft ``version_unavailable``. Deze module voert
+niets uit.
 """
 
 from __future__ import annotations
 
 import re
 import zoneinfo
-from typing import Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .canonical import sha256_digest
 from .findings import Finding, Severity, error, warning
@@ -64,6 +67,26 @@ class Target(BaseModel):
 
     truenas_version: str | None = None
     ix_app_version: str | None = None
+    #: Versies van de catalogusapp in de trein zoals gemeten (``catalog.get_app_details``); bij ``custom_app`` die van
+    #: ``ix-app``. ``None`` = niet gemeten (contract 1.2 §2.2: versies kunnen uit de catalogus verdwijnen).
+    available_versions: list[Annotated[str, Field(max_length=64)]] | None = Field(default=None, max_length=500)
+    #: D08: is via de TrueNAS-API een Intel-render-node gemeten? ``None`` = niet gemeten.
+    gpu_render_node: Literal["measured", "absent"] | None = None
+
+
+class DigestReadback(BaseModel):
+    """Verplichte controle na installatie/update (contract 1.2 §2.2): de executor leest de digest terug."""
+
+    model_config = ConfigDict(frozen=True)
+
+    method: str = "app.image.query"
+    field: str = "repo_digests"
+    repository: str
+    expected_digest: str
+    form_tag: str
+    fallback_tag: str
+    on_mismatch: str = "stop_en_incident"
+    note_nl: str
 
 
 class CompatibilityResult(BaseModel):
@@ -83,6 +106,7 @@ class TranslationResult(BaseModel):
     payload: AppCreatePayload | None
     preview_hash: str | None
     compatibility: CompatibilityResult
+    digest_readback: DigestReadback | None = None
     findings: list[Finding]
 
     def blocking(self) -> list[Finding]:
@@ -133,6 +157,8 @@ def _check_value(param: Parameter, value: Any) -> str | None:
         return None if _DURATION.match(value) else "verwacht een ISO-8601-duur (bv. PT4H)"
     if t == "secret_ref":
         return None if _VAULT_REF.match(value) else "verwacht een vault-verwijzing vault://<scope>/<naam>"
+    if t == "gpu":
+        return None if value in ("none", "intel_render") else "verwacht 'none' of 'intel_render'"
     return None
 
 
@@ -151,6 +177,12 @@ class _Resolver:
                         f"Waarde opgegeven voor onbekende parameter {name!r}.",
                     )
                 )
+
+    def gpu(self, ref: ParamRef, path: str) -> Any:
+        """GPU-parameter (contract 1.2 §9): ontbreekt de waarde, dan ``none`` — nooit aangenomen dat er een GPU is."""
+        if ref.param not in self.supplied:
+            return "none"
+        return self.get(ref, path)
 
     def get(self, ref: ParamRef, path: str) -> Any:
         param = self.params.get(ref.param)
@@ -257,6 +289,7 @@ def check_compatibility(manifest: Manifest, target: Target) -> tuple[Compatibili
                         "de executor moet het waardenschema op de NAS controleren.",
                     )
                 )
+    status = _check_availability(manifest, target, findings, reasons, status)
     return (
         CompatibilityResult(
             status=status,
@@ -268,16 +301,64 @@ def check_compatibility(manifest: Manifest, target: Target) -> tuple[Compatibili
     )
 
 
+def _check_availability(
+    manifest: Manifest, target: Target, findings: list[Finding], reasons: list[str], status: str
+) -> str:
+    """Contract 1.2 §2.2: een vastgezette versie kan uit de catalogus verdwijnen → ``version_unavailable``.
+
+    Nooit stil een nieuwere versie of ``latest`` kiezen; het voorstel is altijd een manifest-update met een nieuwe
+    vaste versie plus test (catalogusapp) of het testen van de vertaling voor de nieuwe ``ix-app``-versie.
+    """
+    custom = manifest.install.method == "custom_app"
+    pinned = target.ix_app_version if custom else (manifest.catalog.version if manifest.catalog else None)
+    what = "ix-app" if custom else (manifest.catalog.app if manifest.catalog else "?")
+    if target.available_versions is None:
+        findings.append(
+            warning(
+                "version_availability_unknown",
+                "target.available_versions",
+                f"Niet gemeten welke versies van {what} de TrueNAS-catalogus nog heeft (catalog.get_app_details); "
+                "de executor moet dat vóór uitvoering controleren.",
+            )
+        )
+        return status
+    available = set(target.available_versions)
+    problem: str | None = None
+    if pinned is not None and pinned not in available:
+        problem = (
+            f"{what} {pinned} staat niet (meer) in de gemeten catalogus; installeren zou mislukken (Version not "
+            "found). Voorstel: "
+            + (
+                "de vertaling voor een beschikbare ix-app-versie testen."
+                if custom
+                else "het manifest bijwerken naar een nieuwe vaste versie en die testen."
+            )
+        )
+    elif custom and not available & set(IX_APP_VERIFIED_VERSIONS):
+        newest = max(available, key=lambda v: parse_version(v) or (0,), default="?")
+        problem = (
+            f"Geen van de geteste ix-app-versies ({', '.join(IX_APP_VERIFIED_VERSIONS)}) staat nog in de gemeten "
+            f"catalogus. Voorstel: de vertaling voor ix-app {newest} testen."
+        )
+    if problem:
+        reasons.append(problem)
+        findings.append(error("version_unavailable", "target.available_versions", problem))
+        return "incompatible"
+    return status
+
+
 # ---------------------------------------------------------------------------------------------- vertaling
-def _custom_app_values(m: Manifest, ca: CustomApp, r: _Resolver, manifest_sha: str) -> IxAppValues | None:
+def _custom_app_values(
+    m: Manifest, ca: CustomApp, r: _Resolver, manifest_sha: str, target: Target
+) -> IxAppValues | None:
     assert m.image is not None
     decls = {s.name: s for s in m.storage}
     # digest vastgezet in het tagveld (ADR-0004); zonder digest blokkeert translate() de installatie
     tag = f"{m.image.tag}@{m.image.digest}" if m.image.digest else m.image.tag
     ports: list[IxPort] = []
     host_port_by_name: dict[str, int] = {}
-    for idx, p in enumerate(ca.ports):
-        host = p.host_port if isinstance(p.host_port, int) else r.get(p.host_port, f"custom_app.ports[{idx}].host_port")
+    for idx, p in enumerate(m.network.ports):  # contract 1.2 §9: de enige bron voor de formulierpoorten
+        host = p.host_port if isinstance(p.host_port, int) else r.get(p.host_port, f"network.ports[{idx}].host_port")
         if host is None:
             continue
         host_port_by_name[p.name] = int(host)
@@ -348,6 +429,33 @@ def _custom_app_values(m: Manifest, ca: CustomApp, r: _Resolver, manifest_sha: s
                 "Het formulier kent alleen limieten voor CPU én geheugen samen; zonder beide geen limiet.",
             )
         )
+    gpu = r.gpu(ca.gpu, "custom_app.gpu") if isinstance(ca.gpu, ParamRef) else ca.gpu
+    if gpu == "intel_render":
+        if m.privileges.gpu != "intel_render":  # door de validator al uitgesloten; verdediging in de diepte
+            r.findings.append(error("gpu_exceeds_privileges", "custom_app.gpu", "GPU gevraagd boven privileges.gpu."))
+        elif target.gpu_render_node != "measured":
+            r.findings.append(
+                error(
+                    "gpu_not_measured",
+                    "target.gpu_render_node",
+                    "GPU (intel_render) gevraagd, maar D08 heeft "
+                    + (
+                        "gemeten dat er geen render-node is."
+                        if target.gpu_render_node == "absent"
+                        else "nog niets gemeten."
+                    )
+                    + " Kies 'none' of meet eerst de render-node via de TrueNAS-API.",
+                )
+            )
+        else:
+            r.findings.append(
+                warning(
+                    "gpu_all_render_devices",
+                    "custom_app.gpu",
+                    "Het formulier kan niet per GPU kiezen: use_all_gpus geeft de app elke niet-NVIDIA-render-GPU van "
+                    "de NAS (NIET GEVALIDEERD op een echte NAS).",
+                )
+            )
     if any(f.severity is Severity.ERROR for f in r.findings) or tz is None:
         return None
     labels = [
@@ -379,7 +487,7 @@ def _custom_app_values(m: Manifest, ca: CustomApp, r: _Resolver, manifest_sha: s
         storage=storage,
         labels=labels,
         resources=IxResources(
-            enable_resource_limits=limits is not None, limits=limits, gpus=IxGpus(use_all_gpus=ca.gpu == "intel_render")
+            enable_resource_limits=limits is not None, limits=limits, gpus=IxGpus(use_all_gpus=gpu == "intel_render")
         ),
     )
 
@@ -408,6 +516,7 @@ def translate(
     resolver = _Resolver(manifest, dict(parameters or {}))
     name = app_name or manifest.app_id
     payload: AppCreatePayload | None = None
+    readback: DigestReadback | None = None
     if manifest.install.method == "custom_app":
         assert manifest.custom_app is not None and manifest.image is not None
         if not manifest.image.digest:
@@ -423,7 +532,19 @@ def translate(
                     ),
                 )
             )
-        values = _custom_app_values(manifest, manifest.custom_app, resolver, manifest_sha)
+        values = _custom_app_values(manifest, manifest.custom_app, resolver, manifest_sha, target)
+        if manifest.image.digest:
+            readback = DigestReadback(
+                repository=manifest.image.repository,
+                expected_digest=manifest.image.digest,
+                form_tag=f"{manifest.image.tag}@{manifest.image.digest}",
+                fallback_tag=manifest.image.tag,
+                note_nl=(
+                    "Na installatie/update leest de executor de digest terug (app.image.query, repo_digests) en stopt "
+                    "met een incident bij afwijking. Accepteert het formulier de tag met '@sha256:' niet, dan alleen de "
+                    "exacte versie invullen; de readback is dan de enige controle (NIET GEVALIDEERD op een echte NAS)."
+                ),
+            )
         if values is not None and target.ix_app_version is not None:
             payload = AppCreatePayload(
                 app_name=name,
@@ -455,5 +576,6 @@ def translate(
         payload=payload,
         preview_hash=preview_hash,
         compatibility=compat,
+        digest_readback=readback,
         findings=sorted(findings, key=lambda f: (f.severity is not Severity.ERROR, f.path, f.code)),
     )

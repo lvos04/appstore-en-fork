@@ -123,3 +123,14 @@ def test_cli_translate_sign_verify(tmp_path: Path, capsys: pytest.CaptureFixture
     assert main(["verify", str(copy), "--public-key", str(pub)]) == 0
     copy.write_text(copy.read_text().replace("Voorbeeld web", "Gewijzigd"))
     assert main(["verify", str(copy), "--public-key", str(pub)]) == 1
+
+
+def test_cli_strict_fails_on_deprecated_fields(capsys: pytest.CaptureFixture[str]) -> None:
+    """M4: een manifest in de vorm van contract 1.1 is tijdens de overgang geldig, maar --strict (release-CI) faalt."""
+    legacy = FIXTURES / "manifests" / "legacy-1-1-custom.manifest.yaml"
+    assert main(["validate", str(legacy)]) == 0
+    capsys.readouterr()
+    assert main(["validate", "--strict", "--format", "json", str(legacy)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["valid"] is True and report["result"] == "ongeldig"
+    assert sorted(f["code"] for f in report["findings"]) == ["deprecated_field", "deprecated_field"]

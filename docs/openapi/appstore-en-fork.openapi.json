@@ -401,6 +401,37 @@
         "additionalProperties": false,
         "description": "Doelsysteem zoals gemeten (TrueNAS-API-readback) — nooit aangenomen.",
         "properties": {
+          "available_versions": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Versions"
+          },
+          "gpu_render_node": {
+            "anyOf": [
+              {
+                "enum": [
+                  "measured",
+                  "absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gpu Render Node"
+          },
           "ix_app_version": {
             "anyOf": [
               {
