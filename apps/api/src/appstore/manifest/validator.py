@@ -188,7 +188,7 @@ def _compose_findings(data: dict[str, Any]) -> list[Finding]:
     return out
 
 
-def _report(data: dict[str, Any] | None, findings: list[Finding], manifest_sha: str | None) -> ValidationReport:
+def build_report(data: dict[str, Any] | None, findings: list[Finding], manifest_sha: str | None) -> ValidationReport:
     findings = sorted(findings, key=lambda f: (f.severity is not Severity.ERROR, f.path, f.code))
     errors = sum(1 for f in findings if f.severity is Severity.ERROR)
     install = data.get("install") if isinstance(data, dict) else None
@@ -209,17 +209,19 @@ def _report(data: dict[str, Any] | None, findings: list[Finding], manifest_sha: 
 def validate_data(data: Any) -> tuple[ValidationReport, Manifest | None]:
     """Valideer al ingelezen data. Geeft ``(rapport, model)``; model is ``None`` als het manifest ongeldig is."""
     if not isinstance(data, dict):
-        return _report(
+        return build_report(
             None, [error("manifest_not_mapping", "", "Het manifest moet een object met velden zijn.")], None
         ), None
     try:
         manifest_sha = "sha256:" + hashlib.sha256(canonical_json(data)).hexdigest()
     except (TypeError, ValueError):
-        return _report(data, [error("wrong_type", "", "Het manifest bevat waarden die geen JSON zijn.")], None), None
+        return build_report(
+            data, [error("wrong_type", "", "Het manifest bevat waarden die geen JSON zijn.")], None
+        ), None
     findings = _compose_findings(data)
     findings.extend(_schema_findings(data))
     if any(f.severity is Severity.ERROR for f in findings):
-        return _report(data, findings, manifest_sha), None
+        return build_report(data, findings, manifest_sha), None
     try:
         manifest = Manifest.model_validate(data)
     except PydanticError as exc:  # schema en model horen gelijk te oordelen; zo niet: fout, nooit stil doorlaten
@@ -228,9 +230,9 @@ def validate_data(data: Any) -> tuple[ValidationReport, Manifest | None]:
                 "model_mismatch", "", f"Intern: schema keurde goed maar het model niet ({exc.error_count()} fout(en))."
             )
         )
-        return _report(data, findings, manifest_sha), None
+        return build_report(data, findings, manifest_sha), None
     findings.extend(check_manifest(manifest))
-    report = _report(data, findings, manifest_sha)
+    report = build_report(data, findings, manifest_sha)
     return report, (manifest if report.valid else None)
 
 
@@ -238,6 +240,6 @@ def validate_text(text: str | bytes) -> tuple[ValidationReport, Manifest | None,
     """Valideer YAML/JSON-tekst. Geeft ``(rapport, model, data)``."""
     data, load_findings = load_manifest_text(text)
     if load_findings:
-        return _report(None, load_findings, None), None, None
+        return build_report(None, load_findings, None), None, None
     report, manifest = validate_data(data)
     return report, manifest, data

@@ -115,6 +115,7 @@ CODES: dict[str, str] = {
     "catalog_value_forbidden": "Verboden instelling in de waarden van een catalogusapp.",
     "signature_missing": "Handtekening ontbreekt terwijl de bron die vereist.",
     "signature_invalid": "Handtekening klopt niet.",
+    "app_id_claimed_by_other_source": "App-ID hoort bij een andere catalogusbron.",
     # vertaling naar TrueNAS (app.create)
     "parameter_value_missing": "Waarde voor een verplichte parameter ontbreekt.",
     "parameter_value_invalid": "Waarde voor een parameter is ongeldig.",

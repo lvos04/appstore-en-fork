@@ -62,7 +62,7 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "N", "RUF", "SIM", "PL"]
 ignore = [
-  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415",
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "PLC0415",
   "RUF001", "RUF002", "RUF003",  # Nederlandse tekst met typografische tekens
   "S101",
   "E501",  # de formatter bewaakt de regellengte; lange Nederlandse meldingen blijven leesbaar heel
