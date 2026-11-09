@@ -44,7 +44,7 @@ jl-manifest = "appstore.manifest.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-appstore = ["py.typed", "manifest/*.json"]
+appstore = ["py.typed", "manifest/*.json", "bestaande_apps/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

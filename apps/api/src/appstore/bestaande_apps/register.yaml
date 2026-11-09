@@ -1,0 +1,347 @@
+# Register van bekende bestaande apps (B08-002, APP-01…APP-20).
+#
+# Bron van de teksten: docs/platform-v2/04_BESTAANDE_APPS/APP_REGISTER.md en A01…A20 (pakket 2026-11-09); de unit-test
+# tests/unit/test_bestaande_apps_register.py controleert dat elke tekst letterlijk in die documenten staat.
+# Dit register zegt NIETS over de NAS van de gebruiker: geen versies, tags, digests, poorten, datasets of adressen.
+# Die komen uitsluitend als gemeten readback uit de Hub-inventaris (GET /api/v1/apps van de Hub).
+#
+# Herkenning (alleen een VOORSTEL; de eigenaar bevestigt altijd zelf, B08-002):
+# - catalogus_apps: exacte naam van de TrueNAS-catalogusapp (metadata.name), bronwaarneming in truenas/apps op commit
+#   69dfbda33a5e19eb4cb3441904a44e813b5b3fba (trains stable en community), gelezen 2026-11-09.
+# - image_repositories: (a) de image uit ix_values.yaml van die catalogusapp op dezelfde commit, (b) eigen images uit
+#   platformcontract 1.2 §2.3 en de gepubliceerde images in de release-workflows van die repos
+#   (media-guard-ultimate@da1bebe, media-source-optimizer@2d04321, my_house@c3297e2; oudere installaties met
+#   meerdere containers), (c) upstream-images waarvan het bestaan op 2026-11-09 met
+#   `docker buildx imagetools inspect` is gecontroleerd. Een niet-bestaande kandidaat (lscr.io/linuxserver/readarr,
+#   sabnzbd/sabnzbd) staat er bewust niet in.
+# - Op appnaam alleen wordt nooit herkend. Snapotter, Teeltboek en Uren hebben géén herkenning (A06: "geen afleiding
+#   uit appnaam"): alleen een beheerder kan ze handmatig koppelen.
+register_versie: "2026-11-09.1"
+bron: docs/platform-v2/04_BESTAANDE_APPS (APP_REGISTER.md + A01…A20), pakket 2026-11-09
+herkenning_bron:
+  truenas_catalogus: truenas/apps@69dfbda33a5e19eb4cb3441904a44e813b5b3fba (2026-11-09)
+  eigen_images: platformcontract 1.2 §2 en §2.3; release-workflows media-guard-ultimate@da1bebe, media-source-optimizer@2d04321, my_house@c3297e2
+  upstream_gecontroleerd_op: "2026-11-09"
+# Eigen nieuwe diensten van het platform (contract 1.2 §2, vaste app_id en image). Geen APP-ID en geen beslisregister:
+# hun levenscyclus loopt via het platform zelf. Alleen herkenning op de exacte image-repository.
+platform_apps:
+  - {app_id: ai-server-manager, naam: "Hub (AI Server Manager)", repo: lvos04/ai-server-manager, image_repositories: [ghcr.io/lvos04/ai-server-manager]}
+  - {app_id: ai-server-manager-executor, naam: Executor, repo: lvos04/ai-server-manager, image_repositories: [ghcr.io/lvos04/ai-server-manager-executor]}
+  - {app_id: home-control-hub, naam: Home Control Hub, repo: lvos04/home-control-hub, image_repositories: [ghcr.io/lvos04/home-control-hub]}
+  - {app_id: appstore-en-fork, naam: Appstore en fork, repo: lvos04/appstore-en-fork, image_repositories: [ghcr.io/lvos04/appstore-en-fork]}
+  - {app_id: jelly-leon-platform, naam: Jelly Leon-platform, repo: lvos04/jelly-leon-platform, image_repositories: [ghcr.io/lvos04/jelly-leon-platform]}
+  - {app_id: zoeken-en-persoonlijke-ai, naam: Zoeken en persoonlijke AI, repo: lvos04/zoeken-en-persoonlijke-ai, image_repositories: [ghcr.io/lvos04/zoeken-en-persoonlijke-ai]}
+  - {app_id: jelly-leon, naam: Jelly Leon, repo: lvos04/jelly-leon, image_repositories: [ghcr.io/lvos04/jelly-leon]}
+apps:
+  - app_id: plex
+    excel_id: APP-01
+    naam: Plex
+    a_doc: A01_PLEX.md
+    voorgenomen_besluit: {code: kandidaat_uitschakelen, tekst_nl: "Kandidaat uitschakelen na bewezen Jellyfin parity."}
+    waarom_nl: "Eerst client- en watchstate-afhankelijkheden meten; nooit meteen verwijderen."
+    belangrijkste_controle_nl: "Test alle gebruikte players, subtitle profiles en gebruikers; stop Plex 72u, rollback bij missen functies."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: [I26-26-01, I26-26-02, I26-26-06]
+    proefstop_uren: 72
+    herkenning:
+      catalogus_apps: [plex]
+      image_repositories: [plexinc/pms-docker, lscr.io/linuxserver/plex]
+    afhankelijk_van: []
+
+  - app_id: emby
+    excel_id: APP-02
+    naam: Emby
+    a_doc: A02_EMBY.md
+    voorgenomen_besluit: {code: kandidaat_uitschakelen, tekst_nl: "Kandidaat uitschakelen na Jellyfin/MediaGuard audit."}
+    waarom_nl: "MediaGuard stond eerder gekoppeld met Emby; controleer of die hook nog actief is."
+    belangrijkste_controle_nl: "Onderzoek refresh/playback/bibliotheek; switch alleen na zelfde resultaat in Jellyfin."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: [I26-26-01, I26-26-02, I26-26-06]
+    proefstop_uren: 72
+    herkenning:
+      catalogus_apps: [emby]
+      image_repositories: [emby/embyserver, lscr.io/linuxserver/emby]
+    afhankelijk_van: []
+
+  - app_id: jellyplex-watched
+    excel_id: APP-03
+    naam: JellyPlex-Watched
+    a_doc: A03_JELLYPLEX_WATCHED.md
+    voorgenomen_besluit: {code: kandidaat_uitschakelen, tekst_nl: "Kandidaat uitschakelen als synchronisatie overbodig."}
+    waarom_nl: "Onderzoek of cross-server seen status nog nodig is."
+    belangrijkste_controle_nl: "Test watch/resume state van minstens 3 gebruikers voor/na stop."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: [I26-26-01, I26-26-03, I26-26-06]
+    proefstop_uren: 72
+    herkenning:
+      catalogus_apps: []
+      image_repositories: [luigi311/jellyplex-watched, ghcr.io/luigi311/jellyplex-watched]
+    afhankelijk_van:
+      - {app_id: plex, soort: te_controleren, reden_nl: "Test of sync nog nodig na maar één server.", bron: I26_BESTAANDE_APPS.md}
+      - {app_id: jellyfin, soort: te_controleren, reden_nl: "Test of sync nog nodig na maar één server.", bron: I26_BESTAANDE_APPS.md}
+
+  - app_id: readarr
+    excel_id: APP-04
+    naam: Readarr
+    a_doc: A04_READARR.md
+    voorgenomen_besluit: {code: voorwaardelijk_behouden, tekst_nl: "Alleen behouden indien huidige taak nog actief."}
+    waarom_nl: "Boeken/audioboeken waren niet als prioriteit geselecteerd."
+    belangrijkste_controle_nl: "Meet traffic/ingest en gebruik; disable zonder data deletion en rollback."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: [I26-26-01, I26-26-04, I26-26-06]
+    proefstop_uren: 72
+    zonder_gebruik_dagen: 7
+    herkenning:
+      catalogus_apps: [readarr]
+      image_repositories: [ghcr.io/home-operations/readarr]
+    afhankelijk_van: []
+
+  - app_id: flaresolverr
+    excel_id: APP-05
+    naam: FlareSolverr
+    a_doc: A05_FLARESOLVERR.md
+    voorgenomen_besluit: {code: voorwaardelijk_behouden, tekst_nl: "Alleen behouden indien Prowlarr/indexers het nodig hebben."}
+    waarom_nl: "Verifiëer browsersolver dependency en security footprint."
+    belangrijkste_controle_nl: "Geen indexer mag stuk na test disable."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: [I26-26-01, I26-26-04, I26-26-06]
+    proefstop_uren: 72
+    zonder_gebruik_dagen: 7
+    herkenning:
+      catalogus_apps: [flaresolverr]
+      image_repositories: [ghcr.io/flaresolverr/flaresolverr, flaresolverr/flaresolverr]
+    afhankelijk_van: []
+
+  - app_id: snapotter
+    excel_id: APP-06
+    naam: Snapotter
+    a_doc: A06_SNAPOTTER.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden eigen dienst."}
+    waarom_nl: "Functies onbekend; geen afleiding uit appnaam, inventaris eerst."
+    belangrijkste_controle_nl: "Admin/gebruikers/DB/containers correct en Hub only read link."
+    eigenaar: {soort: eigen_los, repo: null}
+    i26_stappen: [I26-26-01, I26-26-05]
+    herkenning:
+      catalogus_apps: []
+      image_repositories: []
+      toelichting_nl: >-
+        Geen automatische herkenning: functies onbekend en geen afleiding uit de appnaam (A06). Ook de catalogusapp
+        'snapotter' uit de community-trein kan een andere app zijn. Alleen een beheerder kan deze app handmatig koppelen.
+    afhankelijk_van: []
+
+  - app_id: teeltboek
+    excel_id: APP-07
+    naam: Teeltboek
+    a_doc: A07_TEELTBOEK.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden eigen dienst."}
+    waarom_nl: "Geen data samenvoegen met Hub; voortzetting afzonderlijk."
+    belangrijkste_controle_nl: "Inloggen, export en database herstelscenario getest."
+    eigenaar: {soort: eigen_los, repo: null}
+    i26_stappen: [I26-26-01, I26-26-05]
+    herkenning:
+      catalogus_apps: []
+      image_repositories: []
+      toelichting_nl: >-
+        Geen automatische herkenning: eigen losse app waarvan image en installatie niet in het pakket staan. Alleen
+        een beheerder kan deze app handmatig koppelen.
+    afhankelijk_van: []
+
+  - app_id: uren
+    excel_id: APP-08
+    naam: Uren
+    a_doc: A08_UREN.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden eigen dienst."}
+    waarom_nl: "Apps voor urenregistratie los houden van Home Hub."
+    belangrijkste_controle_nl: "Inloggen, exports, appbackups en gebruikersrechten getest."
+    eigenaar: {soort: eigen_los, repo: null}
+    i26_stappen: [I26-26-01, I26-26-05]
+    herkenning:
+      catalogus_apps: []
+      image_repositories: []
+      toelichting_nl: >-
+        Geen automatische herkenning: eigen losse app waarvan image en installatie niet in het pakket staan. Alleen
+        een beheerder kan deze app handmatig koppelen.
+    afhankelijk_van: []
+
+  - app_id: bazarr
+    excel_id: APP-09
+    naam: Bazarr
+    a_doc: A09_BAZARR.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden tot subtitle parity bewezen."}
+    waarom_nl: "NL subtitles en synchronisatie moeten bewezen door MediaGuard/Jellyfin afgedekt zijn."
+    belangrijkste_controle_nl: "SRT/ASS anime/film test en fallback aanwezig."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [bazarr]
+      image_repositories: [ghcr.io/home-operations/bazarr, lscr.io/linuxserver/bazarr]
+    afhankelijk_van: []
+
+  - app_id: immich
+    excel_id: APP-10
+    naam: Immich
+    a_doc: A10_IMMICH.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, primaire fotoapp."}
+    waarom_nl: "OneDrive-backup al aanwezig voor foto’s maar restore-proef onbekend."
+    belangrijkste_controle_nl: "Test thumbnails/albums plus originele foto en DB herstel."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [immich]
+      image_repositories: [ghcr.io/immich-app/immich-server]
+    afhankelijk_van: []
+
+  - app_id: prowlarr
+    excel_id: APP-11
+    naam: Prowlarr
+    a_doc: A11_PROWLARR.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, eigenaar indexercatalogus."}
+    waarom_nl: "MediaGuard forks beheren Prowlarr synchronisatie; MSO kan eigen endpoint aanbieden."
+    belangrijkste_controle_nl: "Geen cyclische zoeklus of tag drift."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [prowlarr]
+      image_repositories: [ghcr.io/home-operations/prowlarr, lscr.io/linuxserver/prowlarr]
+    afhankelijk_van:
+      - {app_id: flaresolverr, soort: te_controleren, reden_nl: "Alleen behouden indien Prowlarr/indexers het nodig hebben.", bron: A05_FLARESOLVERR.md}
+
+  - app_id: seerr
+    excel_id: APP-12
+    naam: Seerr
+    a_doc: A12_SEERR.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, verzoekfrontend."}
+    waarom_nl: "MediaGuard verzorgt aanvragen en anime routering."
+    belangrijkste_controle_nl: "Vier arr apps en aanvraagstatus correct."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [seerr]
+      image_repositories: [ghcr.io/seerr-team/seerr, fallenbagel/jellyseerr, sctx/overseerr, lscr.io/linuxserver/overseerr]
+    afhankelijk_van:
+      - {app_id: mediaguard, soort: vereist, reden_nl: "MediaGuard verzorgt aanvragen en anime routering.", bron: A12_SEERR.md}
+
+  - app_id: sabnzbd
+    excel_id: APP-13
+    naam: SABnzbd
+    a_doc: A13_SABNZBD.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, Usenet client."}
+    waarom_nl: "MSO diagnostiek en MediaGuard import horen via API."
+    belangrijkste_controle_nl: "Geen wildcard category misrouting."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [sabnzbd]
+      image_repositories: [ghcr.io/home-operations/sabnzbd, lscr.io/linuxserver/sabnzbd]
+    afhankelijk_van: []
+
+  - app_id: qbittorrent
+    excel_id: APP-14
+    naam: qBittorrent
+    a_doc: A14_QBITTORRENT.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, torrentclient."}
+    waarom_nl: "MSO tuning, hardlink en private trackers veilig."
+    belangrijkste_controle_nl: "Geen automatische bestanden verwijderen."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [qbittorrent]
+      image_repositories: [ghcr.io/home-operations/qbittorrent, lscr.io/linuxserver/qbittorrent]
+    afhankelijk_van: []
+
+  - app_id: tailscale
+    excel_id: APP-15
+    naam: Tailscale
+    a_doc: A15_TAILSCALE.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, privé toegang."}
+    waarom_nl: "NAS management alleen VPN/LAN."
+    belangrijkste_controle_nl: "Niet publiek toegankelijk zonder VPN."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [tailscale]
+      image_repositories: [ghcr.io/tailscale/tailscale, tailscale/tailscale]
+    afhankelijk_van: []
+
+  - app_id: cloudflared
+    excel_id: APP-16
+    naam: Cloudflared
+    a_doc: A16_CLOUDFLARED.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden voor geselecteerde app toegang."}
+    waarom_nl: "Geen publieke TrueNAS-console; apps met HTTPS en policies."
+    belangrijkste_controle_nl: "Tunnel health + token leakage test."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [cloudflared]
+      image_repositories: [cloudflare/cloudflared]
+    afhankelijk_van: []
+
+  - app_id: jellyfin
+    excel_id: APP-17
+    naam: Jellyfin
+    a_doc: A17_JELLYFIN.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden als media server en toekomstig fork fundament."}
+    waarom_nl: "Client compat met huidige media testen."
+    belangrijkste_controle_nl: "No library/watch state regression."
+    eigenaar: {soort: derde, repo: null}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: [jellyfin]
+      image_repositories: [ghcr.io/jellyfin/jellyfin, jellyfin/jellyfin, lscr.io/linuxserver/jellyfin]
+    afhankelijk_van: []
+
+  - app_id: mediaguard
+    excel_id: APP-18
+    naam: MediaGuard
+    a_doc: A18_MEDIAGUARD.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, bibliotheek- en AV1-eigenaar."}
+    waarom_nl: "Release 1.2.2; niet dupliceren; lees B04."
+    belangrijkste_controle_nl: "Geteste noodstop, HDR/VMAF failclosed."
+    eigenaar: {soort: bestaand, repo: lvos04/media-guard-ultimate}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: []
+      image_repositories:
+        - ghcr.io/lvos04/mediaguard-core
+        - ghcr.io/lvos04/mediaguard-web
+        - ghcr.io/lvos04/mediaguard-encode
+        - ghcr.io/lvos04/mediaguard-sonarr-fork
+        - ghcr.io/lvos04/mediaguard-radarr-fork
+    afhankelijk_van:
+      - {app_id: prowlarr, soort: vereist, reden_nl: "MediaGuard forks beheren Prowlarr synchronisatie; MSO kan eigen endpoint aanbieden.", bron: A11_PROWLARR.md}
+      - {app_id: sabnzbd, soort: vereist, reden_nl: "MSO diagnostiek en MediaGuard import horen via API.", bron: A13_SABNZBD.md}
+      - {app_id: emby, soort: te_controleren, reden_nl: "MediaGuard stond eerder gekoppeld met Emby; controleer of die hook nog actief is.", bron: A02_EMBY.md}
+
+  - app_id: media-source-optimizer
+    excel_id: APP-19
+    naam: Media Source Optimizer
+    a_doc: A19_MEDIA_SOURCE_OPTIMIZER.md
+    voorgenomen_besluit: {code: behouden, tekst_nl: "Behouden, bronoptimalisatie."}
+    waarom_nl: "Head 1.6.0, release/VERSION 1.5.0 bij inspectie; lees B05."
+    belangrijkste_controle_nl: "Echte service mocks/live parity en geen owner writes."
+    eigenaar: {soort: bestaand, repo: lvos04/media-source-optimizer}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: []
+      image_repositories:
+        - ghcr.io/lvos04/media-source-optimizer
+        - ghcr.io/lvos04/media-source-optimizer-core
+        - ghcr.io/lvos04/media-source-optimizer-web
+    afhankelijk_van:
+      - {app_id: sabnzbd, soort: vereist, reden_nl: "MSO diagnostiek en MediaGuard import horen via API.", bron: A13_SABNZBD.md}
+      - {app_id: qbittorrent, soort: vereist, reden_nl: "MSO tuning, hardlink en private trackers veilig.", bron: A14_QBITTORRENT.md}
+
+  - app_id: my_house
+    excel_id: APP-20
+    naam: my_house
+    a_doc: A20_MY_HOUSE.md
+    voorgenomen_besluit: {code: bouwen_integreren, tekst_nl: "Bouwen/testen en integreren (release v0.1.0)."}
+    waarom_nl: "Geen nieuw Home Assistant, apparatuur-gates; lees B06."
+    belangrijkste_controle_nl: "Boiler nooit schakelen; Gree readback."
+    eigenaar: {soort: bestaand, repo: lvos04/my_house}
+    i26_stappen: []
+    herkenning:
+      catalogus_apps: []
+      image_repositories: [ghcr.io/lvos04/my_house, ghcr.io/lvos04/my_house-api, ghcr.io/lvos04/my_house-web]
+    afhankelijk_van: []
