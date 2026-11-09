@@ -1,5 +1,6 @@
 # CI: lint, typecheck, tests (unit + integratie tegen PostgreSQL + dienst-E2E met Hub-simulator), Alembic up/down,
-# OpenAPI-drift, manifestvalidatie, pip-audit, en de alles-in-één image bouwen + starten met healthcheck.
+# OpenAPI-drift, manifestvalidatie, pip-audit, drift van de Peil-kopie tegen ai-server-manager, de statuspagina in
+# Chromium (axe-core, overloop op 320 px, CSP, schermafdrukken) en de alles-in-één image bouwen + starten.
 name: ci
 on:
   push:
@@ -39,7 +40,10 @@ jobs:
             types-PyYAML==6.0.12.20261103 types-jsonschema==4.26.0.20261006 pip-audit==2.10.1
       - name: Ruff
         working-directory: apps/api
-        run: ruff check src tests alembic && ruff format --check src tests alembic && ruff check ../../tests/e2e ../../deploy/allinone
+        run: |
+          ruff check src tests alembic && ruff format --check src tests alembic
+          ruff check ../../tests/e2e ../../tests/ui ../../deploy/allinone ../../tools
+          ruff format --check ../../tests/ui ../../tools
       - name: Mypy
         working-directory: apps/api
         run: mypy
@@ -48,6 +52,10 @@ jobs:
       - name: Unit-tests
         working-directory: apps/api
         run: pytest -q tests/unit
+      - name: Peil-kopie (O-14) — drift tegen ai-server-manager
+        # offline: kop, inhoud en HERKOMST.json; online: gepinde commit exact gelijk, zelfde versie op de bronbranch
+        # met andere inhoud = drift (fout), nieuwere versie = waarschuwing (bewust bijwerken)
+        run: python tools/peil_kopie.py controleer && python tools/peil_kopie.py vergelijk --online
       - name: Integratietests (PostgreSQL)
         working-directory: apps/api
         run: pytest -q tests/integration
@@ -65,6 +73,51 @@ jobs:
         run: pytest -q tests/e2e/test_service_e2e.py
       - name: pip-audit
         run: pip-audit -r apps/api/requirements.lock --require-hashes --disable-pip --progress-spinner off
+
+  statuspagina-ui:
+    # statuspagina in Peil (ONTWERPTAAL §12/§13.2): de echte app rendert elke toestand (Hub-simulator, PostgreSQL);
+    # Chromium toetst axe-core = 0, geen overloop op 320–1440 px, CSP zonder JS, doelen ≥ 44 px, tekst ≥ 14 px, focus
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9
+        env:
+          POSTGRES_PASSWORD: ci-alleen-voor-tests
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      APPSTORE_TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-alleen-voor-tests@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Afhankelijkheden (Python met hashes, npm ci met lockfile)
+        run: |
+          python -m pip install --disable-pip-version-check --require-hashes -r apps/api/requirements.lock
+          python -m pip install --disable-pip-version-check --no-deps -e apps/api
+          cd tests/ui && npm ci --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: Toestanden uit de echte app (niet gekoppeld, koppelen mislukt, gekoppeld, ingetrokken, niet gereed, …)
+        run: python tests/ui/genereer_toestanden.py --uit tests/ui/uit
+      - name: Playwright (axe-core, overloop, CSP, toetsenbord) + schermafdrukken
+        working-directory: tests/ui
+        env:
+          SCHERMAFDRUKKEN: "1"
+        run: npx playwright test
+      - name: Schermafdrukken bewaren
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: statuspagina-peil
+          path: |
+            docs/screenshots/peil/statuspagina/*.png
+            tests/ui/uit/
+          retention-days: 14
 
   image:
     runs-on: ubuntu-24.04
