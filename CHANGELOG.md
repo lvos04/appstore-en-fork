@@ -37,4 +37,11 @@
   poging blokkeert niet); periodieke bevestiging met `services/self` (elke 4 min) zodat een aangevraagde tokenrotatie
   binnen 5 min gebeurt; sleutelrotatie weigert een volgnummer dat geen geheel getal is. Eén lokale interop-controle
   tegen de echte Hub-code van ai-server-manager.
+- **Statuspagina in Peil** (AS7, ADR-0009): `GET /` gebruikt het framework-vrije Peil-sjabloon 1.1.0 als
+  versie-gepinde kopie (`design/ontwerptaal/`, herkomstkop met sha256, `HERKOMST.json`); CI faalt bij drift met
+  ai-server-manager (`tools/peil_kopie.py`). Totaalstatus nooit groen als de dienst niet gereed is; "Gekoppeld" neutraal;
+  een mislukte koppelpoging geeft direct de pagina met vaste code, veldfout en selecteerbare trace-ID (geen redirect,
+  invoer nooit teruggetoond); formuliervelden `hub_adres`, `koppelcode`, `hub_vingerafdruk`. Nieuwe tests: renderer =
+  referentie-renderer, toestanden door de echte app, Playwright met axe-core (0 overtredingen), geen overloop op 320 px,
+  CSP zonder JS; schermafdrukken in `docs/screenshots/peil/statuspagina/`.
 - Status: Sim-getest; NIET GEVALIDEERD op een echte NAS.

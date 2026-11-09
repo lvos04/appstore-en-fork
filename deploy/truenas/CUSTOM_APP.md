@@ -66,7 +66,8 @@ eigen submappen (`postgres`, `secrets`, `backups`) en verder niets.
 
 ## 3. Openen en koppelen (contract 1.2 §3.2, §3.7)
 
-Open `http://<adres-van-je-NAS>:<Host Port>`. De statuspagina toont de status en **Niet gekoppeld**.
+Open `http://<adres-van-je-NAS>:<Host Port>`. De statuspagina (ontwerptaal Peil, zonder JavaScript) toont bovenaan de
+totaalstatus — **Niet gereed** zolang de app niet gekoppeld is, nooit groen — en daaronder **Niet gekoppeld**.
 
 - **Aanbevolen (geen wedloop):** maak in de Hub (Instellingen → Diensten) een enrollment-token voor
   `appstore-en-fork` en zet `HUB_URL`, `HUB_ENROLLMENT_TOKEN` en `HUB_KEY_FINGERPRINT` in het formulier (stap 2). De
@@ -76,8 +77,8 @@ Open `http://<adres-van-je-NAS>:<Host Port>`. De statuspagina toont de status en
   statuspagina het Hub-adres, de koppelcode (`XXXX-XXXX-XXXX`) én de **Hub-vingerafdruk** in die de Hub ernaast toont.
   Na de eerste koppeling verdwijnt dit formulier.
 
-Daarna toont de pagina **Gekoppeld**, de Hub-vingerafdruk (vergelijk die met de Hub-UI) en alleen de laatste 4 tekens
-van het service-token. **Ontkoppelen of opnieuw koppelen gaat daarna alleen via de Hub** (of met een nieuw
+Daarna toont de pagina **Gekoppeld** (neutraal, niet groen), het Hub-adres en de Hub-vingerafdruk (vergelijk die met de
+Hub-UI); het service-token staat nooit op de pagina. **Ontkoppelen of opnieuw koppelen gaat daarna alleen via de Hub** (of met een nieuw
 `HUB_ENROLLMENT_TOKEN` in het formulier: wie het formulier kan wijzigen is TrueNAS-beheerder). Er is geen
 "ontkoppelen" op de statuspagina.
 
@@ -103,5 +104,6 @@ van het service-token. **Ontkoppelen of opnieuw koppelen gaat daarna alleen via 
 | Formulier weigert de tag met `@sha256:` | Vul alleen de exacte versie in; de Hub leest de digest na installatie terug. |
 | Statuspagina: "De sleutelset-vingerafdruk van de Hub klopt niet" | De ingevulde vingerafdruk (of `HUB_KEY_FINGERPRINT`) past niet bij de Hub op dat adres: controleer het adres en neem de vingerafdruk opnieuw over uit de Hub-UI. Er is niets opgeslagen. |
 | Statuspagina: "Het token is na 60 minuten niet gelukt" of "onbekend, verlopen of al gebruikt" | Maak in de Hub een nieuw enrollment-token en zet het in `HUB_ENROLLMENT_TOKEN`; een gebruikt of geweigerd token wordt nooit opnieuw geprobeerd. |
-| Statuspagina: "Koppeling ingetrokken door de Hub" | De app vertrouwt de Hub niet meer (fail-closed) en houdt zijn eigen data; opnieuw koppelen gaat via de Hub. |
+| Statuspagina: **Ingetrokken** ("De Hub heeft de koppeling ingetrokken") | De app vertrouwt de Hub niet meer (fail-closed) en houdt zijn eigen data; opnieuw koppelen gaat via de Hub. |
+| Statuspagina: melding met **Code** en **Trace-ID** | Selecteer de trace-ID en zoek hem op in de app-log (TrueNAS → Apps → deze app → Logs): daar staat dezelfde code bij het mislukte verzoek. De ingevulde waarden worden nooit bewaard of teruggetoond; vul ze opnieuw in. |
 | `HUB_URL wordt niet gebruikt` in de app-log | Het adres heeft een pad, is een loopback-/link-local-adres of bevat inloggegevens; gebruik `http(s)://adres[:poort]`. |

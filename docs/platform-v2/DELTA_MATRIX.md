@@ -34,5 +34,5 @@ aanzet van het manifestmodel uit een afgebroken poging; beoordeeld, aangepast en
 | AS4 pinning | JWKS via HTTP voegde sleutels toe | alleen gepinde sleutels; ondertekende rotaties | Sim-getest |
 | AS5 statuspagina | formulier ook na intrekking; geen vingerafdruk; alleen 5/15 min per IP | alleen vóór eerste koppeling; vingerafdruk; `Origin`; 5 per IP + 20 per dienst | Sim-getest |
 | AS6 `/connector/v1/hub-link` + `/unlink`; env-token opnieuw; `Hub-Token-Rotation` | `/catalog/v1/hub-link` | gebouwd | Sim-getest |
-| AS7 statuspagina-CSS uit de ontwerptaal | eigen CSS | **geblokkeerd**: `ONTWERPTAAL.md` + `design/ontwerptaal/` nog niet geleverd (§13) | — |
+| AS7 statuspagina in de ontwerptaal | eigen CSS en opmaak | Peil 1.1.0-sjabloon als versie-gepinde kopie (`design/ontwerptaal/`, O-14) met driftcontrole in CI; formulier alleen vóór de eerste koppeling, verplichte vingerafdruk, fout met code + trace-ID; nooit groen als niet gereed (ADR-0009) | Unit-getest; Sim-getest (app + Hub-simulator, Chromium: axe 0, geen overloop 320 px); NIET GEVALIDEERD (echte schermlezer, telefoon, NAS) |
 | AS8 geen root-PID 1 | `dumb-init` als root | bewaker is PID 1 als 568; image-E2E per proces incl. PID 1 | Docker-E2E; NIET GEVALIDEERD (echte NAS) |
