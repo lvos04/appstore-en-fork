@@ -197,6 +197,46 @@ def test_import_records_evidence_audit_and_event(linked: TestClient, hub: FakeHu
     assert {i["runtime_name"] for i in items["items"]} >= {"plex", "mijn-tool"}
 
 
+def test_unchanged_repeat_records_evidence_but_no_new_event(
+    linked: TestClient, hub: FakeHub, worker_ctx: AppContext
+) -> None:
+    """Review P1: een ongewijzigde herhaling (de worker leest elke 15 min) is idempotent: wel bewijs en audit, maar
+    niet elke ronde hetzelfde event naar de Hub. Een andere uitkomst of een registerwijziging geeft wel een event."""
+
+    def counts() -> tuple[int, int, list[str]]:
+        with worker_ctx.sessions() as db:
+            ev = db.scalar(select(func.count()).select_from(EvidenceRecord).where(EvidenceRecord.kind == "hub_import"))
+            au = db.scalar(
+                select(func.count()).select_from(AuditEvent).where(AuditEvent.action == "catalog.import.run")
+            )
+            types = [t for t in db.scalars(select(OutboxEvent.event_type).order_by(OutboxEvent.seq)) if "import" in t]
+        return int(ev or 0), int(au or 0), types
+
+    seed(hub)
+    assert run_import(linked, hub)["event_type"] == "catalog.import.completed"
+    assert run_import(linked, hub)["event_type"] is None  # zelfde meting, zelfde uitkomst
+    assert periodic_import(worker_ctx) is not None
+    assert counts() == (3, 3, ["catalog.import.completed"])
+    hub.apps_mode = "alleen_gebruikers"  # andere uitkomst → één event, daarna stil
+    assert run_import(linked, hub)["event_type"] == "catalog.import.unavailable"
+    assert run_import(linked, hub)["event_type"] is None
+    hub.apps_mode = "dienst"  # weer ok
+    assert run_import(linked, hub)["event_type"] == "catalog.import.completed"
+    hub.catalog_apps = hub.catalog_apps[1:]  # register verandert (een app verdwijnt) → event, ook bij dezelfde status
+    body = run_import(linked, hub)
+    assert body["counts"]["verdwenen"] == 1 and body["event_type"] == "catalog.import.completed"
+    assert counts() == (
+        7,
+        7,
+        [
+            "catalog.import.completed",
+            "catalog.import.unavailable",
+            "catalog.import.completed",
+            "catalog.import.completed",
+        ],
+    )
+
+
 @pytest.mark.parametrize(
     ("mode", "status", "reason"),
     [

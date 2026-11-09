@@ -20,8 +20,10 @@
    anders `inventaris_gewijzigd_tijdens_lezen` of `inventaris_onvolledig` (`unknown`).
 2. **Uitkomsten zijn nooit gesimuleerd succes.** Niet gekoppeld, 403 (de Hub geeft dit niet aan diensten) of 404
    (oude Hub) → `capability_unavailable`; storing, 401, redirect, ongeldig of onvolledig antwoord → `unknown`. Elke
-   ronde legt bewijs (`hub_import`), audit en een event vast: `catalog.import.completed` of
-   `catalog.import.unavailable`. Een 401 leidt pas tot `ingetrokken` na 401 op `services/self` (§3.8, bestaande code).
+   ronde legt bewijs (`hub_import`) en audit vast. Een event (`catalog.import.completed` of
+   `catalog.import.unavailable`) gaat alleen mee als de uitkomst (`status` + `reason_code`) anders is dan bij de vorige
+   ronde of als het register veranderde (aangescherpt in de P1-review: de worker leest elke 15 minuten en stuurde de
+   Hub anders elke ronde hetzelfde bericht, ook bij een blijvende 403); het antwoord noemt `event_type` of `null`. Een 401 leidt pas tot `ingetrokken` na 401 op `services/self` (§3.8, bestaande code).
 3. **Register `existing_app`, idempotent.** Identiteit = TrueNAS-appnaam (`runtime_id`). Alleen gemeten velden
    (image/tag/**effectieve** digest uit de Hub, `digest_bron`, readback, catalogusapp/trein/versie, poorten, opslag,
    datasets, runtime-staat) met een hash; zelfde meting ⇒ geen wijziging (`row_version` gelijk). Nieuwe tag/digest ⇒
