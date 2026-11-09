@@ -109,6 +109,8 @@ jobs:
         env:
           SCHERMAFDRUKKEN: "1"
         run: npx playwright test
+      - name: Ontwerpreview tegen de draaiende dienst (serve + worker + Hub-simulator; echte formulier-POST in Chromium)
+        run: python tests/ui/review_live.py --meting "$RUNNER_TEMP/peil-review"
       - name: Schermafdrukken bewaren
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -117,6 +119,7 @@ jobs:
           path: |
             docs/screenshots/peil/statuspagina/*.png
             tests/ui/uit/
+            ${{ runner.temp }}/peil-review/
           retention-days: 14
 
   image:
