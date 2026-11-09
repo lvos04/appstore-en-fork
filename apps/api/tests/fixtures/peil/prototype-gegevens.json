@@ -1,0 +1,135 @@
+{
+ "statuspagina": {
+  "voorbeeld": true,
+  "dienst_naam": "Executor",
+  "dienst_omschrijving": "Voert alleen door de Hub ondertekende acties uit op TrueNAS. Enige dienst met een schrijfsleutel.",
+  "titel_toestand": "niet gekoppeld (koppelen mislukt)",
+  "app_naam": "ai-server-manager-executor",
+  "spring_doel": "koppelcode",
+  "spring_tekst": "Naar de koppelcode (fout)",
+  "melding": true,
+  "melding_toon": "fout",
+  "melding_icoon": "storing",
+  "melding_titel": "Koppelen is mislukt",
+  "melding_tekst": "De Hub weigerde de koppelcode: verlopen, al gebruikt of ongeldig. Maak in de Hub een nieuwe koppelcode en probeer het opnieuw.",
+  "melding_link": true,
+  "melding_link_doel": "koppelcode",
+  "melding_link_tekst": "Naar het veld Koppelcode",
+  "trace_id": "3d8a1f4e-6b2c-4e95-a7d0-91c5b8e2f364",
+  "melding_code": "hub_weigerde_code",
+  "totaal_toon": "onbekend",
+  "totaal_label": "Niet gereed",
+  "totaal_toelichting": "Deels onbekend — wacht op koppeling met de Hub.",
+  "checks": [
+   {
+    "naam": "Proces",
+    "toon": "gezond",
+    "label": "Gezond",
+    "tijd": "11:56",
+    "iso": "2026-11-09T11:56:00+01:00"
+   },
+   {
+    "naam": "Eigen database",
+    "toon": "gezond",
+    "label": "Gezond",
+    "tijd": "11:56",
+    "iso": "2026-11-09T11:56:00+01:00"
+   },
+   {
+    "naam": "Koppeling met de Hub",
+    "toon": "onbekend",
+    "label": "Niet gekoppeld",
+    "tijd": "11:56",
+    "iso": "2026-11-09T11:56:00+01:00",
+    "reden": "Zonder koppeling weet de executor niet welke acties zijn ondertekend."
+   },
+   {
+    "naam": "TrueNAS-schrijfsleutel",
+    "toon": "onbekend",
+    "label": "Niet ingesteld",
+    "tijd": "11:56",
+    "iso": "2026-11-09T11:56:00+01:00",
+    "reden": "Wordt gevraagd zodra de executor gekoppeld is."
+   }
+  ],
+  "gereed": "Nee — wacht op koppeling",
+  "versie": "0.1.0",
+  "bijgewerkt": "9 nov 2026, 11:56",
+  "bijgewerkt_iso": "2026-11-09T11:56:00+01:00",
+  "gekoppeld": false,
+  "koppelformulier": true,
+  "koppelcode_geldig": "30 minuten",
+  "csrf_token": "voorbeeld-csrf",
+  "fout_koppelcode": "Deze koppelcode is verlopen of al gebruikt. Maak een nieuwe in de Hub.",
+  "dienst_blok_titel": "Wat deze versie uitvoert",
+  "dienst_blok": [
+   {
+    "naam": "Toegestane acties",
+    "toon": "gate",
+    "label": "0 · voert niets uit",
+    "reden": "De lijst met toegestane acties is in deze fase leeg. Acties komen pas na koppelen en in fase P2."
+   }
+  ]
+ },
+ "statuspagina-gekoppeld": {
+  "voorbeeld": true,
+  "dienst_naam": "Voorbeelddienst",
+  "dienst_omschrijving": "Voorbeeld van een nieuwe dienst met alleen een statuspagina; alle schermen staan in de Hub.",
+  "titel_toestand": "gekoppeld, beperkt",
+  "app_naam": "voorbeelddienst",
+  "spring_doel": "inhoud",
+  "spring_tekst": "Naar inhoud",
+  "totaal_toon": "beperkt",
+  "totaal_label": "Beperkt",
+  "totaal_toelichting": "Gereed; één controle is beperkt en één is onbekend.",
+  "checks": [
+   {
+    "naam": "Proces",
+    "toon": "gezond",
+    "label": "Gezond",
+    "tijd": "11:56",
+    "iso": "2026-11-09T11:56:00+01:00"
+   },
+   {
+    "naam": "Eigen database",
+    "toon": "gezond",
+    "label": "Gezond",
+    "tijd": "11:56",
+    "iso": "2026-11-09T11:56:00+01:00"
+   },
+   {
+    "naam": "Bron Voorbeeld-API",
+    "toon": "beperkt",
+    "label": "Beperkt",
+    "tijd": "11:55",
+    "iso": "2026-11-09T11:55:00+01:00",
+    "reden": "Antwoordt traag (8 s); de dienst probeert het met wachttijd opnieuw."
+   },
+   {
+    "naam": "Gebeurtenissen naar de Hub",
+    "toon": "onbekend",
+    "label": "Onbekend",
+    "tijd": "11:50",
+    "iso": "2026-11-09T11:50:00+01:00",
+    "reden": "Laatste levering 11:50; nieuwere stand nog niet bevestigd."
+   }
+  ],
+  "gereed": "Ja",
+  "versie": "0.1.0",
+  "bijgewerkt": "9 nov 2026, 11:56",
+  "bijgewerkt_iso": "2026-11-09T11:56:00+01:00",
+  "gekoppeld": true,
+  "gekoppeld_sinds": "8 nov 2026, 20:14",
+  "hub_adres": "http://voorbeeld-nas.invalid:30400",
+  "hub_vingerafdruk": "MEGG-8GFG-2E4Y-K2RQ",
+  "dienst_blok_titel": "Wat deze dienst doet",
+  "dienst_blok": [
+   {
+    "naam": "Voorbeeldfunctie",
+    "toon": "gate",
+    "label": "Wacht op besluit",
+    "reden": "Gaat pas aan na besluit D99 in de Hub (voorbeeld). Dit is geen storing; er wacht een voorwaarde."
+   }
+  ]
+ }
+}
