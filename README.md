@@ -44,4 +44,4 @@ make test-integration          # PostgreSQL op 127.0.0.1:5432 (database appstore
 make test-e2e                  # echte processen + Hub-simulator
 make image image-e2e           # alles-in-één image bouwen en testen (Docker)
 ```
-Variabelen: [`.env.example`](.env.example). Licentie: nog niet gekozen (vraag aan de eigenaar).
+Variabelen: [`.env.example`](.env.example). Licentie: **GPL-3.0** (zie [`LICENSE`](LICENSE); besluit van de eigenaar, 2026-11-09).
