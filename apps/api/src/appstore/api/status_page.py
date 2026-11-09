@@ -37,6 +37,11 @@ MELDINGEN = {
     "al_gekoppeld": ("ok", "Deze app is al gekoppeld. Ontkoppelen of opnieuw koppelen gaat via de Hub."),
     "te_vaak": ("fout", "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw."),
     "sessie": ("fout", "Het formulier is verlopen. Laad de pagina opnieuw en probeer het nog eens."),
+    "andere_hub": (
+        "fout",
+        "Dit Hub-adres verschilt van het adres (HUB_URL) waarmee de app is geïnstalleerd; koppelen met een andere Hub "
+        "is geweigerd.",
+    ),
 }
 LINK_STATUS = {
     "linked": "Gekoppeld",
@@ -199,11 +204,14 @@ def pair(
         url = None
     if not url or len(code) < 6:
         return back("ongeldig")
+    c = ctx(request)
+    if c.settings.hub_url and url != c.settings.hub_url:
+        # bij installatie via de Hub staat HUB_URL vast: nooit met een andere (mogelijk vreemde) Hub koppelen
+        return back("andere_hub")
     link = get_link(db)
     if link.status == "linked":
         db.commit()
         return back("al_gekoppeld")
-    c = ctx(request)
     result = enroll(
         db, c.settings, c.secrets, c.http_factory, hub_url=url, credential=code, via="koppelcode", trace_id=tid(request)
     )

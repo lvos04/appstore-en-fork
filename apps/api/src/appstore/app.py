@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 
 from . import APP_ID, __version__
 from .api import catalog, connector, health, status_page
@@ -19,6 +19,35 @@ from .errors import install_error_handlers
 from .secrets_store import Secrets, ensure_secrets
 
 MAX_BODY = 1024 * 1024
+
+
+class BodyLimit:
+    """ASGI-middleware: telt de werkelijk ontvangen bytes, ook zonder ``Content-Length`` (chunked).
+
+    Boven ``limit`` wordt het lezen afgebroken met 413 (``payload_too_large``); FastAPI geeft een
+    ``HTTPException`` uit de body-lezer ongewijzigd door aan de foutafhandeling.
+    """
+
+    def __init__(self, app: Any, limit: int = MAX_BODY) -> None:
+        self.app = app
+        self.limit = limit
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        received = 0
+
+        async def limited() -> Any:
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.limit:
+                    raise HTTPException(status_code=413)
+            return message
+
+        await self.app(scope, limited, send)
 
 
 def default_http_factory(settings: Settings) -> Callable[[], httpx.Client]:
@@ -59,6 +88,8 @@ def create_app(settings: Settings | None = None, *, http_factory: Callable[[], h
     app.state.pairing_attempts = status_page.pairing_limiter()
     app.state.heavy_limiter = catalog.heavy_limiter()
     install_error_handlers(app)
+    # binnenste laag (vóór de http-middleware toegevoegd): de body-lezer van FastAPI ziet de 413 direct
+    app.add_middleware(BodyLimit, limit=MAX_BODY)
 
     @app.middleware("http")
     async def _trace_and_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

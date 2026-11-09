@@ -404,13 +404,14 @@ def list_versions(app_id: str, db: DB, _: Viewer, cursor: str | None = None, lim
     )
     after = decode_cursor(cursor)
     if after is not None:
-        try:
-            ts, vid = after[0], uuid.UUID(after[1])
-        except (TypeError, ValueError, IndexError) as exc:
-            raise ApiError(400, "cursor_invalid", "De cursor is ongeldig.") from exc
         from datetime import datetime
 
-        at = datetime.fromisoformat(ts)
+        try:
+            if not isinstance(after, list) or len(after) != 2:
+                raise TypeError("cursor heeft niet de vorm [tijd, id]")
+            at, vid = datetime.fromisoformat(str(after[0])), uuid.UUID(str(after[1]))
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, "cursor_invalid", "De cursor is ongeldig; begin opnieuw zonder cursor.") from exc
         stmt = stmt.where(
             or_(ManifestVersion.created_at < at, and_(ManifestVersion.created_at == at, ManifestVersion.id < vid))
         )

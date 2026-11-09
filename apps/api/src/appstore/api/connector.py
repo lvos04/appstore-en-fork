@@ -148,7 +148,11 @@ def items(
     elif type == "manifest_version":
         stmt2 = select(ManifestVersion).order_by(ManifestVersion.id)
         if after is not None:
-            stmt2 = stmt2.where(ManifestVersion.id > uuid.UUID(str(after)))
+            try:
+                after_id = uuid.UUID(str(after))
+            except ValueError as exc:
+                raise ApiError(400, "cursor_invalid", "De cursor is ongeldig; begin opnieuw zonder cursor.") from exc
+            stmt2 = stmt2.where(ManifestVersion.id > after_id)
         rows2 = db.scalars(stmt2.limit(limit + 1)).all()
         page2 = rows2[:limit]
         out = [version_summary(v) for v in page2]

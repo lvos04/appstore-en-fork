@@ -34,6 +34,9 @@ def database_url() -> Iterator[str]:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
             conn.execute(text(f'CREATE DATABASE "{name}"'))
     except Exception as exc:  # pragma: no cover
+        # in CI (of met APPSTORE_REQUIRE_DB=1) is een ontbrekende database een fout, nooit een stille 'skip'
+        if os.environ.get("CI") or os.environ.get("APPSTORE_REQUIRE_DB"):
+            pytest.fail(f"PostgreSQL vereist maar niet beschikbaar: {exc}")
         pytest.skip(f"PostgreSQL niet beschikbaar: {exc}")
     url = make_url(ADMIN_URL).set(database=name).render_as_string(hide_password=False)
     migrations.upgrade(url)
