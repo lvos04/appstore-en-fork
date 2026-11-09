@@ -1,0 +1,20 @@
+# ALLEEN VOOR ONTWIKKELING EN CI — dit is GEEN installatiemethode.
+# Installeren op TrueNAS gaat uitsluitend als standaard Custom App (deploy/truenas/CUSTOM_APP.md) of via de Hub.
+#
+#   docker compose -f deploy/dev/compose.yaml up --build
+#   → http://127.0.0.1:30430 (statuspagina), data in deploy/dev/.appdata (niet in Git)
+name: appstore-en-fork-dev
+services:
+  appstore:
+    build:
+      context: ../..
+      dockerfile: deploy/allinone/Dockerfile
+    image: appstore-en-fork:dev
+    ports:
+      - "127.0.0.1:30430:30430"
+    volumes:
+      - ./.appdata:/appdata
+    environment:
+      # optioneel: koppelen met een lokale Hub in ontwikkeling
+      HUB_URL: ${HUB_URL:-}
+      HUB_ENROLLMENT_TOKEN: ${HUB_ENROLLMENT_TOKEN:-}

@@ -1,0 +1,7 @@
+# Zelfde regels als apps/api voor tests/e2e en deploy/allinone.
+extend = "apps/api/pyproject.toml"
+src = ["apps/api/src", "apps/api", "tests/e2e"]
+
+[lint.per-file-ignores]
+"tests/**" = ["S", "PLR", "N", "B011", "E402", "BLE001"]
+"deploy/allinone/*.py" = ["S603", "S607", "PLW1510", "S310", "BLE001"]

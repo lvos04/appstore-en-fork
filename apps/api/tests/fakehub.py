@@ -41,6 +41,7 @@ class FakeHub:
     jwks_calls: int = 0
     source_files: dict[str, bytes] = field(default_factory=dict)
     source_etag: str = '"v1"'
+    hub_host: str = HUB_HOST
 
     # -------------------------------------------------------------- tokens
     def jwt(
@@ -81,7 +82,7 @@ class FakeHub:
         path = request.url.path
         if host == SOURCE_HOST:
             return self._source(request)
-        if host != HUB_HOST:
+        if host != self.hub_host:
             raise httpx.ConnectError(f"onbekende host {host}", request=request)
         if path == "/api/v1/auth/jwks":
             self.jwks_calls += 1
@@ -133,3 +134,37 @@ class FakeHub:
 
     def client_factory(self) -> Any:
         return lambda: httpx.Client(transport=httpx.MockTransport(self.handler), timeout=5)
+
+    def asgi(self) -> Any:
+        """Dezelfde simulator als echte HTTP-dienst (voor E2E met echte processen)."""
+
+        async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            if scope["type"] != "http":
+                return
+            body = b""
+            while True:
+                msg = await receive()
+                body += msg.get("body", b"")
+                if not msg.get("more_body"):
+                    break
+            headers = [(k.decode(), v.decode()) for k, v in scope["headers"]]
+            query = scope.get("query_string", b"").decode()
+            url = f"http://{self.hub_host}{scope['path']}" + (f"?{query}" if query else "")
+            try:
+                resp = self.handler(httpx.Request(scope["method"], url, headers=headers, content=body))
+            except httpx.ConnectError:
+                resp = httpx.Response(503)
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": resp.status_code,
+                    "headers": [
+                        (k.encode(), v.encode())
+                        for k, v in resp.headers.items()
+                        if k.lower() not in ("content-length", "transfer-encoding")
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": resp.content})
+
+        return app
