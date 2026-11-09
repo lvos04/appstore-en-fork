@@ -138,6 +138,67 @@ def test_body_limit_without_content_length(client: TestClient, hub: FakeHub) -> 
     assert small.status_code == 200
 
 
+def _chunked(total: int, piece: int = 65536) -> Iterator[bytes]:
+    sent = 0
+    while sent < total:
+        part = min(piece, total - sent)
+        sent += part
+        yield b"x" * part
+
+
+def _assert_413(resp: object) -> None:
+    assert resp.status_code == 413, resp.text  # type: ignore[attr-defined]
+    body = resp.json()  # type: ignore[attr-defined]
+    assert set(body) == {"code", "message", "details", "trace_id"}
+    assert body["code"] == "payload_too_large" and body["details"] == {"max_bytes": MAX_BODY}  # §5
+    assert resp.headers["X-Trace-Id"] == body["trace_id"]  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/connector/v1/hub-link/unlink"),  # route zonder body-model: eerst 401 zou §5 schenden
+        ("POST", "/connector/v1/propose"),
+        ("GET", "/healthz"),
+        ("GET", "/connector/v1/discover"),
+        ("POST", "/bestaat-niet"),  # vóór routering: geen 404
+        ("PUT", "/healthz"),  # vóór routering: geen 405
+        ("POST", "/koppelen"),  # statuspagina (formulier)
+    ],
+)
+def test_chunked_body_over_limit_is_413_before_routing_and_auth(
+    client: TestClient, hub: FakeHub, method: str, path: str
+) -> None:
+    """Contract 1.2 §5: een ASGI-laag vóór routering en authenticatie telt de body, ook zonder ``Content-Length``."""
+    pair(client, hub)
+    for headers in ({}, hub.service_auth()):
+        resp = client.request(method, path, content=_chunked(MAX_BODY + 1), headers={**headers, **idem()})
+        _assert_413(resp)
+    st = client.app.state.ctx.store.read()  # type: ignore[attr-defined]
+    assert st.state == "gekoppeld"  # het verzoek is nooit verwerkt (geen ontkoppeling)
+
+
+def test_content_length_over_limit_is_refused_directly(client: TestClient, hub: FakeHub) -> None:
+    pair(client, hub)
+    body = b"x" * (MAX_BODY + 1)
+    for path in ("/connector/v1/hub-link/unlink", "/bestaat-niet", "/catalog/v1/validate"):
+        _assert_413(client.post(path, content=body, headers={"Content-Type": "application/json", **idem()}))
+
+
+def test_body_of_exactly_one_mib_is_not_refused(client: TestClient, hub: FakeHub) -> None:
+    """Precies 1 048 576 bytes valt binnen de grens: de route (en de aanmelding) beslist, niet de bodylaag."""
+    pair(client, hub)
+    assert client.request("GET", "/healthz", content=_chunked(MAX_BODY)).status_code == 200
+    resp = client.post("/connector/v1/hub-link/unlink", content=_chunked(MAX_BODY), headers=idem())
+    assert resp.status_code == 401  # zonder aanmelding: gewone weigering, geen 413
+    ok = client.post(
+        "/catalog/v1/validate",
+        json={"manifest_yaml": "a: 1", "opvulling": "x" * (MAX_BODY - 100)},
+        headers=hub.auth(roles=["viewer"]),
+    )
+    assert ok.status_code != 413, ok.text
+
+
 def test_pairing_only_with_configured_hub_url(settings: Settings, hub: FakeHub) -> None:
     """Met HUB_URL uit de installatie wordt een andere (mogelijk vreemde) Hub op de statuspagina geweigerd."""
     s = dataclasses.replace(settings, hub_url=HUB_URL)

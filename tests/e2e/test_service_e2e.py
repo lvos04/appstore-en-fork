@@ -9,6 +9,7 @@ import stat
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -97,6 +98,25 @@ def test_unauthenticated_wrong_audience_and_replay(service: str, hub: FakeHub) -
     assert first.status_code == 200
     second = httpx.post(f"{service}/catalog/v1/validate", headers=auth, json={"manifest_yaml": "a: 1"}, timeout=5)
     assert second.status_code == 401 and second.json()["details"]["reason"] == "token_replayed"
+
+
+def test_chunked_body_over_one_mib_is_413_over_real_http(service: str, hub: FakeHub) -> None:
+    """§5 over echte HTTP (uvicorn, ``Transfer-Encoding: chunked``): ook een route zonder body-model en zonder
+    aanmelding krijgt 413 vóór routering en authenticatie; de koppeling blijft ongemoeid."""
+    wait_for(lambda: _linked(service), 60)
+
+    def chunks() -> Any:
+        for _ in range(17):  # 17 × 64 KiB > 1 MiB
+            yield b"x" * 65536
+
+    for headers in ({}, hub.service_auth()):
+        resp = httpx.post(
+            f"{service}/connector/v1/hub-link/unlink", content=chunks(), headers={**headers, **_idem()}, timeout=10
+        )
+        assert resp.status_code == 413, resp.text
+        body = resp.json()
+        assert body["code"] == "payload_too_large" and body["details"] == {"max_bytes": 1048576}
+    assert _linked(service)
 
 
 def test_zz_hub_link_and_unlink_by_hub(service: str, hub: FakeHub) -> None:

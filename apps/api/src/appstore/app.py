@@ -8,7 +8,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import APP_ID, __version__
 from .api import catalog, connector, health, status_page
@@ -25,33 +27,83 @@ MAX_BODY = 1024 * 1024
 log = logging.getLogger("appstore")
 
 
-class BodyLimit:
-    """ASGI-middleware: telt de werkelijk ontvangen bytes, ook zonder ``Content-Length`` (chunked).
+async def _no_receive() -> Message:
+    return {"type": "http.disconnect"}
 
-    Boven ``limit`` wordt het lezen afgebroken met 413 (``payload_too_large``); FastAPI geeft een
-    ``HTTPException`` uit de body-lezer ongewijzigd door aan de foutafhandeling.
+
+class BodyLimit:
+    """Harde grens van 1 MiB per verzoek (contract 1.2 §5), **vóór routering en authenticatie**, ook chunked.
+
+    Een te grote ``Content-Length`` wordt direct geweigerd. Anders leest deze laag de body tellend (hooguit 1 MiB in
+    het geheugen) vóórdat routering, aanmelding of een route iets doet, en breekt af met
+    ``413 {"code":"payload_too_large","details":{"max_bytes":1048576}}`` zodra er meer binnenkomt. Zo krijgt ook een
+    route die de body zelf niet leest (bv. ``hub-link/unlink``), een onbekende route of een verzoek zonder aanmelding
+    altijd 413 en nooit eerst 401/404/405. Daarna krijgt de app de gebufferde body.
     """
 
-    def __init__(self, app: Any, limit: int = MAX_BODY) -> None:
+    def __init__(self, app: ASGIApp, limit: int = MAX_BODY) -> None:
         self.app = app
         self.limit = limit
 
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope.get("type") != "http":
+    @staticmethod
+    def _trace(scope: Scope) -> str:
+        state = scope.get("state")
+        value = state.get("trace_id") if isinstance(state, dict) else None
+        return str(value) if value else str(uuid.uuid4())
+
+    async def _refuse(self, scope: Scope, send: Send, status: int, code: str, message: str, details: Any) -> None:
+        body = {"code": code, "message": message, "details": details, "trace_id": self._trace(scope)}
+        await JSONResponse(body, status_code=status, headers={"Connection": "close"})(scope, _no_receive, send)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        received = 0
-
-        async def limited() -> Any:
-            nonlocal received
+        for name, value in scope.get("headers") or []:
+            if name == b"content-length":
+                text = value.decode("latin-1").strip()
+                if not text.isdigit():
+                    await self._refuse(scope, send, 400, "bad_request", "Ongeldige Content-Length.", {})
+                    return
+                if int(text) > self.limit:
+                    await self._too_large(scope, send)
+                    return
+        chunks: list[bytes] = []
+        total, more = 0, True
+        while more:
             message = await receive()
-            if message.get("type") == "http.request":
-                received += len(message.get("body", b""))
-                if received > self.limit:
-                    raise HTTPException(status_code=413)
-            return message
+            if message["type"] == "http.disconnect":
+                # client is weg vóór de body compleet was: niets uitvoeren, alleen netjes afsluiten
+                await self._refuse(scope, send, 400, "bad_request", "Verbinding verbroken.", {})
+                return
+            part = message.get("body", b"")
+            total += len(part)
+            if total > self.limit:
+                await self._too_large(scope, send)
+                return
+            chunks.append(part)
+            more = bool(message.get("more_body", False))
+        buffered: Message = {"type": "http.request", "body": b"".join(chunks), "more_body": False}
+        delivered = False
 
-        await self.app(scope, limited, send)
+        async def replay() -> Message:
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return buffered
+            return await receive()  # daarna alleen nog http.disconnect
+
+        await self.app(scope, replay, send)
+
+    async def _too_large(self, scope: Scope, send: Send) -> None:
+        await self._refuse(
+            scope,
+            send,
+            413,
+            "payload_too_large",
+            "Het verzoek is te groot (maximaal 1 MiB).",
+            {"max_bytes": self.limit},
+        )
 
 
 def default_http_factory(settings: Settings) -> Callable[[], httpx.Client]:
@@ -108,7 +160,8 @@ def create_app(settings: Settings | None = None, *, http_factory: Callable[[], h
     app.state.pairing_attempts = status_page.pairing_limiter()
     app.state.heavy_limiter = catalog.heavy_limiter()
     install_error_handlers(app)
-    # binnenste laag (vóór de http-middleware toegevoegd): de body-lezer van FastAPI ziet de 413 direct
+    # vóór de http-middleware toegevoegd = daarbinnen (de trace_id is dan al gezet), maar wel vóór routering en
+    # aanmelding: elke route, ook een onbekende of een zonder body-model, krijgt bij > 1 MiB eerst 413 (§5)
     app.add_middleware(BodyLimit, limit=MAX_BODY)
 
     @app.middleware("http")
@@ -118,19 +171,6 @@ def create_app(settings: Settings | None = None, *, http_factory: Callable[[], h
             request.state.trace_id = str(uuid.UUID(incoming)) if incoming else str(uuid.uuid4())
         except ValueError:
             request.state.trace_id = str(uuid.uuid4())
-        length = request.headers.get("content-length")
-        if length and length.isdigit() and int(length) > MAX_BODY:
-            from fastapi.responses import JSONResponse
-
-            return JSONResponse(
-                {
-                    "code": "payload_too_large",
-                    "message": "Verzoek is te groot (max 1 MiB).",
-                    "details": {},
-                    "trace_id": request.state.trace_id,
-                },
-                status_code=413,
-            )
         response = await call_next(request)
         response.headers["X-Trace-Id"] = request.state.trace_id
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
