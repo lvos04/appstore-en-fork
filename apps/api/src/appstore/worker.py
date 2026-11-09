@@ -138,17 +138,17 @@ def push_outbox(c: AppContext, batch: int = 50) -> int:
                     break
             except httpx.HTTPError as exc:
                 ok, err = False, type(exc).__name__
-                if ok:
-                    ev.delivered_at = utcnow()
-                    delivered += 1
+            if ok:
+                ev.delivered_at = utcnow()
+                delivered += 1
+            else:
+                ev.attempts += 1
+                ev.last_error = err
+                if ev.attempts >= MAX_DELIVERY_ATTEMPTS:
+                    ev.dead_letter = True
                 else:
-                    ev.attempts += 1
-                    ev.last_error = err
-                    if ev.attempts >= MAX_DELIVERY_ATTEMPTS:
-                        ev.dead_letter = True
-                    else:
-                        delay = min(3600.0, 2.0**ev.attempts) + random.uniform(0, 1)  # noqa: S311
-                        ev.next_attempt_at = utcnow() + timedelta(seconds=delay)
+                    delay = min(3600.0, 2.0**ev.attempts) + random.uniform(0, 1)  # noqa: S311
+                    ev.next_attempt_at = utcnow() + timedelta(seconds=delay)
         db.commit()
         return delivered
 

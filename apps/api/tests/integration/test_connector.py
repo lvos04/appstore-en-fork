@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from appstore.api.common import AppContext
 from appstore.events import emit
@@ -84,7 +84,52 @@ def test_events_polling_and_push(client: TestClient, linked: FakeHub, worker_ctx
     # push naar de Hub-inbox met het service-token (dienst → Hub blijft Bearer <service-token>, §4.4)
     assert len(linked.inbox) == len(types)
     assert all(a == f"Bearer {linked.last_service_token}" for a in linked.inbox_auth)
+    with worker_ctx.sessions() as db:
+        rows = db.scalars(select(OutboxEvent)).all()
+        assert rows and all(r.delivered_at is not None and r.attempts == 0 for r in rows)  # als afgeleverd gemarkeerd
+    _due_now(worker_ctx)
     assert push_outbox(worker_ctx) == 0  # niets dubbel
+    assert len(linked.inbox) == len(types)  # ook de Hub ontving niets opnieuw
+
+
+def test_push_counts_delivered_events(client: TestClient, linked: FakeHub, worker_ctx: AppContext) -> None:
+    with worker_ctx.sessions() as db:
+        for n in range(3):
+            emit(db, "catalog.test.event", "test", str(n), {}, "00000000-0000-0000-0000-000000000000")
+        db.commit()
+    before = len(linked.inbox)
+    assert push_outbox(worker_ctx) == 3
+    assert len(linked.inbox) == before + 3
+    assert push_outbox(worker_ctx) == 0 and len(linked.inbox) == before + 3
+
+
+def test_push_5xx_backs_off_and_dead_letters_after_ten(
+    client: TestClient, linked: FakeHub, worker_ctx: AppContext
+) -> None:
+    """§7: retry met backoff, dead-letter na 10 pogingen; een 5xx is nooit 'afgeleverd'."""
+    with worker_ctx.sessions() as db:
+        emit(db, "catalog.test.event", "test", "x", {}, "00000000-0000-0000-0000-000000000000")
+        db.commit()
+    linked.inbox_status = 503
+    assert push_outbox(worker_ctx) == 0
+    with worker_ctx.sessions() as db:
+        ev = db.scalars(select(OutboxEvent).where(OutboxEvent.delivered_at.is_(None))).one()
+        assert ev.attempts == 1 and ev.last_error == "HTTP 503" and not ev.dead_letter
+        assert ev.next_attempt_at > utcnow()  # backoff: niet direct opnieuw
+    assert push_outbox(worker_ctx) == 0  # nog niet aan de beurt
+    with worker_ctx.sessions() as db:
+        assert db.scalars(select(OutboxEvent).where(OutboxEvent.delivered_at.is_(None))).one().attempts == 1
+    for _ in range(9):
+        _due_now(worker_ctx)
+        push_outbox(worker_ctx)
+    with worker_ctx.sessions() as db:
+        ev = db.scalars(select(OutboxEvent).where(OutboxEvent.delivered_at.is_(None))).one()
+        assert ev.attempts == 10 and ev.dead_letter
+    linked.inbox_status = 202
+    _due_now(worker_ctx)
+    assert push_outbox(worker_ctx) == 0  # dead-letter wordt niet meer verstuurd
+    health = client.get("/connector/v1/health", headers=linked.service_auth()).json()
+    assert health["status"] == "degraded" and health["reason_code"] == "outbox"
 
 
 def _due_now(worker_ctx: AppContext) -> None:
