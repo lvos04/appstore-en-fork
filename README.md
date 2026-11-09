@@ -7,8 +7,9 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 
 > **Status (eerlijk):** code, unit-, integratie- en E2E-tests met simulators zijn groen in de bouwomgeving
 > (**Sim-getest**). Niets is op een echte TrueNAS getest (**NIET GEVALIDEERD (echte NAS)**); het koppelen volgens
-> contract 1.2 is alleen tegen de Hub-simulator getest (de echte Hub bouwt 1.2 nog); de GHCR-image bestaat pas na de
-> eerste release-tag. Zie `docs/platform-v2/EVIDENCE.json`.
+> contract 1.2 is getest tegen de Hub-simulator en één keer lokaal tegen de echte Hub-code van `ai-server-manager`
+> (twee processen op dezelfde machine, ADR-0008 §5), niet tegen een op de NAS geïnstalleerde Hub; de GHCR-image bestaat
+> pas na de eerste release-tag. Zie `docs/platform-v2/EVIDENCE.json`.
 
 ## Wat zit erin
 

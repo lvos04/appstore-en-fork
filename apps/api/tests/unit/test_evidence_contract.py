@@ -13,6 +13,9 @@ EVIDENCE = REPO_ROOT / "docs" / "platform-v2" / "EVIDENCE.json"
 CONTRACT = REPO_ROOT / "docs" / "platform-v2" / "PLATFORM_CONTRACTEN.md"
 #: sha256 van ai-server-manager docs/platform-v2/PLATFORM_CONTRACTEN.md (contracts 1.2, bron-commit 8b54f39)
 CONTRACT_SHA256 = "6a9d29bd94fd991ac5d7876c1a5e51455d471c8bb2833dbed5c52c915b7df424"
+CONFORMITY = REPO_ROOT / "docs" / "platform-v2" / "CONTRACT_1.2_CONFORMITEIT.md"
+#: sha256 van ai-server-manager docs/platform-v2/CONTRACT_1.2_CONFORMITEIT.md op dezelfde bron-commit
+CONFORMITY_SHA256 = "6daedffb44a9506f97c7b9135f65393191a4b6247e96661a64c7a6fed5297f59"
 
 STATUS_WORK = {"Niet gestart", "Bezig", "Geblokkeerd", "N.v.t."}  # 'Gereed' nooit in deze bouwomgeving
 STATUS_TEST = {"Niet gestart", "Bezig", "Mislukt", "Geblokkeerd", "N.v.t."}  # 'Geslaagd' nooit
@@ -53,3 +56,7 @@ def test_contract_copy_is_version_1_2_and_byte_equal_to_the_source() -> None:
     data = CONTRACT.read_bytes()
     assert b"Versie: `contracts 1.2`" in data
     assert hashlib.sha256(data).hexdigest() == CONTRACT_SHA256
+
+
+def test_conformity_list_copy_is_byte_equal_to_the_source() -> None:
+    assert hashlib.sha256(CONFORMITY.read_bytes()).hexdigest() == CONFORMITY_SHA256

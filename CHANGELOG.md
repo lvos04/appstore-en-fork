@@ -31,4 +31,10 @@
     `POST /connector/v1/hub-link/unlink`.
   - Image: geen `dumb-init` meer; de bewaker is PID 1 en draait, zoals alle processen, als 568 zonder capabilities
     met `no_new_privs`.
+- **Review contract 1.2** (ADR-0008 §5): 1 MiB-grens vóór routering en aanmelding, ook chunked, met
+  `details.max_bytes`; outbox markeert afgeleverde events weer als afgeleverd (backoff en dead-letter werken weer);
+  koppelpoging atomair geclaimd (geen twee pogingen tegelijk, nooit een koppelcode na de eerste koppeling, verweesde
+  poging blokkeert niet); periodieke bevestiging met `services/self` (elke 4 min) zodat een aangevraagde tokenrotatie
+  binnen 5 min gebeurt; sleutelrotatie weigert een volgnummer dat geen geheel getal is. Eén lokale interop-controle
+  tegen de echte Hub-code van ai-server-manager.
 - Status: Sim-getest; NIET GEVALIDEERD op een echte NAS.

@@ -1,7 +1,9 @@
 # ADR-0008 — Platformcontract 1.2 toepassen in appstore-en-fork
 
-- **Status:** aangenomen · 2026-11-09 · Sim-getest (Hub-simulator volgens contract 1.2 §3.3) en Docker-getest; NIET
-  GEVALIDEERD tegen de echte Hub (die 1.2 nog niet bouwde: H1–H6) en niet op een echte NAS.
+- **Status:** aangenomen · 2026-11-09 · Sim-getest (Hub-simulator volgens contract 1.2 §3.3) en Docker-getest;
+  daarnaast in de review één keer lokaal tegen de **echte Hub-code** van ai-server-manager (H1–H4; `apps/api` gelijk
+  op `db58d0d` en `be7d593`), beide als echte processen op 127.0.0.1 (zie §5). NIET GEVALIDEERD tegen een op de NAS
+  geïnstalleerde Hub en niet op een echte NAS.
 - **Context:** `docs/platform-v2/PLATFORM_CONTRACTEN.md` 1.2 en `CONTRACT_1.2_CONFORMITEIT.md` §3 (AS1–AS8, M1–M6) plus
   de gemeenschappelijke punten A4–A7. Deze ADR legt vast hoe dat hier gebouwd is en welke keuzes het contract open liet.
 
@@ -54,15 +56,21 @@
    (opnieuw koppelen via de Hub). De tabel zelf blijft in deze versie bestaan (leeg) zodat `migrate --down` kan.
 6. **Herstart halverwege** (§3.6 stap 5): het API-proces wist bij de start een `pending` koppelcode (die hoort bij het
    vorige API-proces); de worker herhaalt een `pending` env-token met dezelfde hash (toegestane herhaling) en wist een
-   ander of verdwenen token met `koppelen_onderbroken`. Een koppelcodepoging ouder dan 2 min wordt ook door de worker
-   als onderbroken gezien. `gekoppeld` zonder `confirmed_at` → alleen opnieuw bevestigen.
+   ander of verdwenen token met `koppelen_onderbroken`. Een koppelcodepoging ouder dan 2 min geldt als verweesd
+   (onderbroken), ook zonder herstart. `gekoppeld` zonder `confirmed_at` → alleen opnieuw bevestigen.
+   **Eén poging tegelijk:** `pending` wordt atomair geclaimd onder de bestandsvergrendeling (`HubLinkClient._begin`);
+   een koppelcode wordt daar ook geweigerd zodra `first_linked_at` gezet is (`al_gekoppeld`) — er gaat dan niets naar
+   de Hub.
 7. **Opnieuw koppelen** met een env-token waarvan de hash niet in `used_enrollment_token_sha256` staat, ook als de dienst
    gekoppeld, ontkoppeld of ingetrokken is (§3.8); mislukt het, dan blijft de bestaande koppeling ongewijzigd.
 8. **Intrekken:** 401 op een aanroep met het service-token → `GET /services/self`; alleen bij opnieuw 401 → `ingetrokken`
    (token en pins weg, pins naar `previous_pins`, incident-event `service.hub_link.revoked`). 5xx/429/netwerk nooit.
 9. **Rotatie service-token:** `Hub-Token-Rotation: required` op een antwoord → `token_rotation_requested_at` → de worker
    roteert in de volgende ronde (`POST /services/self/rotate`), schrijft het nieuwe token atomair en bevestigt met
-   `services/self`. Een onderbroken rotatie herstelt zich doordat de Hub de header herhaalt.
+   `services/self`. Een onderbroken rotatie herstelt zich doordat de Hub de header herhaalt. **Periodieke
+   bevestiging:** de Hub zet de header alleen op geauthenticeerde aanroepen en de dienst moet binnen 5 min roteren;
+   daarom roept de worker elke 4 min `GET /services/self` aan (ook bij geen events). Dat ziet ook een intrekking (401)
+   tijdig; `confirmed_at` wordt alleen bij de eerste bevestiging geschreven.
 10. **Ontkoppelen:** `POST /connector/v1/hub-link/unlink` (dienst-JWT of gebruiker `admin`, `Idempotency-Key`).
     `GET /catalog/v1/hub-link` is vervallen (de Hub gebruikte hem nog niet) en vervangen door
     `GET /connector/v1/hub-link` (witte lijst + `pinned_kids` + `rotation_sequence`).
@@ -102,10 +110,34 @@
    (weigert te starten als dat niet lukt), ruimt zombies op (`/proc/<pid>/stat` met PPID 1) en stelt signalen direct
    in. Rooktest/image-E2E: elk proces, ook PID 1, `Uid 568`, `CapEff 0`, `NoNewPrivs 1`.
 
+## 5. Onafhankelijke review (2026-11-09)
+
+Gevonden en gerepareerd (elk met tests die zonder de reparatie falen):
+
+1. **1 MiB-grens (§5):** een chunked body > 1 MiB werd alleen geteld als de route hem las; `hub-link/unlink`, een
+   onbekende route of `/healthz` gaven 401/404/405 en `details.max_bytes` ontbrak. Nu leest `app.BodyLimit` de body
+   tellend vóór routering en aanmelding (hooguit 1 MiB in het geheugen) en geeft altijd
+   `413 {"code":"payload_too_large","details":{"max_bytes":1048576}}`; ook over echte HTTP getest (uvicorn, chunked).
+2. **Outbox (§7):** sinds de 1.2-ombouw stond het blok "afgeleverd / opnieuw proberen" binnen de `except`-tak: geslaagde
+   pushes werden nooit als afgeleverd gemarkeerd (elke 2 s alles opnieuw naar de Hub) en een 5xx kreeg geen backoff of
+   dead-letter.
+3. **Koppelen (§3.6/§3.7):** de controles "formulier alleen vóór de eerste koppeling" en "één poging tegelijk" waren
+   niet atomair (zie punt 2.6).
+4. **Rotatie op verzoek (§3.8):** een stille dienst roteerde nooit (zie punt 2.9). Gevonden met de echte Hub-code.
+5. **Sleutelrotatie (§4.5):** een volgnummer dat geen geheel getal is liet het sorteren crashen en `true` gold als 1.
+
+Interop-controle tegen de echte Hub-code (eenmalig, lokaal, Sim-getest): enroll met env-token +
+`HUB_KEY_FINGERPRINT` → vingerafdruk gelijk, gepind, bevestigd met `services/self`; outbox → Hub-inbox met het
+service-token; rotatie aanvragen (202) → geroteerd en bevestigd; gebruikers-JWT (`/auth/service-jwt`) en dienst-JWT
+(`issue_hub_service_jwt`) geaccepteerd; replay van een `jti` → `token_replayed`; inkomend service-token →
+`service_token_not_accepted`; `unlink` met dienst-JWT → `ontkoppeld`, herhaald → 401 `not_linked`; `key-rotations`
+gaf `{"items":[]}`. Niet getest: het ontkoppelen dat de Hub zelf start (vraagt een gemeten dienstadres uit de
+inventaris, D03) en alles op een echte NAS.
+
 ## Gevolgen en open punten
 
-- Werkt pas tegen de echte Hub als die H1–H4 bouwt (enroll-schema 1.2, `services/self`, `self/rotate`, dienst-JWT met
-  `token_use`, `key-rotations`). Tot dan: Sim-getest tegen `apps/api/tests/fakehub.py` (volgt §3.3 strikt).
+- Sim-getest tegen `apps/api/tests/fakehub.py` (volgt §3.3 strikt) en één lokale interop-controle tegen de echte
+  Hub-code (§5); niet tegen een op een NAS geïnstalleerde Hub.
 - NIET GEVALIDEERD (echte NAS): het bron-IP dat de dienst achter de Docker-portpublicatie van TrueNAS ziet (de
   rate-limit per bron-IP kan dan voor alle cliënten één adres zien — de dienstbrede grens van 20 blijft gelden).
 - Een latere migratie verwijdert de lege tabel `hub_link`.
