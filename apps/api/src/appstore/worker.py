@@ -1,4 +1,5 @@
-"""Worker: synchronisatietaken, automatisch koppelen met het enrollment-token en de outbox naar de Hub pushen."""
+"""Worker: synchronisatietaken, koppelen met het enrollment-token (contract 1.2 §3.6), bevestigen, token- en
+sleutelrotatie (§3.8, §4.5) en de outbox naar de Hub pushen (§7)."""
 
 from __future__ import annotations
 
@@ -16,12 +17,14 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .api.common import AppContext
+from .auth import purge_replay
 from .catalog.service import ensure_bundled_source, sync_source
 from .config import Settings
 from .db import make_engine, make_sessionmaker
 from .events import envelope
-from .hublink import auto_enroll, mark_revoked, service_token
-from .models import CatalogSource, HubLink, IdempotencyRecord, OutboxEvent, SyncJob
+from .hublink import HubLinkClient, ensure_link_file
+from .hublink_store import HubLinkStore
+from .models import CatalogSource, IdempotencyRecord, OutboxEvent, SyncJob
 from .secrets_store import Secrets, ensure_secrets
 from .timeutil import utcnow
 
@@ -92,21 +95,21 @@ def process_one_job(c: AppContext) -> bool:
 
 
 def try_enroll(c: AppContext) -> None:
-    with c.sessions() as db:
-        result = auto_enroll(db, c.settings, c.secrets, c.http_factory, str(uuid.uuid4()))
-        db.commit()
+    """Env-token (§3.2/§3.8): koppelt ook opnieuw als het token nieuw is, met backoff en 60-minutengrens."""
+    result = c.hub.env_tick(str(uuid.uuid4()))
     if result is not None:
-        log.info("koppelen met de Hub: %s", "gelukt" if result.ok else "mislukt")
+        log.info("koppelen met de Hub: %s", "gelukt" if result.ok else f"niet gelukt ({result.code})")
+
+
+def hub_maintenance(c: AppContext) -> None:
+    c.hub.maintenance_tick(str(uuid.uuid4()))
 
 
 def push_outbox(c: AppContext, batch: int = 50) -> int:
     """Push events naar ``{HUB_URL}/api/v1/events/inbox`` (alleen als gekoppeld). Geeft het aantal afgeleverde events."""
+    if not c.store.read().linked:
+        return 0
     with c.sessions() as db:
-        link = db.get(HubLink, 1)
-        if link is None or link.status != "linked" or not link.hub_url:
-            return 0
-        token = service_token(db, c.secrets)
-        hub_url = link.hub_url
         due = db.scalars(
             select(OutboxEvent)
             .where(
@@ -118,25 +121,23 @@ def push_outbox(c: AppContext, batch: int = 50) -> int:
             .limit(batch)
             .with_for_update(skip_locked=True)
         ).all()
-        if not due or token is None:
+        if not due:
             return 0
         delivered = 0
-        with c.http_factory() as client:
-            for ev in due:
-                try:
-                    resp = client.post(
-                        f"{hub_url}/api/v1/events/inbox",
-                        json=envelope(ev),
-                        headers={"Authorization": f"Bearer {token}"},
-                    )
-                    ok = resp.status_code in (200, 201, 202, 204, 409)  # 409 = al ontvangen (dedupe op event_id)
-                    if resp.status_code == 401:
-                        mark_revoked(db, "De Hub weigert het service-token (401); koppel opnieuw via een koppelcode.")
-                        ev.last_error = "HTTP 401"
-                        break
-                    err = None if ok else f"HTTP {resp.status_code}"
-                except httpx.HTTPError as exc:
-                    ok, err = False, type(exc).__name__
+        trace = str(uuid.uuid4())
+        for ev in due:
+            try:
+                resp = c.hub.call("POST", "/api/v1/events/inbox", json_body=envelope(ev), trace_id=trace)
+                if resp is None:  # intussen niet meer gekoppeld (ontkoppeld of ingetrokken)
+                    break
+                ok = resp.status_code in (200, 201, 202, 204, 409)  # 409 = al ontvangen (dedupe op event_id)
+                err = None if ok else f"HTTP {resp.status_code}"
+                if resp.status_code == 401:
+                    # §3.8: de client controleerde al met services/self; alleen bij opnieuw 401 is het 'ingetrokken'
+                    ev.last_error = err
+                    break
+            except httpx.HTTPError as exc:
+                ok, err = False, type(exc).__name__
                 if ok:
                     ev.delivered_at = utcnow()
                     delivered += 1
@@ -155,10 +156,13 @@ def push_outbox(c: AppContext, batch: int = 50) -> int:
 def purge(c: AppContext) -> None:
     with c.sessions() as db:
         db.execute(delete(IdempotencyRecord).where(IdempotencyRecord.created_at < utcnow() - timedelta(hours=24)))
+        purge_replay(db)
         db.commit()
 
 
 def startup(c: AppContext) -> None:
+    ensure_link_file(c.store, c.sessions, c.secrets)  # eenmalige overzetting uit de database (contract 1.2 §3.5)
+    c.hub.recover_after_restart(process="worker")  # §3.6 stap 5
     with c.sessions() as db:
         recovered = recover_interrupted(db)
         enqueue_bundled_sync(db)
@@ -173,6 +177,7 @@ def run_once(c: AppContext) -> dict[str, Any]:
     while process_one_job(c):
         jobs += 1
     try_enroll(c)
+    hub_maintenance(c)
     return {"jobs": jobs, "delivered": push_outbox(c)}
 
 
@@ -182,12 +187,17 @@ def build_context(settings: Settings, http_factory: Callable[[], httpx.Client] |
     ensure_secrets(settings.secrets_dir)
     engine = make_engine(settings.database_url)
     sessions: sessionmaker[Session] = make_sessionmaker(engine)
+    secrets = Secrets.load(settings.secrets_dir)
+    factory = http_factory or default_http_factory(settings)
+    store = HubLinkStore(settings.secrets_dir)
     return AppContext(
         settings=settings,
         engine=engine,
         sessions=sessions,
-        secrets=Secrets.load(settings.secrets_dir),
-        http_factory=http_factory or default_http_factory(settings),
+        secrets=secrets,
+        http_factory=factory,
+        store=store,
+        hub=HubLinkClient(settings, store, secrets, factory, sessions),
     )
 
 
@@ -204,8 +214,8 @@ def main(settings: Settings | None = None) -> None:
         try:
             while process_one_job(c) and not stop.is_set():
                 pass
-            if tick % 8 == 0:
-                try_enroll(c)
+            try_enroll(c)  # goedkoop (leest alleen het bestand); de backoff zit in de client
+            hub_maintenance(c)
             push_outbox(c)
             if tick % 1800 == 0:
                 purge(c)

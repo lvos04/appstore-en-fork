@@ -174,8 +174,25 @@ class OutboxEvent(Base):
     dead_letter: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
-# ------------------------------------------------------------------ koppeling met de Hub (één rij)
+# ------------------------------------------------------------------ replaycache voor Hub-JWT's (contract 1.2 §4.6)
+class JwtReplay(Base):
+    """``(iss, jti)`` van elke **mutatie** met een Hub-JWT, tot ``exp`` + 30 s; gedeeld door alle processen."""
+
+    __tablename__ = "jwt_replay"
+    iss: Mapped[str] = mapped_column(String(64), primary_key=True)
+    jti: Mapped[str] = mapped_column(String(128), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(TS, index=True)
+    method: Mapped[str] = mapped_column(String(8))
+    path: Mapped[str] = mapped_column(String(512))
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+
+
+# ------------------------------------------------------------------ koppeling met de Hub: OUD (≤ contract 1.1)
 class HubLink(Base):
+    """Alleen nog gelezen door de eenmalige overzetting naar ``/appdata/secrets/hub-link.json`` (contract 1.2 §3.5,
+    ``hublink.ensure_link_file``); daarna is de tabel leeg. Een latere migratie verwijdert hem."""
+
     __tablename__ = "hub_link"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # altijd 1
     status: Mapped[str] = mapped_column(String(16), default="not_linked")  # not_linked|linked|failed|revoked

@@ -1,7 +1,17 @@
 """Kleine Nederlandse statuspagina op ``GET /`` (zonder auth, zonder geheimen) + koppelen met een koppelcode.
 
-Alle beheerschermen staan in de Hub-UI; deze pagina toont alleen status en biedt het koppelformulier voor een
-handmatig geïnstalleerde app (contract §3).
+Alle beheerschermen staan in de Hub-UI. Contract 1.2 §3.7:
+
+* Het koppelformulier bestaat **alleen zolang de dienst nog nooit gekoppeld is** (``first_linked_at`` leeg). Daarna
+  toont de pagina alleen de status (witte lijst §3.5) en "ontkoppelen of opnieuw koppelen gaat via de Hub"; geen
+  ontkoppelen, geen lokale ontkoppelcode, geen herkoppelen na intrekking.
+* Velden: Hub-adres (zelfde regels als ``HUB_URL``), koppelcode en de **verplichte** Hub-vingerafdruk.
+* CSRF (double-submit-cookie, ``SameSite=Strict``, HttpOnly) + ``Origin``-controle; vaste Nederlandse meldingen; het
+  Hub-adres van een mislukte poging wordt nergens bewaard.
+* Max. 5 pogingen per 15 min per bron-IP (adres van de TCP-verbinding; ``X-Forwarded-For`` wordt nooit gebruikt) én
+  max. 20 per 15 min voor de hele dienst (één API-proces → teller in het geheugen).
+
+De CSS is nog de eigen P0-opmaak: de platform-ontwerptaal (§13) is nog niet geleverd (AS7, geblokkeerd).
 """
 
 from __future__ import annotations
@@ -12,6 +22,7 @@ import threading
 import time
 from collections import defaultdict, deque
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -21,7 +32,8 @@ from sqlalchemy.orm import Session
 from .. import APP_ID, __version__
 from ..config import normalize_hub_url
 from ..db import ping
-from ..hublink import enroll, get_link
+from ..hubkeys import normalize_fingerprint, normalize_pairing_code
+from ..hublink_store import LinkState, error_message
 from ..models import CatalogEntry, CatalogSource, ManifestVersion
 from ..timeutil import iso, utcnow
 from .common import ctx, get_db, tid
@@ -29,52 +41,114 @@ from .common import ctx, get_db, tid
 router = APIRouter(tags=["statuspagina"])
 DB = Annotated[Session, Depends(get_db)]
 CSRF_COOKIE = "appstore_csrf"
+WINDOW = 15 * 60
 
 MELDINGEN = {
     "gekoppeld": ("ok", "Gekoppeld met de Hub."),
     "mislukt": ("fout", "Koppelen is niet gelukt; zie de reden bij 'Koppeling met de Hub'."),
-    "ongeldig": ("fout", "Vul een geldig Hub-adres (http(s)://…) en de koppelcode uit de Hub in."),
-    "al_gekoppeld": ("ok", "Deze app is al gekoppeld. Ontkoppelen of opnieuw koppelen gaat via de Hub."),
+    "ongeldig_adres": (
+        "fout",
+        "Vul een geldig Hub-adres in: http(s)://adres[:poort], zonder pad; geen loopback- of link-local-adres.",
+    ),
+    "ongeldige_code": ("fout", "De koppelcode moet 12 tekens zijn (XXXX-XXXX-XXXX), zoals de Hub hem toont."),
+    "ongeldige_vingerafdruk": (
+        "fout",
+        "Vul de Hub-vingerafdruk in zoals de Hub hem naast de koppelcode toont (XXXX-XXXX-XXXX-XXXX).",
+    ),
+    "al_gekoppeld": ("ok", "Deze app is al eens gekoppeld. Ontkoppelen of opnieuw koppelen gaat via de Hub."),
+    "bezig": ("fout", "Er loopt al een koppelpoging; wacht even en laad de pagina opnieuw."),
     "te_vaak": ("fout", "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw."),
-    "sessie": ("fout", "Het formulier is verlopen. Laad de pagina opnieuw en probeer het nog eens."),
+    "sessie": ("fout", "Het formulier is verlopen of kwam niet van deze pagina. Laad de pagina opnieuw."),
     "andere_hub": (
         "fout",
         "Dit Hub-adres verschilt van het adres (HUB_URL) waarmee de app is geïnstalleerd; koppelen met een andere Hub "
         "is geweigerd.",
     ),
 }
-LINK_STATUS = {
-    "linked": "Gekoppeld",
-    "not_linked": "Niet gekoppeld",
-    "failed": "Koppelen mislukt",
-    "revoked": "Koppeling ingetrokken door de Hub",
+STATE_LABEL = {
+    "gekoppeld": "Gekoppeld",
+    "nooit_gekoppeld": "Niet gekoppeld",
+    "ontkoppeld": "Ontkoppeld door de Hub",
+    "ingetrokken": "Koppeling ingetrokken door de Hub",
 }
 
 
 class _Attempts:
-    def __init__(self, limit: int, window: float) -> None:
-        self.limit, self.window = limit, window
+    """Schuivend venster per sleutel (bron-IP) én voor de hele dienst."""
+
+    def __init__(self, per_ip: int, total: int, window: float) -> None:
+        self.per_ip, self.total, self.window = per_ip, total, window
         self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._all: deque[float] = deque()
         self._lock = threading.Lock()
+
+    def _trim(self, q: deque[float], now: float) -> None:
+        while q and now - q[0] >= self.window:
+            q.popleft()
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
         with self._lock:
             q = self._hits[key]
-            while q and now - q[0] > self.window:
-                q.popleft()
-            if len(q) >= self.limit:
+            self._trim(q, now)
+            self._trim(self._all, now)
+            if len(q) >= self.per_ip or len(self._all) >= self.total:
                 return False
             q.append(now)
+            self._all.append(now)
             return True
 
 
 def pairing_limiter() -> _Attempts:
-    return _Attempts(limit=5, window=15 * 60)
+    return _Attempts(per_ip=5, total=20, window=WINDOW)
 
 
 def _e(value: object) -> str:
     return html.escape("" if value is None else str(value), quote=True)
+
+
+def _form_allowed(link: LinkState) -> bool:
+    return not link.corrupt and link.first_linked_at is None
+
+
+def _same_origin(request: Request) -> bool:
+    """``Origin`` moet gelijk zijn aan het eigen adres (schema + Host-header van dit verzoek)."""
+    origin = request.headers.get("origin")
+    host = request.headers.get("host")
+    if not origin or not host or origin == "null":
+        return False
+    parts = urlsplit(origin)
+    return parts.scheme == request.url.scheme and parts.netloc.lower() == host.lower() and not parts.path
+
+
+def _link_html(link: LinkState) -> str:
+    if link.corrupt:
+        return (
+            '<p><span class="badge fout">onbekend</span>De koppelstatus (/appdata/secrets/hub-link.json) is onleesbaar; '
+            "niets van de Hub wordt vertrouwd. Herstel: maak in de Hub een nieuw token en zet het in het formulier van "
+            "de Custom App (HUB_ENROLLMENT_TOKEN).</p>"
+        )
+    pub = link.public()
+    badge = {"gekoppeld": "ok", "nooit_gekoppeld": "onbekend"}.get(link.state, "fout")
+    rows = [f'<p><span class="badge {badge}">{_e(STATE_LABEL.get(link.state, link.state))}</span>']
+    if link.state == "gekoppeld":
+        rows.append(
+            f"<br>Hub: {_e(pub['hub_url'])} · via {_e(pub['via'])} · sinds {_e(pub['linked_at'])}"
+            f" · token …{_e(pub['service_token_last4'])}"
+            + (" · bevestigd" if link.confirmed_at else " · nog niet bevestigd door de Hub")
+        )
+    elif link.hub_url and link.state in ("ontkoppeld", "ingetrokken"):
+        rows.append(f"<br>Laatste Hub: {_e(link.hub_url)}")
+    if pub["keyset_fingerprint"]:
+        rows.append(f"<br>Hub-vingerafdruk: <code>{_e(pub['keyset_fingerprint'])}</code> (vergelijk met de Hub-UI)")
+    if pub["koppelen_bezig"]:
+        rows.append("<br>Er loopt een koppelpoging.")
+    if link.last_error:
+        rows.append(f"<br>Laatste melding: {_e(error_message(link.last_error.code))} ({_e(link.last_error.at)})")
+    if link.first_linked_at:
+        rows.append("<br>Ontkoppelen of opnieuw koppelen gaat via de Hub.")
+    rows.append("</p>")
+    return "".join(rows)
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -82,9 +156,8 @@ def status_page(request: Request, db: DB, melding: str | None = None) -> HTMLRes
     c = ctx(request)
     now = iso(utcnow())
     db_ok = ping(c.engine)
-    link = get_link(db) if db_ok else None
+    link = c.store.read()
     if db_ok:
-        db.commit()
         n_entries = db.scalar(select(func.count()).select_from(CatalogEntry)) or 0
         n_rejected = (
             db.scalar(select(func.count()).select_from(ManifestVersion).where(ManifestVersion.valid.is_(False))) or 0
@@ -97,32 +170,22 @@ def status_page(request: Request, db: DB, melding: str | None = None) -> HTMLRes
     if melding in MELDINGEN:
         kind, text = MELDINGEN[melding]
         msg_html = f'<p class="melding {kind}" role="status">{_e(text)}</p>'
-    if link is None:
-        link_html = '<p><span class="badge onbekend">onbekend</span> database niet bereikbaar</p>'
-    else:
-        badge = "ok" if link.status == "linked" else ("fout" if link.status in ("failed", "revoked") else "onbekend")
-        details = ""
-        if link.status == "linked":
-            details = (
-                f"<br>Hub: {_e(link.hub_url)} · via {_e(link.linked_via)} · sinds {_e(iso(link.linked_at))}"
-                f" · token …{_e(link.token_last4)}"
-            )
-        elif link.last_error:
-            details = f"<br>Reden: {_e(link.last_error)}"
-        link_html = (
-            f'<p><span class="badge {badge}">{_e(LINK_STATUS.get(link.status, link.status))}</span>{details}</p>'
-        )
     form_html = ""
-    if link is not None and link.status != "linked":
+    if _form_allowed(link):
         form_html = f"""
 <section aria-labelledby="koppelen"><h2 id="koppelen">Koppelen met de Hub</h2>
-<p>Maak in de Hub (Instellingen → Diensten) een koppelcode voor <code>{_e(APP_ID)}</code> en vul die hier in.</p>
+<p>Aanbevolen: laat de Hub deze app installeren, of zet <code>HUB_URL</code>, <code>HUB_ENROLLMENT_TOKEN</code> en
+<code>HUB_KEY_FINGERPRINT</code> in het formulier van de Custom App. Anders: maak in de Hub (Instellingen → Diensten) een
+koppelcode voor <code>{_e(APP_ID)}</code> en vul hieronder het Hub-adres, de koppelcode en de vingerafdruk in die de
+Hub erbij toont. Dit formulier verdwijnt na de eerste koppeling.</p>
 <form method="post" action="/koppelen">
 <input type="hidden" name="csrf" value="{_e(token)}">
 <label for="hub_url">Hub-adres</label>
-<input id="hub_url" name="hub_url" type="url" required placeholder="http://adres-van-de-nas:poort" value="{_e(link.hub_url or c.settings.hub_url or "")}">
+<input id="hub_url" name="hub_url" type="url" required placeholder="http://adres-van-de-nas:poort" value="{_e(c.settings.hub_url or "")}">
 <label for="koppelcode">Koppelcode</label>
-<input id="koppelcode" name="koppelcode" required autocomplete="off" maxlength="64">
+<input id="koppelcode" name="koppelcode" required autocomplete="off" maxlength="32" placeholder="XXXX-XXXX-XXXX">
+<label for="vingerafdruk">Hub-vingerafdruk</label>
+<input id="vingerafdruk" name="vingerafdruk" required autocomplete="off" maxlength="64" placeholder="XXXX-XXXX-XXXX-XXXX">
 <button type="submit">Koppelen</button>
 </form></section>"""
     rows = (
@@ -149,9 +212,9 @@ h1{{font-size:1.4rem}} h2{{font-size:1.1rem;margin:.2rem 0 .5rem}}
 .melding{{font-weight:600}} table{{width:100%;border-collapse:collapse;font-size:.95rem}}
 td,th{{text-align:left;padding:4px 6px;border-bottom:1px solid var(--rand)}}
 .tabel{{overflow-x:auto}} label{{display:block;margin-top:8px}}
-input{{width:100%;max-width:420px;padding:8px;font:inherit;box-sizing:border-box}}
+input{{width:100%;max-width:420px;padding:8px;font:inherit;box-sizing:border-box;min-height:44px}}
 button{{margin-top:10px;padding:10px 16px;font:inherit;min-height:44px;cursor:pointer}}
-small{{color:var(--onb)}}
+small{{color:var(--onb)}} code{{overflow-wrap:anywhere}}
 </style></head><body><main>
 <h1>Appstore en fork <small>versie {_e(__version__)}</small></h1>
 <p>Appstore-catalogus van het TrueNAS Home Platform. Alle schermen staan in de Hub; deze pagina toont alleen de status.</p>
@@ -159,7 +222,7 @@ small{{color:var(--onb)}}
 <section aria-labelledby="dienst"><h2 id="dienst">Dienst</h2>
 <p><span class="badge {"ok" if db_ok else "fout"}">{"actief" if db_ok else "storing"}</span>
 database {"bereikbaar" if db_ok else "niet bereikbaar"} · bron: eigen controle · laatst bijgewerkt {_e(now)}</p></section>
-<section aria-labelledby="hub"><h2 id="hub">Koppeling met de Hub</h2>{link_html}<small>bron: eigen database · laatst bijgewerkt {_e(now)}</small></section>
+<section aria-labelledby="hub"><h2 id="hub">Koppeling met de Hub</h2>{_link_html(link)}<small>bron: /appdata/secrets/hub-link.json · laatst bijgewerkt {_e(now)}</small></section>
 {form_html}
 <section aria-labelledby="cat"><h2 id="cat">Catalogus</h2>
 <p>{_e(n_entries if n_entries is not None else "onbekend")} app(s) in de catalogus · {_e(n_rejected if n_rejected is not None else "onbekend")} geweigerde manifestversie(s)</p>
@@ -171,7 +234,7 @@ database {"bereikbaar" if db_ok else "niet bereikbaar"} · bron: eigen controle 
         body,
         headers={
             "Cache-Control": "no-store",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer",
         },
@@ -183,38 +246,40 @@ database {"bereikbaar" if db_ok else "niet bereikbaar"} · bron: eigen controle 
 @router.post("/koppelen", include_in_schema=False)
 def pair(
     request: Request,
-    db: DB,
     hub_url: Annotated[str, Form(max_length=512)] = "",
     koppelcode: Annotated[str, Form(max_length=64)] = "",
+    vingerafdruk: Annotated[str, Form(max_length=64)] = "",
     csrf: Annotated[str, Form(max_length=64)] = "",
 ) -> RedirectResponse:
     def back(melding: str) -> RedirectResponse:
         return RedirectResponse(f"/?melding={melding}", status_code=303)
 
     cookie = request.cookies.get(CSRF_COOKIE)
-    if not cookie or not csrf or not secrets.compare_digest(cookie, csrf):
+    if not cookie or not csrf or not secrets.compare_digest(cookie, csrf) or not _same_origin(request):
         return back("sessie")
-    client = request.client.host if request.client else "onbekend"
+    c = ctx(request)
+    link = c.store.read()
+    if not _form_allowed(link):
+        return back("al_gekoppeld")  # §3.7: na de eerste koppeling alleen via de Hub
+    client = request.client.host if request.client else "onbekend"  # TCP-adres; nooit X-Forwarded-For
     if not request.app.state.pairing_attempts.allow(client):
         return back("te_vaak")
-    code = koppelcode.strip()
     try:
-        url = normalize_hub_url(hub_url)
+        url = normalize_hub_url(hub_url, allow_loopback=c.settings.allow_loopback_hub)
     except ValueError:
         url = None
-    if not url or len(code) < 6:
-        return back("ongeldig")
-    c = ctx(request)
+    if not url:
+        return back("ongeldig_adres")
+    code = normalize_pairing_code(koppelcode)
+    if code is None:
+        return back("ongeldige_code")
+    fingerprint = normalize_fingerprint(vingerafdruk)
+    if fingerprint is None:
+        return back("ongeldige_vingerafdruk")
     if c.settings.hub_url and url != c.settings.hub_url:
         # bij installatie via de Hub staat HUB_URL vast: nooit met een andere (mogelijk vreemde) Hub koppelen
         return back("andere_hub")
-    link = get_link(db)
-    if link.status == "linked":
-        db.commit()
-        return back("al_gekoppeld")
-    result = enroll(
-        db, c.settings, c.secrets, c.http_factory, hub_url=url, credential=code, via="koppelcode", trace_id=tid(request)
-    )
-    db.commit()
-    request.app.state.authenticator.jwks.invalidate()
+    if link.pending is not None:
+        return back("bezig")
+    result = c.hub.pair_with_code(hub_url=url, pairing_code=code, fingerprint=fingerprint, trace_id=tid(request))
     return back("gekoppeld" if result.ok else "mislukt")

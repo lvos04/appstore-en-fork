@@ -15,6 +15,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import Settings
 from ..errors import ApiError, trace_id
+from ..hublink import HubLinkClient
+from ..hublink_store import HubLinkStore
 from ..secrets_store import Secrets
 
 MAX_LIMIT = 200
@@ -28,6 +30,8 @@ class AppContext:
     sessions: sessionmaker[Session]
     secrets: Secrets
     http_factory: Any  # Callable[[], httpx.Client]
+    store: HubLinkStore
+    hub: HubLinkClient
 
 
 def ctx(request: Request) -> AppContext:

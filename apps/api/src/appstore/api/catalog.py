@@ -24,7 +24,6 @@ from ..catalog.service import requirements, trusted_key_id, verify_stored_proven
 from ..catalog.sources import SourceError, check_remote_url
 from ..errors import ApiError
 from ..events import audit, emit, record_evidence
-from ..hublink import get_link
 from ..idempotency import run_idempotent
 from ..manifest.conflicts import Inventory, analyse
 from ..manifest.loader import MAX_MANIFEST_BYTES
@@ -607,21 +606,3 @@ def import_preview(body: ImportPreviewRequest, request: Request, db: DB, princip
     out = report.model_dump(mode="json")
     out["evidence_id"] = str(evidence_id)
     return out
-
-
-# ---------------------------------------------------------------------------------------------- koppeling
-@router.get("/hub-link", summary="Koppelstatus met de Hub (zonder geheimen)")
-def hub_link(db: DB, _: Viewer) -> dict[str, Any]:
-    link = get_link(db)
-    db.commit()
-    return {
-        "status": link.status,
-        "hub_url": link.hub_url,
-        "service_id": link.service_id,
-        "linked_via": link.linked_via,
-        "linked_at": iso(link.linked_at),
-        "token_last4": link.token_last4,
-        "last_error": link.last_error,
-        "last_attempt_at": iso(link.last_attempt_at),
-        "observed_at": iso(utcnow()),
-    }

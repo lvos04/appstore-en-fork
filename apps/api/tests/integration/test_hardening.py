@@ -21,7 +21,7 @@ from appstore.app import MAX_BODY, create_app
 from appstore.config import Settings
 from appstore.worker import run_once, startup
 from tests.fakehub import HUB_URL, FakeHub
-from tests.integration.conftest import idem, pair
+from tests.integration.conftest import idem, pair, pair_form
 
 pytestmark = pytest.mark.integration
 
@@ -75,11 +75,10 @@ def test_kind_and_roleless_users_get_nothing(client: TestClient, hub: FakeHub) -
             assert resp.status_code == 403, f"{method} {path} met rollen {roles} gaf {resp.status_code}"
 
 
-def test_service_token_cannot_manage_sources(client: TestClient, hub: FakeHub) -> None:
+def test_hub_service_jwt_cannot_manage_sources(client: TestClient, hub: FakeHub) -> None:
     pair(client, hub)
-    svc = {"Authorization": f"Bearer {hub.issued_token}"}
     body = {"name": "eigen bron", "kind": "http", "url": "https://bron.test/index.json"}
-    resp = client.post("/catalog/v1/sources", json=body, headers={**svc, **idem()})
+    resp = client.post("/catalog/v1/sources", json=body, headers={**hub.service_auth(), **idem()})
     assert resp.status_code == 403 and resp.json()["code"] == "forbidden"
 
 
@@ -88,13 +87,14 @@ def test_algorithm_confusion_refused(client: TestClient, hub: FakeHub, alg: str)
     pair(client, hub)
     now = int(time.time())
     claims = {"iss": "hub", "aud": "appstore-en-fork", "sub": "x", "roles": ["admin"], "iat": now, "exp": now + 60}
+    claims |= {"nbf": now, "token_use": "user", "jti": "j-1"}
     if alg == "none":
         token = pyjwt.encode(claims, None, algorithm="none", headers={"kid": "x"})
     else:
         jwk_x = hub.jwks()["keys"][0]["x"]  # publieke sleutel als HMAC-geheim (klassieke verwarring)
         token = pyjwt.encode(claims, jwk_x.encode() * 2, algorithm="HS256", headers={"kid": "x"})
     resp = client.get("/catalog/v1/sources", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 401 and resp.json()["details"]["reason"] == "wrong_algorithm"
+    assert resp.status_code == 401 and resp.json()["details"]["reason"] == "invalid_token"
 
 
 def _cursor(value: object) -> str:
@@ -142,24 +142,13 @@ def test_pairing_only_with_configured_hub_url(settings: Settings, hub: FakeHub) 
     """Met HUB_URL uit de installatie wordt een andere (mogelijk vreemde) Hub op de statuspagina geweigerd."""
     s = dataclasses.replace(settings, hub_url=HUB_URL)
     app = create_app(s, http_factory=hub.client_factory())
-    hub.valid_codes.add("ABCD-EFGH-JKMN")
+    code = hub.add_code()
     with TestClient(app) as c:
-        c.get("/")
-        csrf = c.cookies.get("appstore_csrf")
-        r = c.post(
-            "/koppelen",
-            data={"hub_url": "http://vreemde-hub.test:30400", "koppelcode": "ABCD-EFGH-JKMN", "csrf": csrf},
-            follow_redirects=False,
-        )
-        assert r.headers["location"] == "/?melding=andere_hub"
+        melding = pair_form(c, hub_url="http://vreemde-hub.test:30400", code=code, fingerprint=hub.fingerprint())
+        assert melding == "andere_hub"
         assert hub.enroll_requests == []  # er is niets naar een andere Hub gestuurd
         assert "verschilt van het adres (HUB_URL)" in c.get("/?melding=andere_hub").text
-        r = c.post(
-            "/koppelen",
-            data={"hub_url": HUB_URL, "koppelcode": "ABCD-EFGH-JKMN", "csrf": csrf},
-            follow_redirects=False,
-        )
-        assert r.headers["location"] == "/?melding=gekoppeld"
+        assert pair_form(c, hub_url=HUB_URL, code=code, fingerprint=hub.fingerprint()) == "gekoppeld"
     app.state.ctx.engine.dispose()
 
 

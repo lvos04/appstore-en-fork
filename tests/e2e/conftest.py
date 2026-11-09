@@ -86,6 +86,7 @@ def database_url() -> Iterator[str]:
 @pytest.fixture(scope="session")
 def service(hub: FakeHub, database_url: str, tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     base = tmp_path_factory.mktemp("e2e")
+    hub.e2e_data_dir = str(base / "appdata")  # type: ignore[attr-defined]
     catalog = base / "catalogus"
     catalog.mkdir()
     for name in ("valid-custom-upstream.manifest.yaml", "ex47-privileged-hostmount.manifest.yaml"):
@@ -93,7 +94,8 @@ def service(hub: FakeHub, database_url: str, tmp_path_factory: pytest.TempPathFa
     shutil.copy(
         ROOT / "deploy" / "manifest" / "appstore-en-fork.manifest.yaml", catalog / "appstore-en-fork.manifest.yaml"
     )
-    hub.valid_tokens.add("e2e-enrollment-token-0123456789")
+    token = hub.add_token()
+    hub.e2e_token = token  # type: ignore[attr-defined]
     port = free_port()
     env = {
         **os.environ,
@@ -102,7 +104,9 @@ def service(hub: FakeHub, database_url: str, tmp_path_factory: pytest.TempPathFa
         "APPSTORE_HOST": "127.0.0.1",
         "APPSTORE_PORT": str(port),
         "HUB_URL": hub.url,  # type: ignore[attr-defined]
-        "HUB_ENROLLMENT_TOKEN": "e2e-enrollment-token-0123456789",
+        "HUB_ENROLLMENT_TOKEN": token,
+        "HUB_KEY_FINGERPRINT": hub.fingerprint(),
+        "APPSTORE_ALLOW_LOOPBACK_HUB": "1",  # alleen ontwikkeling/tests: de simulator draait op 127.0.0.1
         "APPSTORE_BUNDLED_CATALOG_DIR": str(catalog),
         "APPSTORE_ALLOW_INSECURE_SOURCES": "1",
         "PYTHONPATH": str(API / "src"),

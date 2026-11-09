@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -16,9 +17,12 @@ from .auth import Authenticator
 from .config import Settings
 from .db import make_engine, make_sessionmaker
 from .errors import install_error_handlers
+from .hublink import HubLinkClient, ensure_link_file
+from .hublink_store import HubLinkStore
 from .secrets_store import Secrets, ensure_secrets
 
 MAX_BODY = 1024 * 1024
+log = logging.getLogger("appstore")
 
 
 class BodyLimit:
@@ -54,7 +58,13 @@ def default_http_factory(settings: Settings) -> Callable[[], httpx.Client]:
     timeout = httpx.Timeout(settings.read_timeout, connect=settings.connect_timeout)
 
     def factory() -> httpx.Client:
-        return httpx.Client(timeout=timeout, follow_redirects=False, headers={"User-Agent": f"{APP_ID}/{__version__}"})
+        # nooit redirects volgen en geen proxy-omgevingsvariabelen gebruiken (contract 1.2 §3.2, §5)
+        return httpx.Client(
+            timeout=timeout,
+            follow_redirects=False,
+            trust_env=False,
+            headers={"User-Agent": f"{APP_ID}/{__version__}"},
+        )
 
     return factory
 
@@ -77,14 +87,24 @@ def create_app(settings: Settings | None = None, *, http_factory: Callable[[], h
         docs_url=None,
         redoc_url=None,
     )
+    secrets = Secrets.load(settings.secrets_dir)
+    store = HubLinkStore(settings.secrets_dir)
+    hub = HubLinkClient(settings, store, secrets, factory, sessions)
+    try:
+        ensure_link_file(store, sessions, secrets)  # eenmalige overzetting uit de database (contract 1.2 §3.5)
+    except Exception:
+        log.exception("koppelstatus overzetten mislukt; de worker probeert het opnieuw")
+    hub.recover_after_restart(process="api")  # koppelcodes van een vorig API-proces zijn onderbroken (§3.6)
     app.state.ctx = AppContext(
         settings=settings,
         engine=engine,
         sessions=sessions,
-        secrets=Secrets.load(settings.secrets_dir),
+        secrets=secrets,
         http_factory=factory,
+        store=store,
+        hub=hub,
     )
-    app.state.authenticator = Authenticator(settings, sessions, factory)
+    app.state.authenticator = Authenticator(sessions, store, on_unknown_kid=hub.request_key_poll)
     app.state.pairing_attempts = status_page.pairing_limiter()
     app.state.heavy_limiter = catalog.heavy_limiter()
     install_error_handlers(app)
@@ -136,9 +156,13 @@ def openapi_document(app: FastAPI | None = None) -> dict[str, Any]:
         version=__version__,
         summary="Appstore-catalogus van het TrueNAS Home Platform V2 (B08-001 manifeststandaard).",
         description=(
-            "Catalogus-API (`/catalog/v1`), connectorcontract (`/connector/v1`), gezondheid. Fouten: "
-            "`{code, message, details, trace_id}`. Mutaties vereisen `Idempotency-Key`. Auth: Hub-JWT (EdDSA, JWKS) "
-            "of service-token als `Authorization: Bearer`."
+            "Catalogus-API (`/catalog/v1`), connectorcontract (`/connector/v1`, incl. `hub-link`), gezondheid. Fouten: "
+            "`{code, message, details, trace_id}`. Mutaties vereisen `Idempotency-Key`. Auth (platformcontract 1.2 §4): "
+            "alleen Hub-JWT's (EdDSA, gepinde sleutels uit de koppeling) als `Authorization: Bearer` — gebruikers-JWT "
+            "(`token_use: user`) of dienst-JWT van de Hub (`token_use: hub_service`); `jti` verplicht, hergebruik bij "
+            "mutaties geweigerd; een service-token wordt niet geaccepteerd. 401 `details.reason` ∈ not_linked, "
+            "revoked, service_token_not_accepted, unknown_key, token_expired, invalid_token, token_use_invalid, "
+            "jti_missing, token_replayed."
         ),
         routes=probe.routes,
     )

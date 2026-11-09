@@ -1,28 +1,34 @@
-"""Connectorcontract ``/connector/v1`` (contract §6). Niet-gebouwde functies geven eerlijk ``capability_unavailable``."""
+"""Connectorcontract ``/connector/v1`` (contract 1.2 §6). Niet-gebouwde functies geven eerlijk ``capability_unavailable``.
+
+Nieuw in 1.2: ``GET /connector/v1/hub-link`` (koppelstatus, witte lijst §3.5 + gepinde kids en ``rotation_sequence``)
+en ``POST /connector/v1/hub-link/unlink`` (ontkoppelen door de Hub met een dienst-JWT of een beheerder, §3.8).
+"""
 
 from __future__ import annotations
 
 import uuid
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import APP_ID, __version__
-from ..auth import Principal, require
+from ..auth import Principal, require, require_service_or_admin
 from ..db import ping
 from ..errors import ApiError
 from ..events import envelope, redact
-from ..hublink import get_link
+from ..hublink_store import LinkState
+from ..idempotency import run_idempotent
 from ..models import CatalogEntry, CatalogSource, EvidenceRecord, ManifestVersion, OutboxEvent
 from ..timeutil import iso, utcnow
 from .catalog import entry_out, source_out, version_summary
-from .common import check_limit, ctx, decode_cursor, encode_cursor, get_db
+from .common import check_limit, ctx, decode_cursor, encode_cursor, get_db, tid
 
 router = APIRouter(prefix="/connector/v1", tags=["connector"])
 DB = Annotated[Session, Depends(get_db)]
 Reader = Annotated[Principal, Depends(require("viewer"))]
+Unlinker = Annotated[Principal, Depends(require_service_or_admin)]
 
 CAPABILITIES = ["read"]
 NOT_BUILT = {
@@ -60,22 +66,20 @@ def health(request: Request, db: DB, _: Reader) -> dict[str, Any]:
             "detail": "PostgreSQL bereikbaar" if db_ok else "PostgreSQL niet bereikbaar",
         }
     )
+    link = ctx(request).store.read()
+    checks.append(
+        {
+            "name": "hub_link",
+            "status": "healthy" if link.linked and link.confirmed_at else "unknown",
+            "observed_at": now,
+            "detail": (
+                ("gekoppeld en bevestigd" if link.confirmed_at else "gekoppeld, nog niet bevestigd door de Hub")
+                if link.linked
+                else link.state
+            ),
+        }
+    )
     if db_ok:
-        link = get_link(db)
-        db.commit()
-        checks.append(
-            {
-                "name": "hub_link",
-                "status": "healthy" if link.status == "linked" else "unknown",
-                "observed_at": now,
-                "detail": {
-                    "linked": "gekoppeld",
-                    "not_linked": "niet gekoppeld",
-                    "failed": "koppelen mislukt",
-                    "revoked": "koppeling ingetrokken",
-                }.get(link.status, link.status),
-            }
-        )
         failed = (
             db.scalar(
                 select(func.count())
@@ -206,3 +210,40 @@ def events(db: DB, _: Reader, cursor: str | None = None, limit: int = 100) -> di
         "next_cursor": str(rows[-1].seq) if rows else str(after),
         "observed_at": iso(utcnow()),
     }
+
+
+def hub_link_view(link: LinkState) -> dict[str, Any]:
+    out = link.public()
+    pins = link.pins
+    out["pinned_kids"] = {
+        "jwt": [p.kid for p in pins.jwt] if pins else [],
+        "policy": [p.kid for p in pins.policy] if pins else [],
+    }
+    out["rotation_sequence"] = pins.rotation_sequence if pins else None
+    out["confirmed_at"] = link.confirmed_at
+    out["observed_at"] = iso(utcnow())
+    return out
+
+
+@router.get("/hub-link", summary="Koppelstatus met de Hub (witte lijst, geen geheimen)")
+def hub_link(request: Request, _: Reader) -> dict[str, Any]:
+    return hub_link_view(ctx(request).store.read())
+
+
+@router.post(
+    "/hub-link/unlink",
+    summary="Ontkoppelen (dienst-JWT van de Hub of beheerder, Idempotency-Key)",
+    description=(
+        "Zet de koppeling op `ontkoppeld`, wist het service-token en bewaart de pins alleen nog voor audit. Daarna "
+        "weigert de dienst elke Hub-JWT (401 `not_linked`); een herhaalde aanroep krijgt dus 401 `not_linked`, wat voor "
+        "de Hub als geslaagd telt (contract 1.2 §3.8). Opnieuw koppelen gaat alleen via de Hub."
+    ),
+)
+def hub_link_unlink(request: Request, db: DB, principal: Unlinker) -> Response:
+    c = ctx(request)
+
+    def action() -> tuple[int, dict[str, Any], dict[str, str]]:
+        result = c.hub.unlink(trace_id=tid(request), actor=principal.label())
+        return 200, hub_link_view(result), {}
+
+    return run_idempotent(db, request, principal, "hub_link.unlink", {}, action)

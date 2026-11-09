@@ -1,6 +1,7 @@
 """Geheimen in ``/appdata/secrets`` (contract §3): bij eerste start aangemaakt, 0600, nooit overschreven.
 
-- ``vault.key``: 32 willekeurige bytes voor AES-256-GCM (opgeslagen credentials, bv. het service-token);
+- ``vault.key``: 32 willekeurige bytes voor AES-256-GCM (opgeslagen credentials; het service-token staat sinds
+  contract 1.2 in ``hub-link.json``, zie ``hublink_store``);
 - ``identity.ed25519``: eigen Ed25519-identiteit (provenance-handtekeningen, publieke sleutel naar de Hub).
 """
 
@@ -17,6 +18,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 VAULT_KEY = "vault.key"
 IDENTITY_KEY = "identity.ed25519"
+#: AAD van het service-token in de oude tabel ``hub_link`` (≤ contract 1.1); alleen nog voor de eenmalige overzetting
+#: naar ``hub-link.json`` (contract 1.2 §3.5).
+LEGACY_TOKEN_AAD = "hub_link/service_token"  # noqa: S105 - AAD-label, geen geheim
 
 
 def _write_new(path: Path, data: bytes) -> bool:

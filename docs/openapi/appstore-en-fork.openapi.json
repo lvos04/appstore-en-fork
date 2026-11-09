@@ -591,7 +591,7 @@
     }
   },
   "info": {
-    "description": "Catalogus-API (`/catalog/v1`), connectorcontract (`/connector/v1`), gezondheid. Fouten: `{code, message, details, trace_id}`. Mutaties vereisen `Idempotency-Key`. Auth: Hub-JWT (EdDSA, JWKS) of service-token als `Authorization: Bearer`.",
+    "description": "Catalogus-API (`/catalog/v1`), connectorcontract (`/connector/v1`, incl. `hub-link`), gezondheid. Fouten: `{code, message, details, trace_id}`. Mutaties vereisen `Idempotency-Key`. Auth (platformcontract 1.2 §4): alleen Hub-JWT's (EdDSA, gepinde sleutels uit de koppeling) als `Authorization: Bearer` — gebruikers-JWT (`token_use: user`) of dienst-JWT van de Hub (`token_use: hub_service`); `jti` verplicht, hergebruik bij mutaties geweigerd; een service-token wordt niet geaccepteerd. 401 `details.reason` ∈ not_linked, revoked, service_token_not_accepted, unknown_key, token_expired, invalid_token, token_use_invalid, jti_missing, token_replayed.",
     "summary": "Appstore-catalogus van het TrueNAS Home Platform V2 (B08-001 manifeststandaard).",
     "title": "appstore-en-fork",
     "version": "0.1.0"
@@ -821,29 +821,6 @@
           }
         },
         "summary": "Versiegeschiedenis van een app",
-        "tags": [
-          "catalogus"
-        ]
-      }
-    },
-    "/catalog/v1/hub-link": {
-      "get": {
-        "operationId": "hub_link_catalog_v1_hub_link_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Hub Link Catalog V1 Hub Link Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Koppelstatus met de Hub (zonder geheimen)",
         "tags": [
           "catalogus"
         ]
@@ -1452,6 +1429,49 @@
           }
         },
         "summary": "Gezondheid (healthy/degraded/down/unknown)",
+        "tags": [
+          "connector"
+        ]
+      }
+    },
+    "/connector/v1/hub-link": {
+      "get": {
+        "operationId": "hub_link_connector_v1_hub_link_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Hub Link Connector V1 Hub Link Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Koppelstatus met de Hub (witte lijst, geen geheimen)",
+        "tags": [
+          "connector"
+        ]
+      }
+    },
+    "/connector/v1/hub-link/unlink": {
+      "post": {
+        "description": "Zet de koppeling op `ontkoppeld`, wist het service-token en bewaart de pins alleen nog voor audit. Daarna weigert de dienst elke Hub-JWT (401 `not_linked`); een herhaalde aanroep krijgt dus 401 `not_linked`, wat voor de Hub als geslaagd telt (contract 1.2 §3.8). Opnieuw koppelen gaat alleen via de Hub.",
+        "operationId": "hub_link_unlink_connector_v1_hub_link_unlink_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ontkoppelen (dienst-JWT van de Hub of beheerder, Idempotency-Key)",
         "tags": [
           "connector"
         ]

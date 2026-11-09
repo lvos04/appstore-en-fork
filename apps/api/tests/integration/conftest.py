@@ -108,14 +108,40 @@ def worker_ctx(settings: Settings, hub: FakeHub) -> Iterator[AppContext]:
     c.engine.dispose()
 
 
-def pair(client: TestClient, hub: FakeHub, code: str = "ABCD-EFGH-JKMN") -> None:
-    hub.valid_codes.add(code)
-    page = client.get("/")
-    csrf = page.cookies.get("appstore_csrf") or client.cookies.get("appstore_csrf")
+ORIGIN = {"Origin": "http://testserver"}
+
+
+def pair_form(
+    client: TestClient,
+    *,
+    hub_url: str = "http://hub.test:30400",
+    code: str = "",
+    fingerprint: str = "",
+    csrf: str | None = None,
+    origin: dict[str, str] | None = None,
+) -> str:
+    """POST /koppelen zoals het formulier van de statuspagina; geeft de melding uit de redirect."""
+    if csrf is None:
+        client.get("/")
+        csrf = client.cookies.get("appstore_csrf") or ""
     resp = client.post(
-        "/koppelen", data={"hub_url": "http://hub.test:30400", "koppelcode": code, "csrf": csrf}, follow_redirects=False
+        "/koppelen",
+        data={"hub_url": hub_url, "koppelcode": code, "vingerafdruk": fingerprint, "csrf": csrf},
+        headers=ORIGIN if origin is None else origin,
+        follow_redirects=False,
     )
-    assert resp.status_code == 303 and resp.headers["location"] == "/?melding=gekoppeld", resp.headers.get("location")
+    assert resp.status_code == 303, resp.text
+    location = resp.headers["location"]
+    assert location.startswith("/?melding="), location
+    return location.removeprefix("/?melding=")
+
+
+def pair(client: TestClient, hub: FakeHub) -> str:
+    """Koppelen via de statuspagina met een verse koppelcode + de juiste vingerafdruk; geeft het service-token."""
+    melding = pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint())
+    assert melding == "gekoppeld", melding
+    assert hub.last_service_token
+    return hub.last_service_token
 
 
 def idem() -> dict[str, str]:
