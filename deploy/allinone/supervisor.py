@@ -1,4 +1,4 @@
-"""appstore-en-fork — procesbewaker van de alles-in-één image (kind van dumb-init).
+"""appstore-en-fork — procesbewaker van de alles-in-één image; is zelf PID 1 van de container.
 
 Eén container draait alles: PostgreSQL 16 (alleen unix-socket, geen netwerkpoort, geen wachtwoord), migraties, de API
 (met statuspagina) en de worker. Daardoor is er maar één hostmap (/appdata) en één poort nodig en installeert de app
@@ -6,8 +6,11 @@ als standaard TrueNAS Custom App zonder YAML (voorbeeld: Media Source Optimizer 
 
 Regels:
 - Start als root alléén om de eigen submappen van /appdata aan 568:568 te geven; daarna laat het proces alle
-  capabilities uit de bounding set vallen, zet ``no_new_privs`` (het standaard Custom App-formulier kan dat niet,
-  zie ADR-0003) en wordt 568. Start het als 568 (Custom User in het formulier), dan werkt het ook.
+  capabilities uit de bounding set vallen, wordt volledig 568 (``setgroups([])``, ``setgid``, ``setuid``) en zet
+  ``PR_SET_NO_NEW_PRIVS`` vóór de eerste ``execve`` van een dienstproces (het standaard Custom App-formulier kan dat
+  niet, contract 1.2 §2.2, ADR-0003). Dit geldt ook voor PID 1: de bewaker ís PID 1 (geen ``dumb-init`` meer), ruimt
+  zelf verweesde processen (zombies) op en draait na de wissel als 568 zonder capabilities. Start het als 568
+  (Custom User in het formulier), dan werkt het ook.
 - Eerste start: geheimen in /appdata/secrets (0600, nooit overschreven) en een nieuwe database.
 - Vóór openstaande migraties van een bestaande database een ``pg_dump`` in /appdata/backups (nieuwste 3 blijven).
   Mislukt die back-up, dan wordt er NIET gemigreerd en blijft de database ongewijzigd (duidelijke NL-melding).
@@ -65,9 +68,30 @@ def harden_and_demote() -> None:
         os.setgid(GID)
         os.setuid(UID)
     if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
-        log("let op: no_new_privs kon niet worden gezet")
-    if os.getuid() == 0 or os.geteuid() == 0:
+        fail("no_new_privs kon niet worden gezet; de app weigert zonder te starten")
+    if os.getuid() == 0 or os.geteuid() == 0 or os.getgid() == 0 or os.getegid() == 0:
         fail("kon de rechten niet verlagen; de app weigert als root te draaien")
+
+
+def reap_orphans(known: set[int]) -> int:
+    """Als PID 1: verweesde kindprocessen (zombies met PPID 1) opruimen, zonder de exitstatus van eigen kinderen
+    (``known``, die ``Child.alive()`` zelf ophaalt) weg te nemen. Geeft het aantal opgeruimde processen."""
+    if os.getpid() != 1:
+        return 0
+    reaped = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit() or int(entry) in known:
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", encoding="utf-8", errors="replace") as fh:
+                fields = fh.read().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if len(fields) > 1 and fields[0] == "Z" and fields[1] == "1":
+            with contextlib.suppress(ChildProcessError, OSError):
+                os.waitpid(int(entry), os.WNOHANG)
+                reaped += 1
+    return reaped
 
 
 def prepare_dirs() -> None:
@@ -289,13 +313,22 @@ def backup_before_migrations() -> None:
     log(f"back-up gemaakt: {target.name}")
 
 
+def shutdown(signum: int, _frame: object) -> None:
+    log(f"signaal {signum}: netjes stoppen")
+    STOP.set()
+
+
 def main() -> None:
+    # als PID 1 negeert de kernel signalen zonder eigen afhandeling: meteen instellen, ook tijdens het opstarten
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     log(f"appstore-en-fork (alles-in-één) · data {DATA} · poort {PORT}")
     prepare_dirs()
     harden_and_demote()
     py = sys.executable
     if run("geheimen", [py, "-m", "appstore", "init-secrets"]).returncode != 0:
         fail("geheimen in /appdata/secrets aanmaken mislukt")
+    log(f"pid {os.getpid()} · uid {os.getuid()} · gid {os.getgid()} · no_new_privs gezet")
     init_database()
     pg = postgres_child()
     pg.start()
@@ -306,16 +339,12 @@ def main() -> None:
         fail(
             "databasemigratie mislukt; de transactie is teruggedraaid en de database is ongewijzigd. Zet de vorige versie terug."
         )
+    if run("koppelstatus", [py, "-m", "appstore", "hub-link-init"]).returncode != 0:
+        log("let op: koppelstatus (hub-link.json) voorbereiden mislukt; API en worker proberen het opnieuw")
     children = [Child("api", [py, "-m", "appstore", "serve"]), Child("worker", [py, "-m", "appstore", "worker"])]
     for c in children:
         c.start()
 
-    def shutdown(signum: int, _frame: object) -> None:
-        log(f"signaal {signum}: netjes stoppen")
-        STOP.set()
-
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
     backoff: dict[str, float] = {}
     while not STOP.is_set():
         if not pg.alive():
@@ -337,6 +366,7 @@ def main() -> None:
                     c.start()
             elif c.alive():
                 backoff[c.name] = max(1.0, backoff.get(c.name, 1.0) * 0.9)
+        reap_orphans({c.proc.pid for c in [pg, *children] if c.proc})
         STOP.wait(2)
     for c in reversed(children):
         c.stop()

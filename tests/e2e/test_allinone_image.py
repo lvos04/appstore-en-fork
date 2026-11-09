@@ -1,5 +1,7 @@
 """E2E van de alles-in-één image (Docker; zoals TrueNAS een standaard Custom App start: standaardcapabilities,
-geen no-new-privileges, één hostmap op /appdata, één poort). Alleen als ``APPSTORE_E2E_IMAGE`` gezet is, bv.
+**zonder** ``--security-opt no-new-privileges`` en **zonder** ``--cap-drop``, één hostmap op /appdata, één poort).
+Contract 1.2 §2.2 (A6): voor **elk** proces in de container, ook PID 1, ``Uid 568``, ``CapEff 0`` en ``NoNewPrivs 1``;
+alleen het eigen ``docker exec``-proces van de controle telt niet mee. Alleen als ``APPSTORE_E2E_IMAGE`` gezet is, bv.
 
     APPSTORE_E2E_IMAGE=appstore-en-fork:dev python -m pytest tests/e2e/test_allinone_image.py
 
@@ -26,7 +28,7 @@ pytestmark = pytest.mark.skipif(not IMAGE, reason="APPSTORE_E2E_IMAGE niet gezet
 
 PROC_SCRIPT = (
     "import os,json\n"
-    "out=[]\n"
+    "out=[{'self':os.getpid()}]\n"
     "for p in sorted(int(x) for x in os.listdir('/proc') if x.isdigit()):\n"
     "  try:\n"
     "    st=dict(l.split(':',1) for l in open(f'/proc/{p}/status').read().splitlines() if ':' in l)\n"
@@ -87,21 +89,34 @@ def container(data_dir: Path) -> Iterator[Container]:
         c.remove()
 
 
+def processes(c: Container) -> list[dict[str, object]]:
+    """Alle processen in de container behalve het eigen ``docker exec``-proces van deze controle."""
+    out = json.loads(c.exec("python", "-c", PROC_SCRIPT))
+    me = out[0]["self"]
+    return [p for p in out[1:] if p["pid"] != me]
+
+
 def test_first_start_healthy_status_page_and_hardening(container: Container) -> None:
     assert httpx.get(f"{container.url}/readyz", timeout=5).json()["status"] == "ready"
     page = httpx.get(f"{container.url}/", timeout=5).text
-    assert "Niet gekoppeld" in page and 'action="/koppelen"' in page
-    assert httpx.get(f"{container.url}/catalog/v1/entries", timeout=5).status_code == 401
+    assert "Niet gekoppeld" in page and 'action="/koppelen"' in page and 'name="vingerafdruk"' in page
+    resp = httpx.get(f"{container.url}/catalog/v1/entries", timeout=5)
+    assert resp.status_code == 401 and resp.json()["details"]["reason"] == "not_linked"
     wait_for(lambda: "1 app(s)" in httpx.get(f"{container.url}/", timeout=5).text, 60)  # eigen manifest ingebouwd
-    procs = json.loads(container.exec("python", "-c", PROC_SCRIPT))
-    app = [p for p in procs if p["pid"] != 1 and "python -c" not in p["cmd"]]
-    assert app, procs
-    for p in app:
+    procs = processes(container)
+    assert len(procs) >= 4, procs  # bewaker (PID 1), PostgreSQL, API, worker
+    pid1 = next(p for p in procs if p["pid"] == 1)
+    assert "supervisor.py" in str(pid1["cmd"]) and not any("dumb-init" in str(p["cmd"]) for p in procs), procs
+    for p in procs:  # ook PID 1: geen enkel proces meer als root (contract 1.2 §2.2, R11)
         assert p["uid"] == 568, p
         assert p["capeff"] == "0000000000000000" and p["capbnd"] == "0000000000000000", p
         assert p["nnp"] == "1", p
     secrets = container.exec("sh", "-c", "stat -c '%a %u %n' /appdata/secrets/*").split("\n")
     assert all(line.startswith("600 568 ") for line in secrets if line), secrets
+    assert any(line.endswith("/hub-link.json") for line in secrets), secrets  # koppelstatus in een bestand (§3.5)
+    assert container.exec("stat", "-c", "%a %u", "/appdata/secrets").strip() == "700 568"
+    link = json.loads(container.exec("cat", "/appdata/secrets/hub-link.json", user="568"))
+    assert link["state"] == "nooit_gekoppeld" and link["schema_version"] == "1.2"
     listening = container.exec("sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null; true")
     ports = {
         int(line.split()[1].split(":")[1], 16)
@@ -109,6 +124,18 @@ def test_first_start_healthy_status_page_and_hardening(container: Container) -> 
         if len(line.split()) > 3 and line.split()[3] == "0A"
     }
     assert ports == {30430}, ports  # alleen de API; PostgreSQL heeft geen netwerkpoort
+
+
+def test_pid1_reaps_orphans_and_stops_on_sigterm(container: Container) -> None:
+    """PID 1 is de bewaker: verweesde processen worden opgeruimd en SIGTERM stopt alles netjes (geen dumb-init)."""
+    container.exec("sh", "-c", "sleep 0.1 & exit 0", user="568")  # wees → kind van PID 1
+    time.sleep(5)
+    stat_lines = container.exec("sh", "-c", "cat /proc/[0-9]*/stat 2>/dev/null; true")
+    zombies = [line for line in stat_lines.splitlines() if line.rsplit(")", 1)[-1].split()[:1] == ["Z"]]
+    assert zombies == [], zombies
+    docker("stop", "-t", "60", container.name)
+    assert docker("inspect", "-f", "{{.State.ExitCode}}", container.name).stdout.strip() == "0"
+    assert "gestopt" in container.logs()
 
 
 def test_restart_keeps_secrets_and_data(container: Container) -> None:

@@ -6,7 +6,8 @@
 # Installeren: TrueNAS → Apps → Discover Apps → Custom App (formulier; nooit YAML). Zie deploy/truenas/CUSTOM_APP.md.
 # Eén poort 30430, één opslag /appdata, géén verplichte omgevingsvariabelen en géén wachtwoorden in het formulier.
 # PostgreSQL luistert alleen op een unix-socket. De container start als root uitsluitend om /appdata aan 568:568 te
-# geven; daarna draaien alle processen als 568 met no_new_privs en zonder capabilities.
+# geven; daarna draaien alle processen — ook PID 1, de procesbewaker zelf (geen dumb-init) — als 568 met
+# no_new_privs en zonder capabilities (contract 1.2 §2.2/§10: het formulier zet die vlag niet).
 #
 # Base-images op exacte versie én digest (contract §1); bijwerken: docker buildx imagetools inspect <image>:<tag>.
 ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
@@ -27,11 +28,10 @@ RUN set -eu; mkdir -p /out/lib /out/pg; \
 FROM ${PYTHON_IMAGE} AS build
 WORKDIR /src
 COPY apps/api/requirements.lock /src/requirements.lock
-COPY deploy/allinone/tools.lock /src/tools.lock
 RUN --mount=type=secret,id=ca_bundle,required=false \
     if [ -s /run/secrets/ca_bundle ]; then export PIP_CERT=/run/secrets/ca_bundle; fi; \
     pip install --no-cache-dir --disable-pip-version-check --root-user-action=ignore --prefix=/install \
-        --require-hashes -r requirements.lock -r tools.lock
+        --require-hashes -r requirements.lock
 
 # ---------------------------------------------------------------- runtime
 FROM ${PYTHON_IMAGE}
@@ -70,5 +70,5 @@ VOLUME ["/appdata"]
 EXPOSE 30430
 HEALTHCHECK --interval=30s --timeout=8s --start-period=90s --retries=3 \
   CMD ["python", "/usr/local/lib/appstore/healthcheck.py"]
-ENTRYPOINT ["/usr/local/bin/dumb-init", "--"]
-CMD ["python", "/usr/local/lib/appstore/supervisor.py"]
+# PID 1 = de procesbewaker zelf: signalen (SIGTERM/SIGINT) en zombies, en na de eigenaarschapsstap uid 568.
+ENTRYPOINT ["python", "/usr/local/lib/appstore/supervisor.py"]
