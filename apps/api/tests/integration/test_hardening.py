@@ -21,7 +21,7 @@ from appstore.app import MAX_BODY, create_app
 from appstore.config import Settings
 from appstore.worker import run_once, startup
 from tests.fakehub import HUB_URL, FakeHub
-from tests.integration.conftest import idem, pair, pair_form
+from tests.integration.conftest import idem, pair, pair_form, post_form
 
 pytestmark = pytest.mark.integration
 
@@ -208,7 +208,8 @@ def test_pairing_only_with_configured_hub_url(settings: Settings, hub: FakeHub) 
         melding = pair_form(c, hub_url="http://vreemde-hub.test:30400", code=code, fingerprint=hub.fingerprint())
         assert melding == "andere_hub"
         assert hub.enroll_requests == []  # er is niets naar een andere Hub gestuurd
-        assert "verschilt van het adres (HUB_URL)" in c.get("/?melding=andere_hub").text
+        page = post_form(c, hub_url="http://vreemde-hub.test:30400", code=code, fingerprint=hub.fingerprint())
+        assert "verschilt van HUB_URL" in page.text and "vreemde-hub" not in page.text  # adres nooit teruggetoond
         assert pair_form(c, hub_url=HUB_URL, code=code, fingerprint=hub.fingerprint()) == "gekoppeld"
     app.state.ctx.engine.dispose()
 

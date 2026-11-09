@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -111,7 +113,19 @@ def worker_ctx(settings: Settings, hub: FakeHub) -> Iterator[AppContext]:
 ORIGIN = {"Origin": "http://testserver"}
 
 
-def pair_form(
+CODE_IN_PAGINA = re.compile(r"Code <code>([a-z_]+)</code> · Trace-ID")
+
+
+def melding_code(resp: Any) -> str:
+    """Vaste code uit de foutpagina van de statuspagina; controleert dat de trace-ID die van het verzoek is."""
+    m = CODE_IN_PAGINA.search(resp.text)
+    assert m, resp.text[:2000]
+    trace = resp.headers["X-Trace-Id"]
+    assert f'<code class="selecteer">{trace}</code>' in resp.text  # selecteerbare trace-ID = die van dit verzoek
+    return m.group(1)
+
+
+def post_form(
     client: TestClient,
     *,
     hub_url: str = "http://hub.test:30400",
@@ -119,21 +133,31 @@ def pair_form(
     fingerprint: str = "",
     csrf: str | None = None,
     origin: dict[str, str] | None = None,
-) -> str:
-    """POST /koppelen zoals het formulier van de statuspagina; geeft de melding uit de redirect."""
+    headers: dict[str, str] | None = None,
+) -> Any:
+    """POST /koppelen zoals het formulier van de statuspagina (veldnamen uit het Peil-sjabloon)."""
     if csrf is None:
         client.get("/")
         csrf = client.cookies.get("appstore_csrf") or ""
-    resp = client.post(
+    return client.post(
         "/koppelen",
-        data={"hub_url": hub_url, "koppelcode": code, "vingerafdruk": fingerprint, "csrf": csrf},
-        headers=ORIGIN if origin is None else origin,
+        data={"hub_adres": hub_url, "koppelcode": code, "hub_vingerafdruk": fingerprint, "csrf": csrf},
+        headers={**(ORIGIN if origin is None else origin), **(headers or {})},
         follow_redirects=False,
     )
-    assert resp.status_code == 303, resp.text
-    location = resp.headers["location"]
-    assert location.startswith("/?melding="), location
-    return location.removeprefix("/?melding=")
+
+
+def pair_form(client: TestClient, **kwargs: Any) -> str:
+    """Geslaagd → ``"gekoppeld"`` (303 naar ``/?melding=gekoppeld``); anders de vaste code uit de foutpagina (geen
+    redirect: de trace-ID op de pagina is die van de poging zelf)."""
+    resp = post_form(client, **kwargs)
+    if resp.status_code == 303:
+        assert resp.headers["location"] == "/?melding=gekoppeld", resp.headers["location"]
+        return "gekoppeld"
+    assert resp.status_code in (400, 403, 409, 422, 429, 502), (resp.status_code, resp.text[:500])
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "default-src 'none'" in resp.headers["content-security-policy"]
+    return melding_code(resp)
 
 
 def pair(client: TestClient, hub: FakeHub) -> str:

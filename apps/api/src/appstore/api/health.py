@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -11,7 +12,7 @@ from .. import APP_ID, __version__
 from ..db import ping
 from ..migrations import current_revision, head_revision
 from ..timeutil import iso, utcnow
-from .common import ctx
+from .common import AppContext, ctx
 
 router = APIRouter(tags=["gezondheid"])
 
@@ -21,19 +22,44 @@ def healthz() -> dict[str, Any]:
     return {"status": "ok", "app_id": APP_ID, "version": __version__, "observed_at": iso(utcnow())}
 
 
+@dataclass(frozen=True)
+class Readiness:
+    """Eén meting van de afhankelijkheden; gedeeld door ``/readyz`` en de statuspagina."""
+
+    database: bool
+    schema: Literal["ok", "verouderd", "onbekend"] | None  # None = niet te meten (database weg)
+    current: str | None = None
+    head: str | None = None
+
+    def checks(self) -> dict[str, str]:
+        out = {"database": "ok" if self.database else "down"}
+        if self.schema == "ok":
+            out["schema"] = "ok"
+        elif self.schema == "verouderd":
+            out["schema"] = f"verouderd ({self.current} ≠ {self.head})"
+        elif self.schema == "onbekend":
+            out["schema"] = "onbekend"
+        return out
+
+    @property
+    def ready(self) -> bool:
+        return self.database and self.schema == "ok"
+
+
+def measure(c: AppContext) -> Readiness:
+    if not ping(c.engine):
+        return Readiness(database=False, schema=None)
+    try:
+        current, head = current_revision(c.engine), head_revision(c.settings.database_url)
+    except Exception:
+        return Readiness(database=True, schema="onbekend")
+    return Readiness(database=True, schema="ok" if current == head else "verouderd", current=current, head=head)
+
+
 @router.get("/readyz", summary="Afhankelijkheden in orde")
 def readyz(request: Request) -> JSONResponse:
-    c = ctx(request)
-    checks: dict[str, str] = {}
-    db_ok = ping(c.engine)
-    checks["database"] = "ok" if db_ok else "down"
-    if db_ok:
-        try:
-            current, head = current_revision(c.engine), head_revision(c.settings.database_url)
-            checks["schema"] = "ok" if current == head else f"verouderd ({current} ≠ {head})"
-        except Exception:
-            checks["schema"] = "onbekend"
-    ready = all(v == "ok" for v in checks.values())
+    m = measure(ctx(request))
+    checks, ready = m.checks(), m.ready
     return JSONResponse(
         {"status": "ready" if ready else "not_ready", "checks": checks, "observed_at": iso(utcnow())},
         status_code=200 if ready else 503,

@@ -46,6 +46,9 @@ COPY --from=pg /out/lib /opt/pglibs
 COPY --from=build /install /usr/local
 # eigen pakket als bron (geen build-tools nodig); commando's via `python -m appstore …`
 COPY apps/api/src/appstore /usr/local/lib/python3.12/site-packages/appstore
+# statuspagina: versie-gepinde kopie van het Peil-sjabloon (O-14, ADR-0009); de sha256 wordt hieronder gecontroleerd
+COPY design/ontwerptaal/statuspagina.html design/ontwerptaal/statuspagina.css \
+     /usr/local/lib/python3.12/site-packages/appstore/ontwerptaal/
 COPY apps/api/alembic /usr/local/share/appstore/alembic
 COPY deploy/manifest/appstore-en-fork.manifest.yaml /usr/local/share/appstore/catalog/appstore-en-fork.manifest.yaml
 COPY catalog/bundled/ /usr/local/share/appstore/catalog/
@@ -60,6 +63,7 @@ RUN set -eu; \
     mkdir -p /appdata; chown 568:568 /appdata; \
     find /usr/local/share/appstore -type d -exec chmod 0755 {} +; find /usr/local/share/appstore -type f -exec chmod 0644 {} +; \
     python -c "import appstore.app, psycopg, uvicorn, cryptography, dulwich; print('ok')"; \
+    python -c "from appstore import peil; assert peil.kandidaten()[0].is_file(); s = peil.sjabloon(); assert s.intact; print('Peil', s.versie)"; \
     rm -rf /root/.cache
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
     APPSTORE_DATA_DIR=/appdata APPSTORE_PORT=30430 \

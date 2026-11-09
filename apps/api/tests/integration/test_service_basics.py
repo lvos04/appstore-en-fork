@@ -45,7 +45,7 @@ def test_status_page_not_linked(client: TestClient, settings: Settings) -> None:
     assert page.status_code == 200
     html = page.text
     assert '<html lang="nl">' in html and "Niet gekoppeld" in html and 'action="/koppelen"' in html
-    assert 'name="vingerafdruk"' in html and "laatst bijgewerkt" in html
+    assert 'name="hub_vingerafdruk"' in html and "Bijgewerkt" in html and "<script" not in html
     assert page.cookies.get("appstore_csrf")
     assert "default-src 'none'" in page.headers["content-security-policy"]
     # eerste start: hub-link.json bestaat (nooit_gekoppeld), 0600, in een 0700-map
@@ -58,8 +58,8 @@ def test_status_page_not_linked(client: TestClient, settings: Settings) -> None:
 def test_pairing_with_code_and_fingerprint(client: TestClient, hub: FakeHub, settings: Settings) -> None:
     token = pair(client, hub)
     html = client.get("/").text
-    assert "Gekoppeld" in html and token[-4:] in html and hub.fingerprint() in html
-    assert token not in html  # nooit het hele token tonen
+    assert "Gekoppeld" in html and hub.fingerprint() in html
+    assert token not in html and token[-8:] not in html  # het service-token staat nooit op de pagina
     assert 'action="/koppelen"' not in html and "gaat via de Hub" in html
     req = hub.enroll_requests[0]
     assert set(req) == {"app_id", "pairing_code", "version", "base_url", "public_key_jwk"}
@@ -100,7 +100,7 @@ def _set_pending(client: TestClient, kind: str, started: str | None = None) -> N
 def test_running_attempt_blocks_the_form(client: TestClient, hub: FakeHub, kind: str) -> None:
     """Nooit twee enrollments tegelijk: een lopende poging (formulier of env-token met backoff) → 'bezig'."""
     _set_pending(client, kind)
-    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "bezig"
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "koppelen_bezig"
     assert hub.enroll_requests == []
     st = client.app.state.ctx.store.read()  # type: ignore[attr-defined]
     assert st.pending is not None and st.pending.kind == kind and st.state == "nooit_gekoppeld"
@@ -169,20 +169,20 @@ def test_concurrent_pairing_sends_only_one_enrollment(client: TestClient, hub: F
 @pytest.mark.parametrize(
     ("fields", "melding"),
     [
-        ({"hub_url": "ftp://x"}, "ongeldig_adres"),
-        ({"hub_url": "http://hub.test:30400/pad"}, "ongeldig_adres"),
-        ({"hub_url": "http://127.0.0.1:30400"}, "ongeldig_adres"),
-        ({"hub_url": "http://localhost:30400"}, "ongeldig_adres"),
-        ({"hub_url": "http://169.254.1.1:30400"}, "ongeldig_adres"),
-        ({"hub_url": "http://0.0.0.0:30400"}, "ongeldig_adres"),
-        ({"hub_url": "http://[::]:30400"}, "ongeldig_adres"),
-        ({"hub_url": "http://[fe80::1]:30400"}, "ongeldig_adres"),
-        ({"hub_url": "http://admin:geheim@hub.test:30400"}, "ongeldig_adres"),
-        ({"code": "ABCD-EFGH-JKMU"}, "ongeldige_code"),  # U is geen Crockford-teken
-        ({"code": "ABCD-EFGH-JKM"}, "ongeldige_code"),  # 11 tekens
-        ({"code": "ABCD-EFGH-JKMN-PQRS-TVWX-YZ01-23"}, "ongeldige_code"),
-        ({"fingerprint": ""}, "ongeldige_vingerafdruk"),
-        ({"fingerprint": "ABCD-EFGH"}, "ongeldige_vingerafdruk"),
+        ({"hub_url": "ftp://x"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://hub.test:30400/pad"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://127.0.0.1:30400"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://localhost:30400"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://169.254.1.1:30400"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://0.0.0.0:30400"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://[::]:30400"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://[fe80::1]:30400"}, "hub_adres_ongeldig"),
+        ({"hub_url": "http://admin:geheim@hub.test:30400"}, "hub_adres_ongeldig"),
+        ({"code": "ABCD-EFGH-JKMU"}, "koppelcode_ongeldig"),  # U is geen Crockford-teken
+        ({"code": "ABCD-EFGH-JKM"}, "koppelcode_ongeldig"),  # 11 tekens
+        ({"code": "ABCD-EFGH-JKMN-PQRS-TVWX-YZ01-23"}, "koppelcode_ongeldig"),
+        ({"fingerprint": ""}, "vingerafdruk_ongeldig"),
+        ({"fingerprint": "ABCD-EFGH"}, "vingerafdruk_ongeldig"),
     ],
 )
 def test_invalid_form_input_never_reaches_the_hub(
@@ -194,7 +194,7 @@ def test_invalid_form_input_never_reaches_the_hub(
 
 
 def test_wrong_fingerprint_stores_nothing(client: TestClient, hub: FakeHub, settings: Settings) -> None:
-    assert pair_form(client, code=hub.add_code(), fingerprint="0000-0000-0000-0000") == "mislukt"
+    assert pair_form(client, code=hub.add_code(), fingerprint="0000-0000-0000-0000") == "hub_vingerafdruk_onjuist"
     data = json.loads((settings.secrets_dir / "hub-link.json").read_text())
     assert data["state"] == "nooit_gekoppeld" and data["service_token"] is None and data["pins"] is None
     assert data["hub_url"] is None and data["pending"] is None  # adres van een mislukte poging nergens bewaard
@@ -205,18 +205,18 @@ def test_wrong_fingerprint_stores_nothing(client: TestClient, hub: FakeHub, sett
 
 def test_csrf_and_origin_are_required(client: TestClient, hub: FakeHub) -> None:
     code, fp = hub.add_code(), hub.fingerprint()
-    assert pair_form(client, code=code, fingerprint=fp, csrf="fout") == "sessie"
-    assert pair_form(client, code=code, fingerprint=fp, origin={}) == "sessie"
-    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "http://aanvaller.test"}) == "sessie"
-    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "null"}) == "sessie"
+    assert pair_form(client, code=code, fingerprint=fp, csrf="fout") == "sessie_verlopen"
+    assert pair_form(client, code=code, fingerprint=fp, origin={}) == "sessie_verlopen"
+    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "http://aanvaller.test"}) == "sessie_verlopen"
+    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "null"}) == "sessie_verlopen"
     assert hub.enroll_requests == []
     assert pair_form(client, code=code, fingerprint=fp, origin=ORIGIN) == "gekoppeld"
 
 
 def test_rate_limit_five_per_ip(client: TestClient, hub: FakeHub) -> None:
     for _ in range(5):
-        assert pair_form(client, code="XXXX-XXXX-XXXX", fingerprint=hub.fingerprint()) == "mislukt"
-    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "te_vaak"
+        assert pair_form(client, code="XXXX-XXXX-XXXX", fingerprint=hub.fingerprint()) == "hub_weigerde"
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "te_veel_pogingen"
     assert len(hub.enroll_requests) == 5
     assert "Koppelen mislukt" not in client.get("/").text  # oude P0-tekst bestaat niet meer
     assert "onbekend, verlopen of al gebruikt" in client.get("/").text
@@ -231,11 +231,13 @@ def test_rate_limit_twenty_per_service_across_ips(settings: Settings, hub: FakeH
         for n in range(4):
             with TestClient(app, client=(f"192.0.2.{10 + n}", 40000)) as c:
                 for _ in range(5):
-                    assert pair_form(c, code="XXXX-XXXX-XXXX", fingerprint=hub.fingerprint()) == "mislukt"
+                    # na 10 mislukte pogingen weigert de Hub(-simulator) zelf met 429 (§3.3): ook dat is verstuurd
+                    melding = pair_form(c, code="XXXX-XXXX-XXXX", fingerprint=hub.fingerprint())
+                    assert melding in ("hub_weigerde", "rate_limited"), melding
         sent = len(hub.enroll_requests)
         assert sent == 20
         with TestClient(app, client=("192.0.2.99", 40000)) as fresh:
-            assert pair_form(fresh, code=hub.add_code(), fingerprint=hub.fingerprint()) == "te_vaak"
+            assert pair_form(fresh, code=hub.add_code(), fingerprint=hub.fingerprint()) == "te_veel_pogingen"
         assert len(hub.enroll_requests) == sent  # geen verzoek naar de Hub
     finally:
         app.state.ctx.engine.dispose()
@@ -243,17 +245,15 @@ def test_rate_limit_twenty_per_service_across_ips(settings: Settings, hub: FakeH
 
 def test_rate_limit_ignores_x_forwarded_for(client: TestClient, hub: FakeHub) -> None:
     """Het bron-IP is het TCP-adres; een vervalste ``X-Forwarded-For`` omzeilt de limiet niet."""
-    client.get("/")
-    csrf = client.cookies.get("appstore_csrf") or ""
     for n in range(6):
-        resp = client.post(
-            "/koppelen",
-            data={"hub_url": HUB_URL, "koppelcode": "XXXX-XXXX-XXXX", "vingerafdruk": hub.fingerprint(), "csrf": csrf},
-            headers={**ORIGIN, "X-Forwarded-For": f"198.51.100.{n}"},
-            follow_redirects=False,
+        melding = pair_form(
+            client,
+            hub_url=HUB_URL,
+            code="XXXX-XXXX-XXXX",
+            fingerprint=hub.fingerprint(),
+            headers={"X-Forwarded-For": f"198.51.100.{n}"},
         )
-        melding = resp.headers["location"].removeprefix("/?melding=")
-        assert melding == ("te_vaak" if n == 5 else "mislukt"), (n, melding)
+        assert melding == ("te_veel_pogingen" if n == 5 else "hub_weigerde"), (n, melding)
     assert len(hub.enroll_requests) == 5
 
 
@@ -263,7 +263,7 @@ def test_expired_pairing_code_fails_but_form_stays(client: TestClient, hub: Fake
     code = hub.add_code()
     digest = next(iter(hub.grants))
     hub.grants[digest].created -= 3601
-    assert pair_form(client, code=code, fingerprint=hub.fingerprint()) == "mislukt"
+    assert pair_form(client, code=code, fingerprint=hub.fingerprint()) == "hub_weigerde"
     data = json.loads((settings.secrets_dir / "hub-link.json").read_text())
     assert data["state"] == "nooit_gekoppeld" and data["last_error"]["code"] == "hub_weigerde"
     assert data["used_enrollment_token_sha256"] == []  # een koppelcode mag de gebruiker opnieuw invoeren
@@ -273,7 +273,7 @@ def test_expired_pairing_code_fails_but_form_stays(client: TestClient, hub: Fake
 
 def test_hub_unreachable_is_honest(client: TestClient, hub: FakeHub) -> None:
     hub.down = True
-    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "mislukt"
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "hub_onbereikbaar"
     assert "Hub was niet bereikbaar" in client.get("/").text
     hub.down = False
     assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "gekoppeld"
@@ -281,8 +281,8 @@ def test_hub_unreachable_is_honest(client: TestClient, hub: FakeHub) -> None:
 
 def test_hub_rate_limit_and_redirect_are_not_followed(client: TestClient, hub: FakeHub) -> None:
     hub.enroll_status = 302
-    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "mislukt"
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "hub_onbereikbaar"
     assert not any("elders.test" in url for url in hub.all_urls)  # 3xx = storing, nooit gevolgd
     hub.enroll_status = 429
-    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "mislukt"
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "rate_limited"
     assert "te veel mislukte pogingen" in client.get("/").text

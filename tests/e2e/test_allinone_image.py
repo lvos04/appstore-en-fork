@@ -99,10 +99,11 @@ def processes(c: Container) -> list[dict[str, object]]:
 def test_first_start_healthy_status_page_and_hardening(container: Container) -> None:
     assert httpx.get(f"{container.url}/readyz", timeout=5).json()["status"] == "ready"
     page = httpx.get(f"{container.url}/", timeout=5).text
-    assert "Niet gekoppeld" in page and 'action="/koppelen"' in page and 'name="vingerafdruk"' in page
+    assert "Niet gekoppeld" in page and 'action="/koppelen"' in page and 'name="hub_vingerafdruk"' in page
+    assert page.startswith("<!doctype html>") and "Peil statuspagina-sjabloon 1.1.0" in page and "<script" not in page
     resp = httpx.get(f"{container.url}/catalog/v1/entries", timeout=5)
     assert resp.status_code == 401 and resp.json()["details"]["reason"] == "not_linked"
-    wait_for(lambda: "1 app(s)" in httpx.get(f"{container.url}/", timeout=5).text, 60)  # eigen manifest ingebouwd
+    wait_for(lambda: "1 app;" in httpx.get(f"{container.url}/", timeout=5).text, 60)  # eigen manifest ingebouwd
     procs = processes(container)
     assert len(procs) >= 4, procs  # bewaker (PID 1), PostgreSQL, API, worker
     pid1 = next(p for p in procs if p["pid"] == 1)
@@ -186,7 +187,7 @@ def _write_marker(c: Container) -> str:
 
 def test_restart_and_kill_keep_database_rows(container: Container) -> None:
     """Herstart en harde kill: zelfde cluster, zelfde manifestversies en de eigen markering blijft (geen dataverlies)."""
-    wait_for(lambda: "1 app(s)" in httpx.get(f"{container.url}/", timeout=5).text, 60)
+    wait_for(lambda: "1 app;" in httpx.get(f"{container.url}/", timeout=5).text, 60)
     marker = _write_marker(container)
     before, evidence = _db_fingerprint(container), _evidence_ids(container)
     assert marker in before and evidence
@@ -206,7 +207,7 @@ def test_new_container_on_same_appdata_keeps_database(data_dir: Path) -> None:
     first = Container(data_dir)
     try:
         first.wait_healthy()
-        wait_for(lambda: "1 app(s)" in httpx.get(f"{first.url}/", timeout=5).text, 60)
+        wait_for(lambda: "1 app;" in httpx.get(f"{first.url}/", timeout=5).text, 60)
         marker = _write_marker(first)
         before, evidence = _db_fingerprint(first), _evidence_ids(first)
         keys = first.exec("sha256sum", "/appdata/secrets/identity.ed25519", "/appdata/secrets/vault.key")

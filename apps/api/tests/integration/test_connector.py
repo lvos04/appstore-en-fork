@@ -154,7 +154,7 @@ def test_push_failures_backoff_and_revocation(client: TestClient, linked: FakeHu
     assert st.state == "ingetrokken" and st.service_token is None and st.pins is None and st.previous_pins
     assert st.last_error is not None and st.last_error.code == "ingetrokken_door_hub"
     page = client.get("/").text
-    assert "Koppeling ingetrokken" in page and 'action="/koppelen"' not in page  # geen herkoppelen na intrekking
+    assert "Ingetrokken" in page and "koppeling ingetrokken" in page and 'action="/koppelen"' not in page
     resp = client.get("/connector/v1/events?limit=200", headers=linked.service_auth())
     assert resp.status_code == 401 and resp.json()["details"]["reason"] == "revoked"  # fail-closed (EX16)
 
