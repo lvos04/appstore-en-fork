@@ -172,3 +172,54 @@ def test_dutch_date_notation_in_utc() -> None:
     assert sp.datum_tijd(datetime(2026, 11, 9, 12, 0, tzinfo=UTC) + timedelta(hours=1)) == "9 nov 2026, 13:00 UTC"
     assert sp.datum_tijd(None) == "onbekend" and sp.parse("geen datum") is None
     assert sp.klok(NU) == "11:56 UTC" and sp.iso_z(NU) == "2026-11-09T11:56:30Z"
+
+
+# ---------------------------------------------------------------- ontwerpreview Peil (docs/ontwerp/PEIL_REVIEW.md)
+def test_review_sources_and_counts_in_dutch_and_as_a_measurement() -> None:
+    """Geen Engelse bronsoort ("bundled") op de pagina; de aantallen zijn een meting van de eigen database."""
+    bronnen = [  # volgorde zoals de database ze levert (op naam); de ingebouwde catalogus komt eerst
+        sp.BronStand("community", "http", True, "failed", NU),
+        sp.BronStand("eigen", "git", False, "never", None),
+        sp.BronStand("ingebouwd", "bundled", True, "ok", NU),
+    ]
+    rijen = sp.catalogus(stand(apps=2, geweigerd=1, bronnen=bronnen))
+    assert [r.naam for r in rijen] == [
+        "Catalogusgegevens",
+        "Ingebouwde catalogus",
+        "Bron community (HTTP-adres)",
+        "Bron eigen (Git-repository)",
+    ]
+    assert rijen[0].reden == (
+        "Gelezen uit de eigen database: 2 apps in de catalogus; 1 manifestversie geweigerd door de validator."
+    )
+    assert [r.toon for r in rijen] == ["gezond", "gezond", "beperkt", "gate"]
+    assert not any("bundled" in (r.naam + (r.reden or "")) for r in rijen)
+    leeg = sp.catalogus(stand(apps=None, bronnen=None))
+    assert (leeg[0].naam, leeg[0].toon) == ("Catalogusgegevens", "onbekend")  # nooit 0 als het onbekend is
+
+
+@pytest.mark.parametrize(
+    ("toestand", "reden"), [("ontkoppeld", "ontkoppeld"), ("ingetrokken", "koppeling ingetrokken")]
+)
+def test_review_decision_by_the_hub_is_not_called_partly_unknown(toestand: str, reden: str) -> None:
+    d = data(stand(link(toestand)))
+    assert (d["totaal_toon"], d["totaal_label"]) == ("onbekend", "Niet gereed")
+    assert d["totaal_toelichting"] == f"De dienst weigert elke opdracht: {reden} door de Hub."
+    assert "Deels onbekend" in data(stand())["totaal_toelichting"]  # wacht op koppeling: wél deels onbekend
+
+
+def test_review_form_outcome_speaks_of_the_pairing_code_and_says_what_to_do() -> None:
+    for code, tekst in sp.HUB_POGING.items():
+        assert "token" not in tekst, code
+        assert sp.VELDFOUT[code][0] in ("hub_adres", "koppelcode", "vingerafdruk")
+    assert sp.HUB_POGING["hub_weigerde"].endswith("Maak in de Hub een nieuwe koppelcode en probeer het opnieuw.")
+    m = sp.koppel_melding(link(last_error=LastError(code="hub_weigerde", at="2026-11-09T10:00:00Z")))
+    assert m is not None and m.tekst.endswith("Maak in de Hub een nieuwe koppelcode of een nieuw koppeltoken.")
+
+
+def test_review_unreadable_link_file_message_has_no_english_jargon() -> None:
+    lnk = LinkState(first_linked_at="2026-11-09T00:00:00Z")
+    lnk._corrupt = True
+    m = sp.koppel_melding(lnk)
+    assert m is not None and "enrollment" not in m.tekst and "HUB_ENROLLMENT_TOKEN" in m.tekst
+    assert "nieuw koppeltoken" in m.tekst and "hub-link.json" not in m.tekst  # afbreken op "hub-" bij 320 px

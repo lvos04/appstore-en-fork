@@ -73,6 +73,8 @@ HEADERS = {
 }
 MAANDEN = ("jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec")
 ERNST = {"gezond": 0, "onbekend": 1, "beperkt": 2, "storing": 3}
+#: bronsoort (API-waarde) → woord op de pagina (Peil §11: geen Engelse vaktermen als het Nederlandse woord bestaat)
+BRONSOORT = {"git": "Git-repository", "http": "HTTP-adres"}
 STATUSWOORD = {"gezond": "Gezond", "beperkt": "Beperkt", "storing": "Storing", "onbekend": "Onbekend"}
 
 #: formulierveld → (id in het sjabloon, label)
@@ -85,8 +87,8 @@ VELDEN = {
 VELDFOUT: dict[str, tuple[str, str]] = {
     "hub_adres_ongeldig": (
         "hub_adres",
-        "Vul het adres in als http(s)://<NAS-adres>:<poort>, zonder pad. Geen localhost, geen loopback- of "
-        "link-local-adres.",
+        "Geen geldig Hub-adres. Vul het in als http(s)://<NAS-adres>:<poort>, zonder pad. Een adres van dit apparaat "
+        "zelf (zoals localhost) werkt niet.",
     ),
     "andere_hub": (
         "hub_adres",
@@ -118,6 +120,22 @@ VELDFOUT: dict[str, tuple[str, str]] = {
 INVOER = {"koppelcode": "koppelcode_ongeldig", "vingerafdruk": "vingerafdruk_ongeldig"}
 #: veldfouten die uit het antwoord van de Hub komen (``last_error``-codes, §3.5)
 HUB_CODES = frozenset({"hub_weigerde", "hub_vingerafdruk_onjuist", "hub_onbereikbaar"})
+#: melding bij een uitkomst van de Hub na het formulier (wat + waarom + wat je kunt doen; Peil §11.2, Foutpaneel). In het
+#: formulier is altijd een koppelcode gebruikt, dus geen "token" (dat woord hoort bij HUB_ENROLLMENT_TOKEN).
+HUB_POGING: dict[str, str] = {
+    "hub_weigerde": "De Hub weigerde de koppelcode: verlopen, al gebruikt of onbekend. Maak in de Hub een nieuwe "
+    "koppelcode en probeer het opnieuw.",
+    "hub_vingerafdruk_onjuist": "De vingerafdruk past niet bij de Hub op dit adres. Er is niets opgeslagen. Controleer "
+    "het adres en neem de vingerafdruk over die de Hub naast de koppelcode toont.",
+    "hub_onbereikbaar": "Op dit adres gaf geen Hub antwoord. Controleer het adres en of de Hub draait, en probeer het "
+    "opnieuw.",
+}
+#: wat je kunt doen na een opgeslagen fout (melding op ``GET /``); alleen voor codes met een eigen vervolgstap
+VERVOLG: dict[str, str] = {
+    "hub_weigerde": "Maak in de Hub een nieuwe koppelcode of een nieuw koppeltoken.",
+    "hub_onbereikbaar": "Controleer het adres van de Hub en of de Hub draait.",
+    "hub_vingerafdruk_onjuist": "Controleer het adres van de Hub en de vingerafdruk die de Hub toont.",
+}
 #: vaste meldingen bij een mislukte koppelpoging → (titel, tekst, HTTP-status)
 POGING: dict[str, tuple[str, str, int]] = {
     "sessie_verlopen": (
@@ -369,8 +387,14 @@ def controles(stand: Stand) -> list[Controle]:
     return out
 
 
+def bron_naam(b: BronStand) -> str:
+    if b.soort == "bundled":
+        return "Ingebouwde catalogus"
+    return f"Bron {b.naam} ({BRONSOORT.get(b.soort, b.soort)})"
+
+
 def bron_controle(b: BronStand) -> Controle:
-    naam = f"Bron {b.naam} ({b.soort})"
+    naam = bron_naam(b)
     if not b.aan:
         return Controle(naam, "gate", "Uit", "Deze bron staat uit en wordt niet gesynchroniseerd.")
     if b.status == "ok":
@@ -380,13 +404,17 @@ def bron_controle(b: BronStand) -> Controle:
     return Controle(naam, "onbekend", "Onbekend", "Nog nooit gesynchroniseerd.")
 
 
+#: redenen van "niet gereed" die bekend zijn (een besluit van de Hub), geen ontbrekende meting
+WEIGERT = frozenset({"ontkoppeld door de Hub", "koppeling ingetrokken door de Hub"})
+
+
 def slechtste(tonen: list[str]) -> str | None:
     gewogen = [t for t in tonen if t in ERNST]  # een gate (voorwaarde) verslechtert het totaal niet
     return max(gewogen, key=ERNST.__getitem__) if gewogen else None
 
 
 def catalogus(stand: Stand) -> list[Controle]:
-    naam = "Apps in de catalogus"
+    naam = "Catalogusgegevens"
     if stand.apps is None or stand.bronnen is None:
         return [Controle(naam, "onbekend", "Onbekend", "De database is niet bereikbaar; we tonen geen aantal.")]
     if stand.apps == 0:
@@ -402,12 +430,20 @@ def catalogus(stand: Stand) -> list[Controle]:
     else:
         geweigerd = stand.geweigerd or 0
         weiger = (
-            "geen manifestversies geweigerd"
+            "geen manifestversie geweigerd"
             if geweigerd == 0
             else meervoud(geweigerd, "manifestversie", "manifestversies") + " geweigerd door de validator"
         )
-        out = [Controle(naam, "gezond", "Gezond", f"{meervoud(stand.apps, 'app', 'apps')}; {weiger}.")]
-    bronnen = [bron_controle(b) for b in stand.bronnen]
+        out = [
+            Controle(
+                naam,
+                "gezond",
+                "Gezond",
+                f"Gelezen uit de eigen database: {meervoud(stand.apps, 'app', 'apps')} in de catalogus; {weiger}.",
+            )
+        ]
+    # de ingebouwde catalogus eerst, daarna de bronnen op naam (zoals de database ze levert)
+    bronnen = [bron_controle(b) for b in sorted(stand.bronnen, key=lambda b: b.soort != "bundled")]
     out += bronnen[:MAX_BRONNEN]
     rest = bronnen[MAX_BRONNEN:]
     if rest:
@@ -429,6 +465,8 @@ def totaal(rijen: list[Controle], klaar: bool, waarom: str) -> tuple[str, str, s
     if not klaar and ERNST[toon] < ERNST["onbekend"]:
         toon = "onbekend"
     if not klaar:
+        if toon == "onbekend" and waarom in WEIGERT:
+            return toon, "Niet gereed", f"De dienst weigert elke opdracht: {waarom}."
         if toon == "onbekend":
             return toon, "Niet gereed", f"Deels onbekend — {waarom}."
         return toon, STATUSWOORD[toon], f"Niet gereed — {waarom}."
@@ -446,14 +484,18 @@ def koppel_melding(link: LinkState) -> Melding | None:
         return Melding(
             "fout",
             "Koppelstatus onleesbaar",
-            "Het bestand /appdata/secrets/hub-link.json is onleesbaar; de dienst vertrouwt niets van de Hub. Herstel: "
-            "maak in de Hub een nieuw enrollment-token en zet het in het formulier van de Custom App "
-            "(HUB_ENROLLMENT_TOKEN).",
+            "Het koppelbestand in /appdata/secrets is onleesbaar. Daarom vertrouwt deze dienst niets van de Hub en voert "
+            "hij niets uit. Herstel: maak in de Hub een nieuw koppeltoken en vul het in bij HUB_ENROLLMENT_TOKEN in het "
+            "formulier van de Custom App.",
             "koppelstatus_onleesbaar",
         )
     fout = link.last_error
     if link.pending is not None:
-        via = "het token uit het formulier van de Custom App" if link.pending.kind == "token" else "een koppelcode"
+        via = (
+            "het koppeltoken uit het formulier van de Custom App (HUB_ENROLLMENT_TOKEN)"
+            if link.pending.kind == "token"
+            else "een koppelcode"
+        )
         tekst = f"Er loopt een koppelpoging via {via}. Laad de pagina over een minuut opnieuw."
         if fout is not None:
             tekst += f" Laatste melding: {error_message(fout.code)}"
@@ -463,6 +505,8 @@ def koppel_melding(link: LinkState) -> Melding | None:
     tekst = f"{error_message(fout.code)} Tijdstip: {datum_tijd(parse(fout.at))}."
     if link.linked:
         tekst += " De bestaande koppeling blijft gelden."
+    elif fout.code in VERVOLG:
+        tekst += " " + VERVOLG[fout.code]
     return Melding("fout", "Laatste koppelpoging is mislukt", tekst, fout.code)
 
 
@@ -482,7 +526,7 @@ def gegevens(
     nu_iso, nu_klok = iso_z(stand.nu), klok(stand.nu)
     eerste_veld = next((v for v in VELDEN if v in stand.veldfouten), None)
     titel = f"{label.lower()}, {koppel_woord(link)}"
-    if melding is not None and melding.toon == "fout":
+    if melding is not None and melding.toon == "fout" and melding.titel.lower() != koppel_woord(link):
         titel = f"{melding.titel.lower()} · {titel}"
     hub_adres = link.hub_url if link.hub_url and re.match(r"^https?://", link.hub_url) else ""
     data: dict[str, Any] = {
@@ -629,7 +673,8 @@ def pair(
         elif code in VELDFOUT and code not in HUB_CODES:  # eigen invoercontrole: niets naar de Hub gestuurd
             titel, tekst, status = POGING["invoer_ongeldig"]
         else:  # uitkomst van de Hub (vaste last_error-codes, §3.5)
-            titel, tekst = "Koppelen is mislukt", error_message(code) or "Koppelen is niet gelukt."
+            titel = "Koppelen is mislukt"
+            tekst = HUB_POGING.get(code) or error_message(code) or "Koppelen is niet gelukt."
             status = {"hub_onbereikbaar": 502, "rate_limited": 429}.get(code, 400)
             veld = VELDFOUT.get(code)
             if veld is not None:
