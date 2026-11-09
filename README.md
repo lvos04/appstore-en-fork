@@ -28,7 +28,7 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 | Installatie als standaard TrueNAS Custom App (formuliervelden, geen YAML) | [`deploy/truenas/CUSTOM_APP.md`](deploy/truenas/CUSTOM_APP.md) |
 | Eigen manifest | `deploy/manifest/appstore-en-fork.manifest.yaml` |
 | OpenAPI | `docs/openapi/appstore-en-fork.openapi.json` |
-| Besluiten | `docs/adr/ADR-0001` … `ADR-0011` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil; ADR-0010: bestaande apps importeren; ADR-0011: ontwerpreview statuspagina) |
+| Besluiten | `docs/adr/ADR-0001` … `ADR-0012` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil; ADR-0010: bestaande apps importeren; ADR-0011: ontwerpreview statuspagina; ADR-0012: review fase P1) |
 | Platformcontract (kopie, versie 1.2) en conformiteitslijst | [`docs/platform-v2/PLATFORM_CONTRACTEN.md`](docs/platform-v2/PLATFORM_CONTRACTEN.md), [`CONTRACT_1.2_CONFORMITEIT.md`](docs/platform-v2/CONTRACT_1.2_CONFORMITEIT.md) |
 
 ## Installeren

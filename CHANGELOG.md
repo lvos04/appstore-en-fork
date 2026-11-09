@@ -77,4 +77,13 @@
     ook in CI); gedeelde metingen `tests/ui/meting.ts` (contrast in de DOM, randen/iconen ≥ 3:1, focusring, tekst
     buiten kaart, statusvorm, woordenlijst, reflow met een breed lettertype) in beide specs. Schermafdrukken: 18 toestanden × 320/360/390/768/1440 ×
     licht/donker uit de draaiende dienst.
+- **Review fase P1** (ADR-0012):
+  - Import: alleen een volledige lijst uit één Hub-meting telt. Elke pagina moet dezelfde `inventaris` en hetzelfde
+    `totaal` melden en het aantal gelezen apps moet gelijk zijn aan `totaal`; anders `unknown`
+    (`inventaris_gewijzigd_tijdens_lezen`/`inventaris_onvolledig`) en verandert er niets. Eerder maakte een nieuwe
+    meting tussen twee pagina's of een afgekapte lijst apps ten onrechte "verdwenen".
+  - `GET /connector/v1/health`: totaal = slechtste check (onbekend is nooit `healthy`), nieuwe check `schema` (zelfde
+    meting als `/readyz`; een openstaande migratie is `down`).
+  - Import-events alleen bij een andere uitkomst of een registerwijziging (bewijs en audit blijven per ronde); het
+    antwoord noemt `event_type`.
 - Status: Sim-getest; NIET GEVALIDEERD op een echte NAS.
