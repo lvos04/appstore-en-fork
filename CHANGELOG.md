@@ -64,4 +64,16 @@
     service-token geeft de Hub op `GET /api/v1/apps` 403 → `capability_unavailable` (contractpunt); met een
     gebruikerssessie verwerkt dezelfde client-code de echte Hub-vorm (4 apps). Daarbij gevonden en gerepareerd: de
     effectieve digest staat in `image.digest` van de Hub, niet in `images[0].digest`.
+- **Ontwerpreview statuspagina** (contract §13, ADR-0011, `docs/ontwerp/PEIL_REVIEW.md`):
+  - Gevonden met een echte browser tegen de draaiende dienst: door `Referrer-Policy: no-referrer` stuurde Chromium bij
+    het koppelformulier `Origin: null` en faalde **elke** echte koppelpoging met "Het formulier is verlopen" (403).
+    Nu `same-origin`; `Origin: null` blijft geweigerd.
+  - Teksten volgens de Peil-woordenlijst: "Ingebouwde catalogus" en "Git-repository"/"HTTP-adres" in plaats van
+    "bundled"/"git"/"http"; "Catalogusgegevens — Gelezen uit de eigen database: …"; geen "Deels onbekend" bij een
+    besluit van de Hub (ontkoppeld/ingetrokken); uitkomst van de Hub na het formulier noemt de koppelcode en wat je
+    kunt doen; "koppeltoken" in plaats van "enrollment-token"; kortere veldfout bij het Hub-adres.
+  - Nieuwe review-tooling: `tests/ui/review_live.py` + `statuspagina.live.ts` (18 toestanden, echte formulier-POST,
+    ook in CI); gedeelde metingen `tests/ui/meting.ts` (contrast in de DOM, randen/iconen ≥ 3:1, focusring, tekst
+    buiten kaart, statusvorm, woordenlijst) in beide specs. Schermafdrukken: 18 toestanden × 320/360/390/768/1440 ×
+    licht/donker uit de draaiende dienst.
 - Status: Sim-getest; NIET GEVALIDEERD op een echte NAS.

@@ -38,8 +38,10 @@
    regel gezond. De regel "Koppeling met de Hub" staat alleen in de controles als er iets ontbreekt (niet gekoppeld,
    niet bevestigd, ontkoppeld, ingetrokken, onleesbaar): verbonden is geen gezondheid, "Gekoppeld" is de neutrale pil
    in het koppelblok.
-6. **Dienstblok "Catalogus".** "Apps in de catalogus": Gezond (aantal + geweigerde manifestversies), **gate** "Nog leeg"
-   (geen storing), of Onbekend als de database weg is (geen 0). Per bron: Gezond (laatst gesynchroniseerd), Beperkt
+6. **Dienstblok "Catalogus".** "Catalogusgegevens" (tot de ontwerpreview, ADR-0011: "Apps in de catalogus"): Gezond
+   ("Gelezen uit de eigen database: aantal + geweigerde manifestversies"), **gate** "Nog leeg"
+   (geen storing), of Onbekend als de database weg is (geen 0). Per bron ("Ingebouwde catalogus", "Bron <naam>
+   (Git-repository|HTTP-adres)"): Gezond (laatst gesynchroniseerd), Beperkt
    (laatste synchronisatie mislukt), Onbekend (nog nooit), gate "Uit". De foutmelding van een bron
    (`last_sync_error`) staat niet op de pagina. Meer dan 100 bronnen: één samenvattende regel met de slechtste stand.
 7. **Koppelformulier (§3.7).** Veldnamen uit het sjabloon: `hub_adres`, `koppelcode`, `hub_vingerafdruk`, `csrf`
@@ -61,7 +63,8 @@
    met het herstel en de controle "Koppeling met de Hub: Storing — Onleesbaar".
 10. **Tijden** in UTC met "UTC" erbij ("9 nov 2026, 11:56 UTC"): de dienst weet niet in welke tijdzone de gebruiker zit.
 11. **Headers:** `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self';
-    base-uri 'none'; frame-ancestors 'none'`, `Cache-Control: no-store`, `nosniff`, `Referrer-Policy: no-referrer`; geen
+    base-uri 'none'; frame-ancestors 'none'`, `Cache-Control: no-store`, `nosniff`, `Referrer-Policy: same-origin` (was
+    `no-referrer`; daarmee stuurde een browser `Origin: null` en faalde elke echte koppelpoging — ADR-0011 §3); geen
     JavaScript, geen externe bron (getest in Chromium: geen CSP-melding, geen verzoek buiten de pagina).
 
 ## Tests
