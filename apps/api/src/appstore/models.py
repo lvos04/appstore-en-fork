@@ -188,6 +188,60 @@ class JwtReplay(Base):
     first_seen_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
 
 
+# ------------------------------------------------------------------ bestaande apps (B08-002, APP-01…APP-20)
+class ExistingApp(Base):
+    """Eén op de NAS geïnstalleerde app zoals de Hub hem meet (``GET /api/v1/apps``). Alleen een register: de appstore
+    wijzigt nooit iets aan de app, zijn data of zijn rechten. Wordt nooit verwijderd; verdwenen = ``present = false``.
+
+    ``status``: ``onbekend`` (niet of niet eenduidig herkend; blijft ongemoeid), ``kandidaat`` (herkend, wacht op
+    bevestiging van de eigenaar) of ``adopted`` (eigenaar bevestigd door een beheerder; in de Hub-UI "Geïmporteerd").
+    """
+
+    __tablename__ = "existing_app"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    runtime_name: Mapped[str] = mapped_column(String(128), unique=True)  # TrueNAS-appnaam (runtime_id bij de Hub)
+    hub_app_uuid: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), index=True)  # onbekend|kandidaat|adopted
+    known_app_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    match_basis: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    candidates: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    match_reason_nl: Mapped[str] = mapped_column(Text)
+    hub_recognition: Mapped[str | None] = mapped_column(String(64), nullable=True)  # alleen een hint, nooit de basis
+    install_method: Mapped[str] = mapped_column(String(16))  # custom_app|catalog_app|custom_compose|onbekend
+    measured: Mapped[dict[str, Any]] = mapped_column(JSONB)  # image, images, catalogus, poorten, opslag, datasets, …
+    measured_sha256: Mapped[str] = mapped_column(String(64))
+    image_history: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    present: Mapped[bool] = mapped_column(Boolean, default=True)
+    first_seen: Mapped[datetime] = mapped_column(TS)
+    last_seen: Mapped[datetime] = mapped_column(TS)
+    gone_since: Mapped[datetime | None] = mapped_column(TS, nullable=True)
+    owner: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    adopted_at: Mapped[datetime | None] = mapped_column(TS, nullable=True)
+    adopted_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    adoption_warning_nl: Mapped[str | None] = mapped_column(Text, nullable=True)
+    history: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)  # adopteren/loslaten (audit in de rij)
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    row_version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class DecisionRecord(Base):
+    """Beslisregister per bekende app (APP_REGISTER): voorgenomen besluit, afvinkbare controlelijst met bewijs en het
+    vastgelegde besluit. Uitvoeren gebeurt nooit hier (R2/R3 via lifecycle/executor)."""
+
+    __tablename__ = "decision_record"
+    app_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    excel_id: Mapped[str] = mapped_column(String(16))
+    register_sha256: Mapped[str] = mapped_column(String(64))
+    intended: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    decision: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    history: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    row_version: Mapped[int] = mapped_column(Integer, default=1)
+
+
 # ------------------------------------------------------------------ koppeling met de Hub: OUD (≤ contract 1.1)
 class HubLink(Base):
     """Alleen nog gelezen door de eenmalige overzetting naar ``/appdata/secrets/hub-link.json`` (contract 1.2 §3.5,

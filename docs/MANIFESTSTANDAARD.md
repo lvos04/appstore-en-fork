@@ -53,6 +53,16 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
   vastgezette versie (of bij een Custom App elke geteste `ix-app`-versie), dan de blokkade `version_unavailable` met
   een voorstel; er wordt nooit stil een nieuwere versie gekozen. Niet gemeten: `version_availability_unknown`.
 
+## Adoptiemanifest van een bestaande app (B08-002, ADR-0010)
+
+Voor een **bestaande** app die de eigenaar heeft bevestigd, geeft `GET /catalog/v1/existing-apps/{id}/manifest` een
+apart document met `kind: adoption` en `installable: false` (schema
+[`schemas/adoption-manifest-v1.schema.json`](../schemas/adoption-manifest-v1.schema.json)). `install.method` volgt wat
+de app **nu** is (`custom_app` met `image`, of `catalog_app` met `catalog`); poorten, opslag, digest en versie komen
+uitsluitend uit de gemeten Hub-inventaris (een niet-gemeten digest blijft `null`). Het is alleen voor inventaris en
+beslisregister: deze validator weigert het met `adoption_manifest_not_installable`, dus ook de preview — er wordt nooit
+iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compose) krijgt geen adoptiemanifest.
+
 ## Weigerregels in detail (aangescherpt na de review van fase P0, ADR-0007)
 
 - **Paden** worden eerst strikt genormaliseerd: geen `.`/`..`, geen lege segmenten (`//etc`, `/mnt//pool`), geen
@@ -101,6 +111,7 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 | `deprecated_field` | Vervallen veld uit een eerdere contractversie (waarschuwing; fout in --strict). |
 | `compose_forbidden` | Compose/YAML-installatie is verboden. |
 | `install_method_forbidden` | Installatiemethode is niet toegestaan. |
+| `adoption_manifest_not_installable` | Adoptiemanifest van een bestaande app: alleen inventaris, nooit installeren. |
 | `tag_missing` | Image-tag ontbreekt. |
 | `mutable_tag_forbidden` | Veranderlijke tag (zoals latest) is verboden. |
 | `tag_in_repository` | Tag of digest hoort niet in het repository-veld. |

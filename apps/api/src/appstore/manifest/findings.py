@@ -58,6 +58,7 @@ CODES: dict[str, str] = {
     # installatiemethode
     "compose_forbidden": "Compose/YAML-installatie is verboden.",
     "install_method_forbidden": "Installatiemethode is niet toegestaan.",
+    "adoption_manifest_not_installable": "Adoptiemanifest van een bestaande app: alleen inventaris, nooit installeren.",
     # image
     "tag_missing": "Image-tag ontbreekt.",
     "mutable_tag_forbidden": "Veranderlijke tag (zoals latest) is verboden.",

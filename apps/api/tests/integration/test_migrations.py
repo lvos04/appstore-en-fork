@@ -38,3 +38,21 @@ def test_replay_table_migration_down_and_up(database_url: str) -> None:
         assert "jwt_replay" in inspect(engine).get_table_names()
     finally:
         engine.dispose()
+
+
+def test_existing_apps_migration_down_and_up(database_url: str) -> None:
+    """0003 (B08-002) voegt alleen twee tabellen toe; terug naar 0002 verwijdert alleen die twee."""
+    migrations.downgrade(database_url, "0002")
+    engine = create_engine(database_url)
+    try:
+        names = set(inspect(engine).get_table_names())
+        assert "existing_app" not in names and "decision_record" not in names
+        assert {"catalog_entry", "manifest_version", "jwt_replay", "evidence_record"} <= names
+    finally:
+        engine.dispose()
+    migrations.upgrade(database_url)
+    engine = create_engine(database_url)
+    try:
+        assert {"existing_app", "decision_record"} <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()

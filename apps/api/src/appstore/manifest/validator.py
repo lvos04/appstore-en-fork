@@ -218,6 +218,20 @@ def validate_data(data: Any) -> tuple[ValidationReport, Manifest | None]:
         return build_report(
             data, [error("wrong_type", "", "Het manifest bevat waarden die geen JSON zijn.")], None
         ), None
+    if data.get("kind") == "adoption":
+        # B08-002: een adoptiemanifest beschrijft een bestaande app zoals hij nu draait; het is nooit installeerbaar
+        return build_report(
+            data,
+            [
+                error(
+                    "adoption_manifest_not_installable",
+                    "kind",
+                    "Dit is een adoptiemanifest van een bestaande app (alleen inventaris en beslisregister). Het "
+                    "platform installeert of herinstalleert een app hiermee nooit.",
+                )
+            ],
+            manifest_sha,
+        ), None
     findings = _compose_findings(data)
     findings.extend(_schema_findings(data))
     if any(f.severity is Severity.ERROR for f in findings):
