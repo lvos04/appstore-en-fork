@@ -458,6 +458,50 @@ def test_token_rotation_on_hub_request(ctx: AppContext, hub: FakeHub) -> None:
     assert ("POST", "/api/v1/services/self/rotate") in hub.requests
 
 
+def test_idle_service_rotates_within_five_minutes(ctx: AppContext, hub: FakeHub) -> None:
+    """§3.8: na 'rotatie aanvragen' zet de Hub de header alleen op geauthenticeerde dienst-aanroepen, en de dienst
+    roteert binnen 5 min. Een dienst zonder events doet uit zichzelf geen aanroep; daarom bevestigt de worker
+    periodiek (≤ 4 min) met ``GET /api/v1/services/self``. (Gevonden met de echte Hub-code: rotatie bleef liggen.)"""
+    from appstore.hublink import HEARTBEAT_INTERVAL
+
+    assert HEARTBEAT_INTERVAL < 5 * 60
+    run_once(ctx)
+    old = ctx.store.read().service_token
+    first_confirmed = ctx.store.read().confirmed_at
+    hub.rotation_required = True
+    run_once(ctx)  # binnen het interval: geen extra aanroep
+    assert ctx.store.read().service_token == old
+    n_self = hub.requests.count(("GET", "/api/v1/services/self"))
+    ctx.hub._next_heartbeat = 0.0  # het interval is verstreken
+    run_once(ctx)
+    run_once(ctx)
+    st = ctx.store.read()
+    assert hub.requests.count(("GET", "/api/v1/services/self")) > n_self
+    assert st.service_token != old and st.service_token == hub.last_service_token and st.confirmed_at
+    assert st.token_rotation_requested_at is None
+    assert first_confirmed is not None
+
+
+def test_heartbeat_detects_revocation_and_ignores_outages(ctx: AppContext, hub: FakeHub) -> None:
+    """Periodieke bevestiging: 5xx/netwerk is nooit een intrekking; 401 op services/self wel (§3.8)."""
+    run_once(ctx)
+    hub.self_status = 503
+    ctx.hub._next_heartbeat = 0.0
+    run_once(ctx)
+    assert ctx.store.read().state == "gekoppeld"
+    hub.self_status = None
+    hub.down = True
+    ctx.hub._next_heartbeat = 0.0
+    run_once(ctx)
+    assert ctx.store.read().state == "gekoppeld"
+    hub.down = False
+    hub.revoke_all()
+    ctx.hub._next_heartbeat = 0.0
+    run_once(ctx)
+    st = ctx.store.read()
+    assert st.state == "ingetrokken" and st.last_error is not None and st.last_error.code == "ingetrokken_door_hub"
+
+
 def test_interrupted_rotation_rotates_again(ctx: AppContext, hub: FakeHub, monkeypatch: pytest.MonkeyPatch) -> None:
     """Crash na de rotatie bij de Hub maar vóór opslaan: oud token in gebruik, nieuwste ongebruikt → header → opnieuw."""
     run_once(ctx)

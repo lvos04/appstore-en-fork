@@ -63,6 +63,10 @@ KOPPELCODE_STALE = timedelta(minutes=2)  # een koppelcodepoging duurt hooguit é
 BACKOFF_START = 5.0
 BACKOFF_MAX = 15 * 60.0
 KEY_POLL_INTERVAL = 15 * 60.0  # §4.5: ≤ elke 15 min
+#: §3.8: na "rotatie aanvragen" zet de Hub ``Hub-Token-Rotation: required`` alleen op geauthenticeerde aanroepen van de
+#: dienst, en de dienst roteert binnen 5 min. Een dienst zonder events belt uit zichzelf niet; daarom bevestigt de
+#: worker periodiek met ``GET /api/v1/services/self`` (ziet zo ook een intrekking tijdig).
+HEARTBEAT_INTERVAL = 4 * 60.0
 KEY_POLL_MIN_GAP = 30.0  # §4.5: extra poll bij onbekende kid hooguit 1× per 30 s
 RESPONSE_FIELDS: dict[str, type | tuple[type, ...]] = {
     "schema_version": str,
@@ -218,6 +222,7 @@ class HubLinkClient:
         self.sessions = sessions
         self._next_env_attempt = 0.0
         self._next_confirm = 0.0
+        self._next_heartbeat = 0.0
         self._next_rotate = 0.0
         self._next_key_poll = 0.0
         self._last_key_poll = 0.0
@@ -536,8 +541,8 @@ class HubLinkClient:
             return None
 
         def change(cur: LinkState) -> LinkState | None:
-            if cur.service_token != token:
-                return None  # intussen vervangen
+            if cur.service_token != token or cur.confirmed_at is not None:
+                return None  # intussen vervangen, of al bevestigd (periodieke bevestiging schrijft niets)
             cur.confirmed_at = now_iso()
             return cur
 
@@ -748,22 +753,25 @@ class HubLinkClient:
 
     # ------------------------------------------------------------------ worker-ronde
     def maintenance_tick(self, trace_id: str) -> None:
-        """Bevestigen (ook na herstart), rotatie op verzoek van de Hub, sleutelrotaties pollen."""
+        """Bevestigen (ook na herstart en periodiek, §3.6/§3.8), rotatie op verzoek van de Hub, sleutelrotaties
+        pollen (§4.5)."""
         mono = time.monotonic()
         st = self.store.read()
         if not st.linked:
             return
-        if st.token_rotation_requested_at and mono >= self._next_rotate:
+        if st.confirmed_at is None:
+            if mono >= self._next_confirm and self.confirm(trace_id=trace_id) is None:
+                self._next_confirm = mono + 60.0
+        elif mono >= self._next_heartbeat:
+            self._next_heartbeat = mono + HEARTBEAT_INTERVAL
+            self.confirm(trace_id=trace_id)  # 401 → ingetrokken; noteert Hub-Token-Rotation
+        st = self.store.read()
+        if st.linked and st.token_rotation_requested_at and mono >= self._next_rotate:
             if self.rotate_token(trace_id=trace_id) is None:
                 self._next_rotate = mono + 60.0
             st = self.store.read()
-        if (
-            st.linked
-            and st.confirmed_at is None
-            and mono >= self._next_confirm
-            and self.confirm(trace_id=trace_id) is None
-        ):
-            self._next_confirm = mono + 60.0
+        if not st.linked:
+            return
         if mono >= self._next_key_poll:
             self._next_key_poll = mono + KEY_POLL_INTERVAL
             self.poll_key_rotations(trace_id=trace_id)
