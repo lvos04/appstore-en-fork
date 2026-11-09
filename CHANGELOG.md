@@ -71,9 +71,10 @@
   - Teksten volgens de Peil-woordenlijst: "Ingebouwde catalogus" en "Git-repository"/"HTTP-adres" in plaats van
     "bundled"/"git"/"http"; "Catalogusgegevens — Gelezen uit de eigen database: …"; geen "Deels onbekend" bij een
     besluit van de Hub (ontkoppeld/ingetrokken); uitkomst van de Hub na het formulier noemt de koppelcode en wat je
-    kunt doen; "koppeltoken" in plaats van "enrollment-token"; kortere veldfout bij het Hub-adres.
+    kunt doen; "koppeltoken" in plaats van "enrollment-token"; kortere veldfout bij het Hub-adres; geen lange
+    variabelenamen of paden meer in meldingen (staken op 320 px met een breed lettertype buiten de melding).
   - Nieuwe review-tooling: `tests/ui/review_live.py` + `statuspagina.live.ts` (18 toestanden, echte formulier-POST,
     ook in CI); gedeelde metingen `tests/ui/meting.ts` (contrast in de DOM, randen/iconen ≥ 3:1, focusring, tekst
-    buiten kaart, statusvorm, woordenlijst) in beide specs. Schermafdrukken: 18 toestanden × 320/360/390/768/1440 ×
+    buiten kaart, statusvorm, woordenlijst, reflow met een breed lettertype) in beide specs. Schermafdrukken: 18 toestanden × 320/360/390/768/1440 ×
     licht/donker uit de draaiende dienst.
 - Status: Sim-getest; NIET GEVALIDEERD op een echte NAS.

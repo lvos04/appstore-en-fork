@@ -21,7 +21,9 @@
    (≥ 3:1); focusring per Tab-stop (≥ 3 px, ≥ 3:1, halo, in beeld, niet bedekt); geen overloop van de pagina én geen
    tekst buiten zijn kaart; doelen ≥ 44 × 44 px (alleen inline links in lopende tekst uitgezonderd); tekst ≥ 14 px;
    statusvorm (icoon dat bij de toon hoort + woord; groen alleen bij "Gezond"/"Alles gezond"; onbekend nooit groen);
-   één h1, geen kopsprongen, dubbele id's of kapotte verwijzingen; woorden buiten de Peil-woordenlijst.
+   één h1, geen kopsprongen, dubbele id's of kapotte verwijzingen; woorden buiten de Peil-woordenlijst. Daarnaast op
+   320 px een tweede reflow-meting met een **breed lettertype** (DejaVu Sans): het systeemlettertype verschilt per
+   apparaat en de CI-runner vond een overloop die lokaal (Noto Sans) niet optrad.
 3. **`Referrer-Policy: same-origin` in plaats van `no-referrer`.** Bij `no-referrer` serialiseert een browser de
    `Origin` van een formulier-POST als `null` (Fetch, "serializing a request origin"); de Origin-controle van
    `POST /koppelen` weigerde daardoor **elke** echte koppelpoging met `sessie_verlopen` (403). De bestaande tests
@@ -35,7 +37,9 @@
    Hub (ontkoppeld, ingetrokken) heet niet "Deels onbekend" maar "De dienst weigert elke opdracht: …"; de uitkomst van
    de Hub na het formulier spreekt van de koppelcode (niet van "het token") en zegt wat je kunt doen; een opgeslagen
    fout krijgt een vervolgstap; de onleesbare koppelstatus noemt "koppeltoken" in plaats van "enrollment-token"; de
-   veldfout bij het Hub-adres is korter en zonder "loopback/link-local".
+   veldfout bij het Hub-adres is korter en zonder "loopback/link-local". **Geen paden of variabelenamen in
+   meldingstekst** (die is platte tekst zonder afbreekpunt): `(HUB_ENROLLMENT_TOKEN)` stak op 320 px buiten de
+   melding (CI-runner; lokaal nagebootst met DejaVu Sans); de exacte namen staan in de controle en in CUSTOM_APP.md.
 5. **Het sjabloon blijft byte-gelijk (O-14).** Bevindingen die alleen in het sjabloon op te lossen zijn, worden niet
    lokaal omzeild maar gemeld aan de eigenaar (ai-server-manager): leeg blok "Koppeling met de Hub" bij een onleesbare
    koppelstatus, icoon `circle-help` in plaats van `link-2-off` voor "Niet gekoppeld" in de controles, geen

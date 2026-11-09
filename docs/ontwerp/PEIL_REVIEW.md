@@ -28,6 +28,9 @@ De review vond **één blokkerende fout die alleen met een echte browser zichtba
 `Origin`-header zelf mee en zagen dit niet. Gerepareerd (`same-origin`), met een regressietest en een CI-stap die het
 formulier voortaan in Chromium verstuurt.
 
+Daarnaast vond de nieuwe meting in CI dat een lange variabelenaam in een melding op 320 px buiten de melding steekt
+met een breder systeemlettertype (#17); gerepareerd, en beide specs meten nu ook met een breed lettertype.
+
 Verder: zeven tekst- en semantiekpunten (Engelse vaktermen, "token" waar een koppelcode bedoeld is, groen dat als "beschikbaar" las,
 "Deels onbekend" bij een besluit van de Hub, ontbrekende vervolgstap, te lange veldfout) zijn gerepareerd. Vier punten
 zitten in het gedeelde sjabloon en zijn **niet lokaal omzeild** (de kopie blijft byte-gelijk, O-14); ze staan in §7 voor
@@ -70,7 +73,7 @@ repo of buiten "alleen uiterlijk") · **Akkoord** (bewust zo).
 | 3 | 🟡 | "Apps in de catalogus — Gezond — 1 app": groen las als "beschikbaar", niet als "gemeten en goed". | Peil §4.1 regel 1 | **Gerepareerd:** "Catalogusgegevens — Gezond — Gelezen uit de eigen database: 2 apps in de catalogus; 1 manifestversie geweigerd door de validator." (wat gemeten is staat erbij; database weg = Onbekend, geen 0; leeg = gate "Nog leeg"). |
 | 4 | 🟡 | Na het formulier: "De Hub weigerde: de koppelcode of het token is onbekend…" — in het formulier is geen token gebruikt; geen vervolgstap. | Peil §11.2 (fout = wat + waarom + wat je kunt doen) | **Gerepareerd:** eigen teksten voor de uitkomst van de Hub na het formulier (`HUB_POGING`), bv. "De Hub weigerde de koppelcode: verlopen, al gebruikt of onbekend. Maak in de Hub een nieuwe koppelcode en probeer het opnieuw." |
 | 5 | 🟢 | Opgeslagen fout op `GET /` zonder vervolgstap. | Peil §11.2 | **Gerepareerd:** vervolgstap per code (`VERVOLG`), bv. "Maak in de Hub een nieuwe koppelcode of een nieuw koppeltoken." |
-| 6 | 🟢 | Onleesbare koppelstatus: "maak in de Hub een nieuw enrollment-token". | Peil §11.1 (NL-termen) | **Gerepareerd:** "Het koppelbestand in /appdata/secrets is onleesbaar. Daarom vertrouwt deze dienst niets van de Hub en voert hij niets uit. Herstel: maak in de Hub een nieuw koppeltoken en vul het in bij HUB_ENROLLMENT_TOKEN in het formulier van de Custom App." Ook "Koppelen loopt" noemt nu "het koppeltoken uit het formulier van de Custom App (HUB_ENROLLMENT_TOKEN)". |
+| 6 | 🟢 | Onleesbare koppelstatus: "maak in de Hub een nieuw enrollment-token". | Peil §11.1 (NL-termen) | **Gerepareerd:** "Het koppelbestand in /appdata/secrets is onleesbaar. Daarom vertrouwt deze dienst niets van de Hub en voert hij niets uit. Herstel: maak in de Hub een nieuw koppeltoken en zet het in het formulier van de Custom App." Ook "Koppelen loopt" noemt nu "het koppeltoken uit het formulier van de Custom App". De variabelenaam `HUB_ENROLLMENT_TOKEN` staat bewust niet in de melding (zie #17); hij staat in CUSTOM_APP.md. |
 | 7 | 🟢 | Ingetrokken/ontkoppeld: "Deels onbekend — koppeling ingetrokken door de Hub." Er is niets onbekend: het is een besluit van de Hub. | Peil §1 (eerlijk), §11 | **Gerepareerd:** "De dienst weigert elke opdracht: koppeling ingetrokken door de Hub." Pil blijft grijs "Niet gereed" (geen gemeten falen, dus geen rood). |
 | 8 | 🟢 | Veldfout Hub-adres: vier regels vet op 320 px, met "loopback- of link-local-adres". | Peil §11 (rustig, feitelijk) | **Gerepareerd:** "Geen geldig Hub-adres. Vul het in als http(s)://<NAS-adres>:<poort>, zonder pad. Een adres van dit apparaat zelf (zoals localhost) werkt niet." |
 | 9 | 🟡 | Onleesbare koppelstatus: blok "Koppeling met de Hub" staat **leeg** (alleen de kop). Het sjabloon kent precies vier koppeltoestanden. | Peil §4.3 (onbekend altijd met reden) | **Gemeld** (sjabloon, §7). Melding bovenaan en de controle "Koppeling met de Hub: Storing — Onleesbaar" geven de reden wél. |
@@ -79,6 +82,7 @@ repo of buiten "alleen uiterlijk") · **Akkoord** (bewust zo).
 | 12 | 🟢 | Een feit (aantal) kan in het dienstblok alleen met een gezondheidspil; er is geen neutrale pil met icoon voor de rijen. | Peil §4.1 regel 1 | **Gemeld** (sjabloon). Hier opgelost met tekst (#3). |
 | 13 | 🟢 | Terwijl een poging met het koppeltoken loopt (`koppelen-loopt`) staat het formulier er nog; versturen geeft 409 "Er loopt al een koppelpoging". | contract §3.7 | **Gemeld** (functioneel; buiten "alleen uiterlijk"). De info-melding zegt "Laad de pagina over een minuut opnieuw". |
 | 14 | 🟢 | De UI-tests maten geen contrast, randen, focusring-contrast, statusvorm of woordenlijst, en geen tekst die binnen de pagina buiten zijn kaart steekt. | ONTWERPTAAL §12 | **Gerepareerd:** `tests/ui/meting.ts` (gedeeld door de CI-spec en de live review). |
+| 17 | 🟡 | Een lange naam zonder afbreekpunt in meldingstekst (`(HUB_ENROLLMENT_TOKEN)`, 22 tekens) stak op 320 px buiten de melding zodra het systeemlettertype breder is. Gevonden door de nieuwe meting "tekst buiten zijn kaart" in CI-run 42672438260 (ubuntu-24.04; lokaal met Noto Sans paste het nog). Lokaal nagebootst met DejaVu Sans: dezelfde fout. | Peil §5 (codes breken, nooit buiten beeld), WCAG 1.4.10 | **Gerepareerd:** geen variabelenamen of paden in meldingstekst; extra controle met een breed lettertype (DejaVu Sans) op 320 px in beide specs, zodat dit niet meer van het lettertype van de testmachine afhangt. Sjabloonpunt: zie §7.3. |
 | 15 | — | Rijen in het blok Catalogus hebben geen tijdkolom, rijen in Status wel; de pillen staan daardoor niet in één lijn. | prototype `statuspagina-gekoppeld.html` | **Akkoord:** gelijk aan het prototype (dienstblok zonder tijd). |
 | 16 | — | Tijden met "UTC" (prototype: "11:56"). | ADR-0009 §10 | **Akkoord:** de dienst kent de tijdzone van de lezer niet; eerlijk boven kort. |
 
@@ -121,6 +125,7 @@ de tekstparen halen ook de Peil-eis van 7:1.
 | Tekst buiten zijn kaart / doelen < 44 px | 0 / 0 | 0 / 0 |
 | Statuspillen gecontroleerd / fouten in de statusvorm | 882 / 0 | 882 / 0 |
 | Woorden buiten de Peil-woordenlijst | 0 | 0 |
+| Reflow met een breed lettertype (DejaVu Sans, 320 px): overloop / tekst buiten kaart | — | 0 / 0 (18 toestanden) |
 
 | Toestand | HTTP | Titel (tabblad) |
 |---|---|---|
@@ -142,6 +147,9 @@ de tekstparen halen ook de Peil-eis van 7:1.
 | `koppelstatus-onleesbaar` | 200 | Appstore en fork — storing, koppelstatus onleesbaar |
 | `koppelen-loopt` | 200 | Appstore en fork — niet gereed, niet gekoppeld |
 | `ontkoppeld` | 200 | Appstore en fork — niet gereed, ontkoppeld |
+
+De afdrukken van `koppelen-loopt` en `koppelstatus-onleesbaar` zijn na reparatie #17 opnieuw gemaakt; de andere
+toestanden veranderden daarbij niet (alleen tijden en trace-ID's zouden verschillen).
 
 **Controle van de controles (mutatietest):** in een kopie van `niet-gekoppeld` zijn zes fouten aangebracht (gedempte
 hulptekst, focusring in de vlakkleur, lichte veldrand, groene pil voor "Niet gekoppeld", het woord "bundled", een
@@ -184,8 +192,8 @@ De blokkerende fout #1 was daar niet te zien, omdat die antwoorden zonder echte 
 | Hub onbereikbaar (formulier) | De Hub was niet bereikbaar (netwerkfout, time-out of storing bij de Hub). | Op dit adres gaf geen Hub antwoord. Controleer het adres en of de Hub draait, en probeer het opnieuw. |
 | Opgeslagen fout | … Tijdstip: 9 nov 2026, 17:53 UTC. | … Tijdstip: 9 nov 2026, 17:53 UTC. Maak in de Hub een nieuwe koppelcode of een nieuw koppeltoken. |
 | Veldfout Hub-adres | Vul het adres in als http(s)://<NAS-adres>:<poort>, zonder pad. Geen localhost, geen loopback- of link-local-adres. | Geen geldig Hub-adres. Vul het in als http(s)://<NAS-adres>:<poort>, zonder pad. Een adres van dit apparaat zelf (zoals localhost) werkt niet. |
-| Onleesbare koppelstatus | Het bestand /appdata/secrets/hub-link.json is onleesbaar; de dienst vertrouwt niets van de Hub. Herstel: maak in de Hub een nieuw enrollment-token en zet het in het formulier van de Custom App (HUB_ENROLLMENT_TOKEN). | Het koppelbestand in /appdata/secrets is onleesbaar. Daarom vertrouwt deze dienst niets van de Hub en voert hij niets uit. Herstel: maak in de Hub een nieuw koppeltoken en vul het in bij HUB_ENROLLMENT_TOKEN in het formulier van de Custom App. |
-| Koppelen loopt | Er loopt een koppelpoging via het token uit het formulier van de Custom App. | Er loopt een koppelpoging via het koppeltoken uit het formulier van de Custom App (HUB_ENROLLMENT_TOKEN). |
+| Onleesbare koppelstatus | Het bestand /appdata/secrets/hub-link.json is onleesbaar; de dienst vertrouwt niets van de Hub. Herstel: maak in de Hub een nieuw enrollment-token en zet het in het formulier van de Custom App (HUB_ENROLLMENT_TOKEN). | Het koppelbestand in /appdata/secrets is onleesbaar. Daarom vertrouwt deze dienst niets van de Hub en voert hij niets uit. Herstel: maak in de Hub een nieuw koppeltoken en zet het in het formulier van de Custom App. |
+| Koppelen loopt | Er loopt een koppelpoging via het token uit het formulier van de Custom App. | Er loopt een koppelpoging via het koppeltoken uit het formulier van de Custom App. |
 | Volgorde bronnen | op naam (de ingebouwde catalogus tussen de andere bronnen) | ingebouwde catalogus eerst, daarna op naam |
 
 De opgeslagen meldingen van `hublink_store.ERROR_MESSAGES` (witte lijst §3.5, ook in de API) zijn niet gewijzigd.
@@ -200,8 +208,9 @@ Niet lokaal omzeild: de kopie in `design/ontwerptaal/` blijft byte-gelijk aan `1
 2. **Icoon per rij** in `ELK:checks`/`ELK:dienst_blok` (bv. `{{icoon}}` naast `{{toon}}`), zodat "Niet gekoppeld",
    "Ingetrokken" en "Ontkoppeld" `link-2-off` krijgen zoals COMPONENTEN §4 vraagt (#10), en een **neutrale pil** voor
    feiten in het dienstblok (#12).
-3. **Mono-plek in meldingen** (bv. `{{melding_pad}}` als `<code>` met `<wbr>` na elke `/`), voor paden en
-   bestandsnamen (#11).
+3. **Mono-plek in meldingen** (bv. `{{melding_pad}}` als `<code>` met `<wbr>` na elke `/`), voor paden,
+   bestandsnamen en variabelenamen (#11, #17). Platte tekst in `.melding` heeft geen `overflow-wrap`; een lange naam
+   zonder afbreekpunt steekt op 320 px met een breed lettertype buiten de melding.
 4. **Origin en Referrer-Policy** in de beschrijving van het sjabloon vastleggen: wie de statuspagina met
    `Referrer-Policy: no-referrer` serveert en `Origin` streng controleert, weigert elke echte formulier-POST (#1). In
    ai-server-manager eist de executor (`apps/executor/src/executor/app.py`) `Origin` = eigen adres en zet hij
