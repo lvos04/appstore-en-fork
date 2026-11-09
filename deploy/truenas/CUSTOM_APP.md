@@ -82,6 +82,14 @@ Hub-UI); het service-token staat nooit op de pagina. **Ontkoppelen of opnieuw ko
 `HUB_ENROLLMENT_TOKEN` in het formulier: wie het formulier kan wijzigen is TrueNAS-beheerder). Er is geen
 "ontkoppelen" op de statuspagina.
 
+## Bestaande apps importeren (B08-002)
+
+Na het koppelen leest de app elke 15 minuten de app-inventaris van de Hub (alleen lezen; nooit een actie op de NAS) en
+houdt een register en beslisregister bij voor de bestaande apps (APP-01…APP-20). Er is daarvoor **geen** extra
+formulierveld. De schermen staan in de Hub-UI; zie [`docs/BESTAANDE_APPS.md`](../../docs/BESTAANDE_APPS.md).
+Geeft de Hub zijn inventaris (nog) niet aan diensten, dan meldt de app-log
+`periodieke import: capability_unavailable (hub_inventaris_niet_voor_diensten)` en blijft het register ongewijzigd.
+
 ## Updaten en terugdraaien
 
 - **Updaten:** app → **Edit** → Tag naar de nieuwe versie → **Update**. Bij openstaande databasemigraties maakt de app
@@ -106,4 +114,6 @@ Hub-UI); het service-token staat nooit op de pagina. **Ontkoppelen of opnieuw ko
 | Statuspagina: "Het token is na 60 minuten niet gelukt" of "onbekend, verlopen of al gebruikt" | Maak in de Hub een nieuw enrollment-token en zet het in `HUB_ENROLLMENT_TOKEN`; een gebruikt of geweigerd token wordt nooit opnieuw geprobeerd. |
 | Statuspagina: **Ingetrokken** ("De Hub heeft de koppeling ingetrokken") | De app vertrouwt de Hub niet meer (fail-closed) en houdt zijn eigen data; opnieuw koppelen gaat via de Hub. |
 | Statuspagina: melding met **Code** en **Trace-ID** | Selecteer de trace-ID en zoek hem op in de app-log (TrueNAS → Apps → deze app → Logs): daar staat dezelfde code bij het mislukte verzoek. De ingevulde waarden worden nooit bewaard of teruggetoond; vul ze opnieuw in. |
+| `periodieke import: capability_unavailable (hub_inventaris_niet_voor_diensten)` in de app-log | De Hub-versie geeft `GET /api/v1/apps` nog niet aan diensten. Geen fout van deze app; het register blijft ongewijzigd tot de Hub dat toestaat. |
+| `periodieke import: unknown (inventaris_verouderd)` | De Hub heeft geen verse meting van de NAS; vernieuw de inventaris in de Hub. Er wordt niets als "verdwenen" gemarkeerd. |
 | `HUB_URL wordt niet gebruikt` in de app-log | Het adres heeft een pad, is een loopback-/link-local-adres of bevat inloggegevens; gebruik `http(s)://adres[:poort]`. |

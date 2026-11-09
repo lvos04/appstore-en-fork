@@ -1,8 +1,8 @@
 # appstore-en-fork
 
-Appstore-catalogus van het **TrueNAS Home Platform V2**: B08-001 manifeststandaard en de alleen-lezen kern van B08-002
-(bestaande apps herkennen; niet-ondersteunde apps blijven unmanaged), later het vastleggen van de eigenaar (B08-002) en
-B08-005 forkbeheer. Zelfstandige API-dienst met alleen een kleine Nederlandse statuspagina; alle
+Appstore-catalogus van het **TrueNAS Home Platform V2**: B08-001 manifeststandaard, B08-002 bestaande apps importeren
+(inventaris via de Hub, herkennen zonder gokken, eigenaar bevestigen, beslisregister APP-01…APP-20 met
+decommission-plannen als voorbereiding) en later B08-005 forkbeheer. Zelfstandige API-dienst met alleen een kleine Nederlandse statuspagina; alle
 schermen staan in de Hub-UI van `ai-server-manager`.
 
 > **Status (eerlijk):** code, unit-, integratie- en E2E-tests met simulators zijn groen in de bouwomgeving
@@ -20,6 +20,7 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 | Vertaling naar TrueNAS `app.create` (standaard Custom App = `ix-app`, of catalogusapp) + conflictanalyse | `manifest/translate.py`, `manifest/conflicts.py`, [`docs/TRUENAS_APP_VALUES.md`](docs/TRUENAS_APP_VALUES.md) |
 | Catalogus-API `/catalog/v1` (bronnen bundled/git/http, entries, versiegeschiedenis, valideren, voorbeeld) | `apps/api/src/appstore/api/catalog.py` |
 | B08-002 bestaande apps herkennen: `POST /catalog/v1/import/preview` (alleen lezen, plant geen acties) | `catalog/importer.py` |
+| B08-002 import via de Hub-inventaris (`/catalog/v1/existing-apps…`: idempotent register, `onbekend`/`kandidaat`/`adopted`, eigenaar bevestigen, adoptiemanifest `kind: adoption`) en beslisregister APP-01…APP-20 (`/catalog/v1/decisions…`: controlelijst met bewijs, besluit, decommission-plan volgens I26; voert niets uit) | `catalog/hubinventory.py`, `catalog/adoption.py`, `catalog/decisions.py`, `bestaande_apps/register.yaml`, [`docs/BESTAANDE_APPS.md`](docs/BESTAANDE_APPS.md) |
 | Connectorcontract `/connector/v1` (read, `hub-link` + `hub-link/unlink`; propose/apply/rollback → `capability_unavailable`) | `api/connector.py` |
 | Koppelen met de Hub volgens platformcontract 1.2 (enrollment-token of koppelcode + vingerafdruk, `/appdata/secrets/hub-link.json`, gepinde Hub-sleutels, rotatie), inkomend alleen Hub-JWT's (gebruiker of dienst-JWT) met `jti`-replaycache | `hubkeys.py`, `hublink.py`, `hublink_store.py`, `auth.py` |
 | Statuspagina `GET /` in de ontwerptaal Peil (geen JS, CSP `default-src 'none'`): koppelformulier alleen vóór de eerste koppeling, fout met code + trace-ID, nooit groen als niet gereed | `api/status_page.py`, `peil.py`, [`design/ontwerptaal/`](design/ontwerptaal/README.md) (versie-gepinde kopie, O-14), [`docs/screenshots/peil/statuspagina/`](docs/screenshots/peil/statuspagina/README.md) |
@@ -27,7 +28,7 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 | Installatie als standaard TrueNAS Custom App (formuliervelden, geen YAML) | [`deploy/truenas/CUSTOM_APP.md`](deploy/truenas/CUSTOM_APP.md) |
 | Eigen manifest | `deploy/manifest/appstore-en-fork.manifest.yaml` |
 | OpenAPI | `docs/openapi/appstore-en-fork.openapi.json` |
-| Besluiten | `docs/adr/ADR-0001` … `ADR-0009` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil) |
+| Besluiten | `docs/adr/ADR-0001` … `ADR-0010` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil; ADR-0010: bestaande apps importeren) |
 | Platformcontract (kopie, versie 1.2) en conformiteitslijst | [`docs/platform-v2/PLATFORM_CONTRACTEN.md`](docs/platform-v2/PLATFORM_CONTRACTEN.md), [`CONTRACT_1.2_CONFORMITEIT.md`](docs/platform-v2/CONTRACT_1.2_CONFORMITEIT.md) |
 
 ## Installeren

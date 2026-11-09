@@ -44,4 +44,24 @@
   invoer nooit teruggetoond); formuliervelden `hub_adres`, `koppelcode`, `hub_vingerafdruk`. Nieuwe tests: renderer =
   referentie-renderer, toestanden door de echte app, Playwright met axe-core (0 overtredingen), geen overloop op 320 px,
   CSP zonder JS; schermafdrukken in `docs/screenshots/peil/statuspagina/`.
+- **B08-002 bestaande apps importeren + APP-01…APP-20** (ADR-0010):
+  - Inventaris via de Hub (`GET /api/v1/apps` + detail, service-token, alleen lezen, begrensd, ≤ 3 pogingen); alleen
+    een volledige, verse meting telt, anders `unknown`/`capability_unavailable` en verandert er niets.
+  - Register `existing_app` (migratie 0003), idempotent: gemeten tag/effectieve digest/readback, installatiewijze,
+    poorten, opslag, datasets; historie van image-wijzigingen; verdwenen apps blijven staan (`present: false`).
+  - Herkenning alleen op catalogusapp of exacte image-repository (bronnen vastgelegd in
+    `bestaande_apps/register.yaml`), nooit op naam of op de herkenning door de Hub; onbekend blijft `onbekend`.
+    `adopted` (*Geïmporteerd*) pas na bevestiging van de eigenaar door een beheerder; `release` maakt dat ongedaan.
+  - Adoptiemanifest `kind: adoption` (`schemas/adoption-manifest-v1.schema.json`), nooit installeerbaar; de validator
+    weigert het met `adoption_manifest_not_installable`.
+  - Beslisregister per app (`decision_record`): voorgenomen besluit uit APP_REGISTER, controlelijst letterlijk uit de
+    A-documenten, afvinken alleen met bewijs door een gebruiker, besluit alleen door een beheerder en pas met een
+    volledige controlelijst; decommission-plan volgens I26 als voorbereiding (executor-`action_id`'s, back-up-gate
+    altijd `unknown`, nooit data verwijderen). Events `catalog.import.*`, `catalog.app.*`, `catalog.check.updated`,
+    `catalog.decision.recorded`, `catalog.decommission.planned`.
+  - Worker: beslisregister bij de start, periodieke import (`APPSTORE_IMPORT_INTERVAL_S`, standaard 900 s, 0 = uit).
+  - Interop lokaal tegen de echte Hub-code (ai-server-manager `efb7f3b`): koppelen + bevestigen werkt; met het
+    service-token geeft de Hub op `GET /api/v1/apps` 403 → `capability_unavailable` (contractpunt); met een
+    gebruikerssessie verwerkt dezelfde client-code de echte Hub-vorm (4 apps). Daarbij gevonden en gerepareerd: de
+    effectieve digest staat in `image.digest` van de Hub, niet in `images[0].digest`.
 - Status: Sim-getest; NIET GEVALIDEERD op een echte NAS.
