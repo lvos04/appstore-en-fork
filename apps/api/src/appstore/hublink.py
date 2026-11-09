@@ -115,6 +115,14 @@ def backoff_delay(attempts: int) -> float:
     return float(min(BACKOFF_MAX, base * jitter))
 
 
+class ResponseTooLargeError(Exception):
+    """Antwoord van de Hub groter dan de bovengrens van de aanroeper; er is niets van gebruikt."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__(f"antwoord groter dan toegestaan ({size} bytes gelezen)")
+        self.size = size
+
+
 class InvalidResponseError(ValueError):
     def __init__(self, code: str, detail: str) -> None:
         super().__init__(detail)
@@ -568,6 +576,31 @@ class HubLinkClient:
         if resp.status_code == 401:
             self.confirm(trace_id=trace_id)  # §3.8: pas bij 401 op services/self is het een intrekking
         return resp
+
+    def get_bounded(self, path: str, *, trace_id: str, max_bytes: int) -> tuple[int, bytes] | None:
+        """``GET`` naar de Hub met het service-token (§4.4), met een bovengrens op de antwoordgrootte (gestreamd gelezen,
+        afgebroken boven ``max_bytes`` → :class:`ResponseTooLargeError`). Geen redirects, geen proxy (de HTTP-factory).
+        ``None`` als niet gekoppeld. Bij 401 eerst ``services/self`` (§3.8) — pas dan eventueel ``ingetrokken``."""
+        st = self.store.read()
+        if not st.linked or st.hub_url is None or st.service_token is None:
+            return None
+        token = st.service_token
+        headers = {**self._bearer(token), "Accept": "application/json", "X-Trace-Id": trace_id}
+        with self.http_factory() as client, client.stream("GET", f"{st.hub_url}{path}", headers=headers) as resp:
+            self._note_rotation(resp)
+            declared = resp.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > max_bytes:
+                raise ResponseTooLargeError(int(declared))
+            size, chunks = 0, []
+            for chunk in resp.iter_bytes():
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ResponseTooLargeError(size)
+                chunks.append(chunk)
+            status = resp.status_code
+        if status == 401:
+            self.confirm(trace_id=trace_id)  # §3.8: pas bij 401 op services/self is het een intrekking
+        return status, b"".join(chunks)
 
     def mark_revoked(self, *, trace_id: str, token: str | None = None) -> None:
         def change(st: LinkState) -> LinkState | None:

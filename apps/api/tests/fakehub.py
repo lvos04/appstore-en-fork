@@ -6,6 +6,13 @@ verlopen of al gebruikt token → 401 ``invalid_enrollment`` (één code, geen o
 gebruikt) → 200 met ``enrollment_replayed: true``; ``GET /api/v1/services/self``, ``POST …/self/rotate``,
 ``Hub-Token-Rotation: required`` en ondertekende sleutelrotaties.
 
+B08-002: ``GET /api/v1/apps`` en ``GET /api/v1/apps/{id}`` met de vorm van de echte Hub-appcatalogus (B01-002,
+``hub.catalog.view.summary``/``detail`` in ai-server-manager). ``apps_mode``:
+
+* ``"dienst"`` — de Hub geeft de inventaris aan een dienst met service-token (zo moet de Hub het gaan toestaan);
+* ``"alleen_gebruikers"`` — zoals de echte Hub nu (``Viewer`` = alleen gebruikerssessies): 403 ``forbidden``;
+* ``"ontbreekt"`` — oudere Hub zonder appcatalogus: 404.
+
 Dit is een **simulator**; resultaten ermee zijn "Sim-getest", nooit een bewijs tegen de echte Hub.
 """
 
@@ -49,6 +56,113 @@ def hub_jwk(key: Ed25519PrivateKey) -> dict[str, str]:
         "use": "sig",
         "alg": "EdDSA",
     }
+
+
+def hub_app(
+    runtime_id: str,
+    *,
+    app_id: str | None = None,
+    installatiewijze: str = "custom_app",
+    repository: str | None = None,
+    tag: str | None = None,
+    digest: str | None = None,
+    readback: dict[str, Any] | None = None,
+    extra_images: list[dict[str, Any]] | None = None,
+    catalogus: dict[str, Any] | None = None,
+    poorten: list[dict[str, Any]] | None = None,
+    opslag: list[dict[str, Any]] | None = None,
+    staat: str = "RUNNING",
+    aanwezig: bool = True,
+    laatst_gezien: str | None = None,
+    app_uuid: str | None = None,
+) -> dict[str, Any]:
+    """Eén app zoals de Hub hem in ``GET /api/v1/apps/{id}`` teruggeeft (detailvorm; de lijst is een deelverzameling).
+    Alle waarden in tests zijn kunstmatig (testdata), nooit gegevens van een echte NAS."""
+    images = []
+    readback = readback or {"status": "unknown", "reden": "images_niet_gemeten", "digests": []}
+    # zoals hub.catalog.discovery.image_info: zonder digest in het tagveld neemt de Hub een eenduidige readback over
+    found = readback.get("digests") or []
+    effective = digest or (found[0] if readback.get("status") == "ok" and len(found) == 1 else None)
+    if repository:
+        images.append(
+            {
+                "repository": repository,
+                "tag": tag,
+                "digest": digest,
+                "digest_bron": "tagveld" if digest else ("app.image.query" if effective else None),
+                "readback": readback,
+            }
+        )
+    images += extra_images or []
+    opslag = opslag or []
+    return {
+        "id": app_uuid or str(uuid.uuid5(uuid.NAMESPACE_URL, f"hub-app:{runtime_id}")),
+        "runtime_id": runtime_id,
+        "naam": runtime_id,
+        "titel": runtime_id,
+        "app_id": app_id,
+        "adaptertype": "onbekend",
+        "soort": "onbekend",
+        "installatiewijze": installatiewijze,
+        "image": {"repository": repository, "tag": tag, "digest": effective},
+        "versie": (catalogus or {}).get("app_versie"),
+        "runtime_staat": staat,
+        "gezondheid": {"status": "unknown", "reden": "sim"},
+        "deep_link": None,
+        "eigenaar": {"repo": None, "soort": "onbekend"},
+        "aanwezig": aanwezig,
+        "eerst_gezien": laatst_gezien,
+        "laatst_gezien": laatst_gezien,
+        "verdwenen_sinds": None if aanwezig else laatst_gezien,
+        "laatst_getest": None,
+        "appstore_status": "unknown",
+        "versie_etag": 1,
+        # detail
+        "catalogus": catalogus
+        or {
+            "app": "ix-app" if installatiewijze == "custom_app" else None,
+            "trein": "stable",
+            "versie": None,
+            "app_versie": None,
+            "nieuwste_versie": None,
+            "upgrade_beschikbaar": None,
+            "image_updates_beschikbaar": None,
+        },
+        "images": images,
+        "image_historie": [],
+        "poorten": poorten or [],
+        "opslag": opslag,
+        "datasets": sorted({str(m["dataset"]) for m in opslag if m.get("dataset")}),
+        "portals": [],
+        "resourcegrenzen": {"status": "unknown", "reden": "config_niet_gelezen"},
+        "bron": {"methode": "app.query", "nas": "sim", "observed_at": laatst_gezien},
+        "alleen_lezen": True,
+    }
+
+
+SUMMARY_FIELDS = [
+    "id",
+    "runtime_id",
+    "naam",
+    "titel",
+    "app_id",
+    "adaptertype",
+    "soort",
+    "installatiewijze",
+    "image",
+    "versie",
+    "runtime_staat",
+    "gezondheid",
+    "deep_link",
+    "eigenaar",
+    "aanwezig",
+    "eerst_gezien",
+    "laatst_gezien",
+    "verdwenen_sinds",
+    "laatst_getest",
+    "appstore_status",
+    "versie_etag",
+]
 
 
 def new_pairing_code() -> str:
@@ -101,6 +215,16 @@ class FakeHub:
     source_etag: str = '"v1"'
     hub_host: str = HUB_HOST
     last_service_token: str | None = None
+    # B08-002: appcatalogus van de Hub
+    apps_mode: str = "dienst"  # dienst | alleen_gebruikers | ontbreekt
+    catalog_apps: list[dict[str, Any]] = field(default_factory=list)
+    inventory_state: dict[str, Any] = field(default_factory=dict)  # leeg = vers, status ok, observed_at = nu
+    apps_status: int | None = None  # forceer een status op de lijst (bv. 500, 302, 401)
+    apps_failures: int = 0  # zoveel keer eerst 503 (herhaalbeleid)
+    detail_status: dict[str, int] = field(default_factory=dict)  # runtime_id → status voor de detailroute
+    apps_page_size: int = 200
+    apps_body_patch: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    apps_auth: list[str] = field(default_factory=list)
 
     # -------------------------------------------------------------- grants
     def add_token(self, app_id: str = APP_ID, *, age: float = 0.0) -> str:
@@ -380,6 +504,8 @@ class FakeHub:
                 },
                 headers={"Cache-Control": "no-store"},
             )
+        if path == "/api/v1/apps" or path.startswith("/api/v1/apps/"):
+            return self._apps(request, path)
         if path == "/api/v1/events/inbox" and request.method == "POST":
             self.inbox_auth.append(request.headers.get("authorization", ""))
             if self._bearer(request) is None:
@@ -388,6 +514,57 @@ class FakeHub:
                 self.inbox.append(json.loads(request.content))
             return httpx.Response(self.inbox_status, json={}, headers=self._headers())
         return self._error(404, "not_found")
+
+    # -------------------------------------------------------------- appcatalogus (B01-002) voor B08-002
+    def _inventory(self) -> dict[str, Any]:
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        base = {"status": "ok", "reason_code": None, "observed_at": now, "verouderd": False}
+        return {**base, **self.inventory_state}
+
+    def _apps(self, request: httpx.Request, path: str) -> httpx.Response:
+        self.apps_auth.append(request.headers.get("authorization", ""))
+        if request.method != "GET":
+            return self._error(405, "method_not_allowed")
+        if self.apps_mode == "ontbreekt":
+            return self._error(404, "not_found")
+        reg = self._bearer(request)
+        if reg is None:
+            return self._error(401, "unauthorized")
+        if self.apps_mode == "alleen_gebruikers":
+            # zoals hub.deps.require_user(Role.viewer): een service-principal krijgt 403
+            return self._error(403, "forbidden")
+        if self.apps_failures > 0:
+            self.apps_failures -= 1
+            return self._error(503, "service_unavailable")
+        if self.apps_status is not None:
+            if 300 <= self.apps_status < 400:
+                return httpx.Response(self.apps_status, headers={"Location": "http://elders.test/"})
+            return self._error(self.apps_status, "storing")
+        if path == "/api/v1/apps":
+            only_present = request.url.params.get("alleen_aanwezig", "true") == "true"
+            items = [a for a in self.catalog_apps if a["aanwezig"] or not only_present]
+            offset = int(request.url.params.get("cursor") or "0")
+            limit = min(int(request.url.params.get("limit", "50")), self.apps_page_size)
+            page = items[offset : offset + limit]
+            body: dict[str, Any] = {
+                "items": [{k: a.get(k) for k in SUMMARY_FIELDS} for a in page],
+                "totaal": len(items),
+                "per_status": {"healthy": 0, "degraded": 0, "down": 0, "unknown": len(items)},
+                "next_cursor": str(offset + limit) if offset + limit < len(items) else None,
+                "inventaris": self._inventory(),
+                "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "alleen_lezen": True,
+            }
+            if self.apps_body_patch is not None:
+                body = self.apps_body_patch(body)
+            return httpx.Response(200, json=body, headers=self._headers())
+        app_uuid = path.removeprefix("/api/v1/apps/")
+        app = next((a for a in self.catalog_apps if a["id"] == app_uuid), None)
+        if app is not None and app["runtime_id"] in self.detail_status:
+            return self._error(self.detail_status[app["runtime_id"]], "storing")
+        if app is None:
+            return self._error(404, "not_found")
+        return httpx.Response(200, json=app, headers={"ETag": '"1"', **self._headers()})
 
     def _source(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path.lstrip("/")
