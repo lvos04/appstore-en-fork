@@ -118,6 +118,85 @@ def test_restart_keeps_secrets_and_data(container: Container) -> None:
     assert container.exec("sha256sum", "/appdata/secrets/identity.ed25519", "/appdata/secrets/vault.key") == before
 
 
+def _db_fingerprint(c: Container) -> str:
+    """Cluster-ID (verandert bij een nieuwe initdb) + alle manifestversies, evidence en een eigen markering."""
+    sql = (
+        "SELECT (SELECT system_identifier FROM pg_control_system())::text"
+        " || '|' || (SELECT string_agg(id::text || ':' || manifest_sha256, ',' ORDER BY id) FROM manifest_version)"
+        " || '|' || coalesce((SELECT string_agg(trace_id, ',' ORDER BY trace_id) FROM audit_event"
+        " WHERE action = 'e2e.marker'), '')"
+    )
+    out = c.exec("psql", "-h", "/tmp/appstore-pg", "-U", "appstore", "-d", "appstore", "-tAc", sql, user="568").strip()
+    assert out and "|" in out, out
+    return out
+
+
+def _evidence_ids(c: Container) -> set[str]:
+    out = c.exec(
+        "psql",
+        "-h",
+        "/tmp/appstore-pg",
+        "-U",
+        "appstore",
+        "-d",
+        "appstore",
+        "-tAc",
+        "SELECT id FROM evidence_record",
+        user="568",
+    )
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _write_marker(c: Container) -> str:
+    marker = str(uuid.uuid4())
+    sql = (
+        "INSERT INTO audit_event (at, actor_type, actor_id, action, target_type, target_id, details, trace_id) "
+        f"VALUES (now(), 'system', 'e2e', 'e2e.marker', 'test', 'x', '{{}}'::jsonb, '{marker}')"
+    )
+    c.exec("psql", "-h", "/tmp/appstore-pg", "-U", "appstore", "-d", "appstore", "-tAc", sql, user="568")
+    return marker
+
+
+def test_restart_and_kill_keep_database_rows(container: Container) -> None:
+    """Herstart en harde kill: zelfde cluster, zelfde manifestversies en de eigen markering blijft (geen dataverlies)."""
+    wait_for(lambda: "1 app(s)" in httpx.get(f"{container.url}/", timeout=5).text, 60)
+    marker = _write_marker(container)
+    before, evidence = _db_fingerprint(container), _evidence_ids(container)
+    assert marker in before and evidence
+    docker("restart", container.name)
+    container.wait_healthy()
+    assert _db_fingerprint(container) == before
+    assert evidence <= _evidence_ids(container)  # bestaand bewijs blijft; nieuw bewijs mag erbij
+    docker("kill", "-s", "KILL", container.name)
+    docker("start", container.name)
+    container.wait_healthy()
+    assert _db_fingerprint(container) == before
+    assert evidence <= _evidence_ids(container)
+
+
+def test_new_container_on_same_appdata_keeps_database(data_dir: Path) -> None:
+    """Zoals een update/herinstallatie in TrueNAS: nieuwe container, zelfde /appdata → zelfde database en geheimen."""
+    first = Container(data_dir)
+    try:
+        first.wait_healthy()
+        wait_for(lambda: "1 app(s)" in httpx.get(f"{first.url}/", timeout=5).text, 60)
+        marker = _write_marker(first)
+        before, evidence = _db_fingerprint(first), _evidence_ids(first)
+        keys = first.exec("sha256sum", "/appdata/secrets/identity.ed25519", "/appdata/secrets/vault.key")
+    finally:
+        first.remove()
+    second = Container(data_dir)
+    try:
+        second.wait_healthy()
+        after = _db_fingerprint(second)
+        assert after == before and marker in after
+        assert evidence <= _evidence_ids(second)
+        assert second.exec("sha256sum", "/appdata/secrets/identity.ed25519", "/appdata/secrets/vault.key") == keys
+        assert "eerste start: database aanmaken" not in second.logs()
+    finally:
+        second.remove()
+
+
 def test_hard_kill_recovers(container: Container) -> None:
     docker("kill", "-s", "KILL", container.name)
     docker("start", container.name)
