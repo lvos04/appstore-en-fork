@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import json
 import stat
+import threading
+import time
+from datetime import timedelta
+from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from appstore.config import Settings
+from appstore.hublink_store import LinkState, Pending
+from appstore.timeutil import iso, utcnow
 from tests.fakehub import HUB_URL, FakeHub
 from tests.integration.conftest import ORIGIN, pair, pair_form
 
@@ -75,6 +82,88 @@ def test_form_only_before_first_link(client: TestClient, hub: FakeHub) -> None:
     n = len(hub.enroll_requests)
     assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "al_gekoppeld"
     assert len(hub.enroll_requests) == n  # geen verzoek naar de Hub
+
+
+def _set_pending(client: TestClient, kind: str, started: str | None = None) -> None:
+    store = client.app.state.ctx.store  # type: ignore[attr-defined]
+
+    def change(st: LinkState) -> LinkState:
+        st.pending = Pending(
+            kind=kind, secret_sha256="ab" * 32, hub_url=HUB_URL, started_at=started or iso(utcnow()) or ""
+        )
+        return st
+
+    store.update(change)
+
+
+@pytest.mark.parametrize("kind", ["koppelcode", "token"])
+def test_running_attempt_blocks_the_form(client: TestClient, hub: FakeHub, kind: str) -> None:
+    """Nooit twee enrollments tegelijk: een lopende poging (formulier of env-token met backoff) → 'bezig'."""
+    _set_pending(client, kind)
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "bezig"
+    assert hub.enroll_requests == []
+    st = client.app.state.ctx.store.read()  # type: ignore[attr-defined]
+    assert st.pending is not None and st.pending.kind == kind and st.state == "nooit_gekoppeld"
+
+
+def test_orphaned_pairing_attempt_does_not_block_forever(client: TestClient, hub: FakeHub) -> None:
+    """Een koppelcodepoging ouder dan 2 min (bv. een afgebroken verzoek) blokkeert het formulier niet."""
+    _set_pending(client, "koppelcode", iso(utcnow() - timedelta(minutes=3)))
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "gekoppeld"
+
+
+def test_pairing_after_first_link_refused_atomically(client: TestClient, hub: FakeHub) -> None:
+    """Ook als de route-controle al gepasseerd is (wedloop): na de eerste koppeling gaat er geen koppelcode meer naar
+    de Hub. De controle zit onder de bestandsvergrendeling in de client zelf."""
+    pair(client, hub)
+    n = len(hub.enroll_requests)
+    hub_client = client.app.state.ctx.hub  # type: ignore[attr-defined]
+    outcome = hub_client.pair_with_code(
+        hub_url=HUB_URL, pairing_code=hub.add_code(), fingerprint=hub.fingerprint(), trace_id="t"
+    )
+    assert outcome.kind == "refused" and outcome.code == "al_gekoppeld"
+    assert len(hub.enroll_requests) == n
+    # ook na ontkoppelen of intrekken blijft koppelen via de statuspagina dicht (first_linked_at blijft staan)
+    for state in ("ontkoppeld", "ingetrokken"):
+        client.app.state.ctx.store.update(  # type: ignore[attr-defined]
+            lambda st, s=state: st.model_copy(update={"state": s, "service_token": None, "pins": None})
+        )
+        assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "al_gekoppeld"
+        assert len(hub.enroll_requests) == n
+
+
+def test_concurrent_pairing_sends_only_one_enrollment(client: TestClient, hub: FakeHub) -> None:
+    """Twee gelijktijdige koppelpogingen (twee tabbladen, twee codes): precies één gaat naar de Hub."""
+    gate = threading.Event()
+    original = hub.handler
+
+    def slow(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/services/enroll":
+            gate.wait(5)  # houd de eerste poging vast tot de tweede het geprobeerd heeft
+        return original(request)
+
+    hub.handler = slow  # type: ignore[method-assign]
+    hub_client = client.app.state.ctx.hub  # type: ignore[attr-defined]
+    codes = [hub.add_code(), hub.add_code()]
+    results: list[Any] = []
+
+    def run(code: str) -> None:
+        results.append(
+            hub_client.pair_with_code(hub_url=HUB_URL, pairing_code=code, fingerprint=hub.fingerprint(), trace_id="t")
+        )
+
+    first = threading.Thread(target=run, args=(codes[0],))
+    first.start()
+    deadline = time.monotonic() + 5
+    while client.app.state.ctx.store.read().pending is None and time.monotonic() < deadline:  # type: ignore[attr-defined]
+        time.sleep(0.01)
+    run(codes[1])  # de tweede komt binnen terwijl de eerste loopt
+    gate.set()
+    first.join(10)
+    kinds = sorted(r.kind for r in results)
+    assert kinds == ["ok", "refused"], results
+    assert len(hub.enroll_requests) == 1
+    assert client.app.state.ctx.store.read().state == "gekoppeld"  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(

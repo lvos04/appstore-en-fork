@@ -320,6 +320,26 @@ def test_env_token_waits_while_a_pairing_code_attempt_runs(ctx: AppContext, hub:
         c2.engine.dispose()
 
 
+def test_orphaned_pairing_attempt_does_not_block_env_token_without_restart(ctx: AppContext, hub: FakeHub) -> None:
+    """Een verweesde koppelcodepoging (ouder dan 2 min, bv. een afgebroken verzoek) houdt het env-token niet tot de
+    volgende herstart tegen: de worker markeert hem als onderbroken en koppelt."""
+    ctx.store.update(
+        lambda s: s.model_copy(
+            update={
+                "pending": Pending(
+                    kind="koppelcode",
+                    secret_sha256="cd" * 32,
+                    hub_url=HUB_URL,
+                    started_at=iso(utcnow() - timedelta(minutes=3)) or "",
+                )
+            }
+        )
+    )
+    run_once(ctx)
+    st = ctx.store.read()
+    assert st.state == "gekoppeld" and st.via == "token" and len(hub.enroll_requests) == 1
+
+
 def test_linked_without_confirmation_only_confirms_again(ctx: AppContext, hub: FakeHub) -> None:
     hub.self_status = 503
     run_once(ctx)
@@ -437,7 +457,17 @@ def test_signed_key_rotation_is_applied_in_order(client: TestClient, hub: FakeHu
 
 
 @pytest.mark.parametrize(
-    "case", ["niet_gepinde_sleutel", "gat_in_volgorde", "laatste_sleutel", "ander_doel", "verkeerde_typ"]
+    "case",
+    [
+        "niet_gepinde_sleutel",
+        "gat_in_volgorde",
+        "laatste_sleutel",
+        "ander_doel",
+        "verkeerde_typ",
+        "volgnummer_tekst",
+        "volgnummer_bool",
+        "geen_object",
+    ],
 )
 def test_invalid_key_rotation_is_refused(client: TestClient, hub: FakeHub, worker_ctx: AppContext, case: str) -> None:
     pair(client, hub)
@@ -452,6 +482,15 @@ def test_invalid_key_rotation_is_refused(client: TestClient, hub: FakeHub, worke
             "sequence": 1,
             "statement": __import__("jwt").encode({"x": 1}, hub.key, algorithm="EdDSA", headers={"kid": kid}),
         },
+        "volgnummer_tekst": lambda: {
+            **hub.rotation_statement(1, "jwt", [hub_jwk(new_key)], [], signer=hub.key),
+            "sequence": "een",
+        },
+        "volgnummer_bool": lambda: {
+            **hub.rotation_statement(1, "jwt", [hub_jwk(new_key)], [], signer=hub.key),
+            "sequence": True,
+        },
+        "geen_object": lambda: ["sequence", 1],
     }[case]()
     hub.key_rotation_items = [item]
     before = worker_ctx.store.read().pins

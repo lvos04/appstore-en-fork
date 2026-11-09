@@ -337,7 +337,12 @@ class FakeHub:
             if self.key_rotation_status != 200:
                 return self._error(self.key_rotation_status, "not_found")
             after = int(request.url.params.get("after", "0"))
-            return httpx.Response(200, json={"items": [i for i in self.key_rotation_items if i["sequence"] > after]})
+            items = [
+                i
+                for i in self.key_rotation_items
+                if not isinstance(i, dict) or type(i.get("sequence")) is not int or i["sequence"] > after
+            ]  # foutinjectie: ongeldige items gaan altijd mee
+            return httpx.Response(200, json={"items": items})
         if path == "/api/v1/services/self" and request.method == "GET":
             if self.self_status is not None:
                 return self._error(self.self_status, "storing")

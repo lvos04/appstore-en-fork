@@ -279,7 +279,9 @@ def pair(
     if c.settings.hub_url and url != c.settings.hub_url:
         # bij installatie via de Hub staat HUB_URL vast: nooit met een andere (mogelijk vreemde) Hub koppelen
         return back("andere_hub")
-    if link.pending is not None:
-        return back("bezig")
+    # de claim van de poging gebeurt atomair in de client (bestandsvergrendeling): geen wedloop tussen twee
+    # formulieren, of tussen het formulier en een env-token, en nooit na de eerste koppeling (§3.7)
     result = c.hub.pair_with_code(hub_url=url, pairing_code=code, fingerprint=fingerprint, trace_id=tid(request))
+    if result.kind == "refused":
+        return back("al_gekoppeld" if result.code == "al_gekoppeld" else "bezig")
     return back("gekoppeld" if result.ok else "mislukt")

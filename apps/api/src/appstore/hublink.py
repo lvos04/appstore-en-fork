@@ -96,6 +96,14 @@ def parse_iso(value: str | None) -> datetime | None:
         return None
 
 
+def stale_koppelcode(pending: Pending) -> bool:
+    """Een koppelcodepoging duurt hooguit één verzoek; ouder dan 2 min (of onleesbare tijd) = verweesd."""
+    if pending.kind != "koppelcode":
+        return False
+    started = parse_iso(pending.started_at)
+    return started is None or utcnow() - started >= KOPPELCODE_STALE
+
+
 def backoff_delay(attempts: int) -> float:
     """Exponentieel met jitter: start 5 s, hooguit 15 min tussen pogingen (§3.3)."""
     base = min(BACKOFF_MAX, BACKOFF_START * float(2 ** max(0, attempts - 1)))
@@ -111,7 +119,8 @@ class InvalidResponseError(ValueError):
 
 @dataclass(frozen=True)
 class EnrollOutcome:
-    """Uitkomst van één enroll-poging. ``kind``: ``ok`` | ``definitive`` | ``transient`` | ``rate_limited``."""
+    """Uitkomst van één enroll-poging. ``kind``: ``ok`` | ``definitive`` | ``transient`` | ``rate_limited`` |
+    ``refused`` (niet verstuurd: er loopt al een poging, of koppelen via de statuspagina mag niet meer)."""
 
     kind: str
     code: str | None = None
@@ -238,13 +247,30 @@ class HubLinkClient:
         }
 
     # ------------------------------------------------------------------ enrollment
-    def _begin(self, kind: str, secret_digest: str, hub_url: str) -> Pending:
-        result: dict[str, Pending] = {}
+    def _begin(self, kind: str, secret_digest: str, hub_url: str) -> Pending | str:
+        """Claim de poging atomair (onder de bestandsvergrendeling): nooit twee enrollments tegelijk, en een
+        koppelcode alleen zolang de dienst nog nooit gekoppeld is (§3.7). Geeft de ``Pending`` of een weigercode
+        (``koppelen_bezig`` | ``al_gekoppeld``); dan wordt er niets naar de Hub gestuurd."""
+        result: dict[str, Pending | str] = {}
 
-        def change(st: LinkState) -> LinkState:
-            if st.pending is not None and st.pending.kind == kind and st.pending.secret_sha256 == secret_digest:
-                st.pending.attempts += 1
-                st.pending.hub_url = hub_url
+        def change(st: LinkState) -> LinkState | None:
+            p = st.pending
+            if p is not None and kind == "token" and p.kind == "koppelcode" and stale_koppelcode(p):
+                p = None  # verweesde koppelcodepoging (bv. een afgebroken verzoek): telt als onderbroken
+            if kind == "koppelcode":
+                if st.corrupt or st.first_linked_at is not None:
+                    result["p"] = "al_gekoppeld"
+                    return None
+                if p is not None and not stale_koppelcode(p):
+                    result["p"] = "koppelen_bezig"  # ook een dubbel verstuurd formulier met dezelfde code
+                    return None
+            elif p is not None and p.kind == "koppelcode":
+                result["p"] = "koppelen_bezig"
+                return None
+            if p is not None and p.kind == kind and p.secret_sha256 == secret_digest:
+                p.attempts += 1
+                p.hub_url = hub_url
+                st.pending = p
             else:
                 st.pending = Pending(
                     kind=kind,
@@ -286,7 +312,10 @@ class HubLinkClient:
     ) -> EnrollOutcome:
         """Eén enroll-poging (§3.6 stap 2–4). ``kind``: ``token`` (env) of ``koppelcode`` (statuspagina)."""
         digest = sha256_hex(credential)
-        self._begin(kind, digest, hub_url)
+        claim = self._begin(kind, digest, hub_url)
+        if isinstance(claim, str):
+            log.info("koppelen (%s) niet gestart: %s", kind, claim)
+            return EnrollOutcome("refused", claim)
         field = "enrollment_token" if kind == "token" else "pairing_code"
         body = self.enroll_body(field, credential)
         koppelcode = kind == "koppelcode"
@@ -397,7 +426,10 @@ class HubLinkClient:
         if digest in st.used_enrollment_token_sha256:
             return None
         if st.pending is not None and st.pending.kind == "koppelcode":
-            return None  # een koppelpoging via de statuspagina loopt; nooit twee enrollments tegelijk
+            if not stale_koppelcode(st.pending):
+                return None  # een koppelpoging via de statuspagina loopt; nooit twee enrollments tegelijk
+            self._interrupted(st.pending.secret_sha256)  # verweesd (afgebroken verzoek): onderbroken
+            st = self.store.read()
         if st.pending is not None and st.pending.kind == "token" and st.pending.secret_sha256 != digest:
             self._interrupted(st.pending.secret_sha256)  # ander env-token: oude poging is onderbroken
             st = self.store.read()
@@ -447,8 +479,7 @@ class HubLinkClient:
             if p.kind == "koppelcode" and process == "api":
                 pass  # het geheim was alleen in het vorige API-proces bekend
             elif p.kind == "koppelcode":
-                started = parse_iso(p.started_at)
-                if started is not None and utcnow() - started < KOPPELCODE_STALE:
+                if not stale_koppelcode(p):
                     return None  # mogelijk nog bezig in het API-proces
             elif p.kind == "token":
                 token = self.settings.enrollment_token
@@ -650,7 +681,14 @@ class HubLinkClient:
 
     def _apply_rotations(self, items: list[Any], trace_id: str) -> int:
         applied = 0
-        for item in sorted((i for i in items if isinstance(i, dict)), key=lambda i: int(i.get("sequence") or 0)):
+
+        # ongeldige items (geen object, volgnummer geen geheel getal) achteraan: daar stopt het toepassen (incident)
+        def order(i: Any) -> float:
+            seq = i.get("sequence") if isinstance(i, dict) else None
+            return float(seq) if isinstance(seq, int) and not isinstance(seq, bool) else float("inf")
+
+        for raw in sorted(items, key=order):
+            item: dict[str, Any] = raw if isinstance(raw, dict) else {"sequence": None, "statement": None}
             st = self.store.read()
             if not st.linked or st.pins is None:
                 break
@@ -741,9 +779,14 @@ def _retry_after(resp: httpx.Response) -> float:
 ROTATION_TYP = "hub-key-rotation+jws"
 
 
+def _is_int(value: Any) -> bool:
+    """Geheel getal, geen ``bool`` (``True == 1`` mag geen volgnummer 1 zijn)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def verify_rotation(item: dict[str, Any], pins: Pins, expected_sequence: int) -> Pins:
     """Controleer één rotatie-statement (§4.5) tegen de **gepinde** sleutels en geef de nieuwe pins."""
-    if item.get("sequence") != expected_sequence:
+    if not _is_int(item.get("sequence")) or item.get("sequence") != expected_sequence:
         raise InvalidResponseError(
             "sleutelrotatie_ongeldig", f"volgnummer {item.get('sequence')!r} ≠ {expected_sequence}"
         )
@@ -774,7 +817,11 @@ def verify_rotation(item: dict[str, Any], pins: Pins, expected_sequence: int) ->
         raise InvalidResponseError("sleutelrotatie_ongeldig", "handtekening of inhoud klopt niet") from exc
     if not isinstance(payload, dict) or payload.get("type") != "hub_key_rotation" or payload.get("iss") != "hub":
         raise InvalidResponseError("sleutelrotatie_ongeldig", "type of iss klopt niet")
-    if payload.get("sequence") != expected_sequence or not isinstance(payload.get("issued_at"), str):
+    if (
+        not _is_int(payload.get("sequence"))
+        or payload.get("sequence") != expected_sequence
+        or not isinstance(payload.get("issued_at"), str)
+    ):
         raise InvalidResponseError("sleutelrotatie_ongeldig", "volgnummer of issued_at in de inhoud klopt niet")
     if payload.get("purpose") != purpose:
         raise InvalidResponseError(
