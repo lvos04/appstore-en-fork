@@ -50,8 +50,21 @@ def test_corrupt_file_is_fail_closed(tmp_path: Path, caplog: pytest.LogCaptureFi
     with caplog.at_level(logging.ERROR):
         st = store.read()
     assert st.corrupt and not st.linked and "onleesbaar" in caplog.text
+    assert st.first_linked_at  # geldt als 'al eens gekoppeld': geen koppelformulier
     store.path.write_text(json.dumps({"state": "bestaat-niet"}), encoding="utf-8")
     assert store.read().corrupt
+    # overschrijven (bv. een mislukte poging met een env-token) opent het formulier niet opnieuw
+    after = store.update(lambda s: s.model_copy(update={"last_error": LastError(code="hub_weigerde", at="x")}))
+    assert not after.corrupt and after.first_linked_at and HubLinkStore(tmp_path).read().first_linked_at
+
+
+def test_outgoing_http_ignores_proxies_and_redirects(client: HubLinkClient) -> None:
+    """§3.2/§5: nooit een redirect volgen en geen proxy-omgevingsvariabelen gebruiken."""
+    from appstore.app import default_http_factory
+
+    with default_http_factory(client.settings)() as http:
+        assert http.follow_redirects is False and http.trust_env is False
+        assert http.timeout.connect == 5.0 and http.timeout.read == 15.0
 
 
 def test_public_view_is_a_whitelist(tmp_path: Path) -> None:

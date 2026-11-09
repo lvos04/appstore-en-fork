@@ -8,7 +8,8 @@
   rotatie door het ene proces direct voor het andere geldt.
 * Niet in de database: een database-herstel brengt geen oude koppeling, pins of ingetrokken token terug.
 * Onleesbaar bestand → fail-closed: niets wordt vertrouwd (``not_linked``) en de statuspagina biedt géén
-  koppelformulier (het is onbekend of de dienst al eens gekoppeld was); herstel via een nieuw token in het formulier.
+  koppelformulier (het is onbekend of de dienst al eens gekoppeld was, dus geldt hij als "al eens gekoppeld");
+  herstel via een nieuw token in het formulier.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import os
 import threading
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -183,7 +185,9 @@ class HubLinkStore:
             state = LinkState.model_validate(data)
         except (OSError, ValueError, ValidationError) as exc:
             log.error("hub-link.json is onleesbaar (%s); niets wordt vertrouwd", type(exc).__name__)
-            state = LinkState()
+            # onbekend of de dienst al eens gekoppeld was: voorzichtig aannemen van wel, zodat ook na het overschrijven
+            # (bv. door een nieuw env-token) het koppelformulier van de statuspagina dicht blijft (§3.7)
+            state = LinkState(first_linked_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"))
             state._corrupt = True
         with self._mutex:
             self._cache = (key, state)
@@ -243,6 +247,7 @@ class HubLinkStore:
             if new is None:
                 return current
             self._write(new)
+            new._corrupt = False  # het bestand is nu weer leesbaar
             return new
 
     def write_initial(self, state: LinkState) -> bool:
