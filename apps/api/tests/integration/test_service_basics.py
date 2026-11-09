@@ -222,6 +222,55 @@ def test_rate_limit_five_per_ip(client: TestClient, hub: FakeHub) -> None:
     assert "onbekend, verlopen of al gebruikt" in client.get("/").text
 
 
+def test_rate_limit_twenty_per_service_across_ips(settings: Settings, hub: FakeHub) -> None:
+    """§3.7: naast 5 per bron-IP ook max. 20 pogingen per 15 min voor de hele dienst (andere bron-IP's helpen niet)."""
+    from appstore.app import create_app
+
+    app = create_app(settings, http_factory=hub.client_factory())
+    try:
+        for n in range(4):
+            with TestClient(app, client=(f"192.0.2.{10 + n}", 40000)) as c:
+                for _ in range(5):
+                    assert pair_form(c, code="XXXX-XXXX-XXXX", fingerprint=hub.fingerprint()) == "mislukt"
+        sent = len(hub.enroll_requests)
+        assert sent == 20
+        with TestClient(app, client=("192.0.2.99", 40000)) as fresh:
+            assert pair_form(fresh, code=hub.add_code(), fingerprint=hub.fingerprint()) == "te_vaak"
+        assert len(hub.enroll_requests) == sent  # geen verzoek naar de Hub
+    finally:
+        app.state.ctx.engine.dispose()
+
+
+def test_rate_limit_ignores_x_forwarded_for(client: TestClient, hub: FakeHub) -> None:
+    """Het bron-IP is het TCP-adres; een vervalste ``X-Forwarded-For`` omzeilt de limiet niet."""
+    client.get("/")
+    csrf = client.cookies.get("appstore_csrf") or ""
+    for n in range(6):
+        resp = client.post(
+            "/koppelen",
+            data={"hub_url": HUB_URL, "koppelcode": "XXXX-XXXX-XXXX", "vingerafdruk": hub.fingerprint(), "csrf": csrf},
+            headers={**ORIGIN, "X-Forwarded-For": f"198.51.100.{n}"},
+            follow_redirects=False,
+        )
+        melding = resp.headers["location"].removeprefix("/?melding=")
+        assert melding == ("te_vaak" if n == 5 else "mislukt"), (n, melding)
+    assert len(hub.enroll_requests) == 5
+
+
+def test_expired_pairing_code_fails_but_form_stays(client: TestClient, hub: FakeHub, settings: Settings) -> None:
+    """Verlopen koppelcode (> 60 min): de Hub weigert (401); niets opgeslagen, het formulier blijft (nooit gekoppeld) en
+    een nieuwe code werkt."""
+    code = hub.add_code()
+    digest = next(iter(hub.grants))
+    hub.grants[digest].created -= 3601
+    assert pair_form(client, code=code, fingerprint=hub.fingerprint()) == "mislukt"
+    data = json.loads((settings.secrets_dir / "hub-link.json").read_text())
+    assert data["state"] == "nooit_gekoppeld" and data["last_error"]["code"] == "hub_weigerde"
+    assert data["used_enrollment_token_sha256"] == []  # een koppelcode mag de gebruiker opnieuw invoeren
+    assert 'action="/koppelen"' in client.get("/").text
+    assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "gekoppeld"
+
+
 def test_hub_unreachable_is_honest(client: TestClient, hub: FakeHub) -> None:
     hub.down = True
     assert pair_form(client, code=hub.add_code(), fingerprint=hub.fingerprint()) == "mislukt"

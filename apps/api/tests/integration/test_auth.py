@@ -179,3 +179,55 @@ def test_replay_check_unavailable_is_fail_closed(client: TestClient, hub: FakeHu
         assert client.get(URL, headers=hub.auth()).status_code == 200  # lezen heeft de replaycache niet nodig
     finally:
         authenticator.sessions = original
+
+
+def test_swapped_key_under_a_pinned_kid_is_refused(client: TestClient, hub: FakeHub) -> None:
+    """Gewisselde Hub-sleutel: een JWT met de **gepinde** ``kid`` maar ondertekend met een andere sleutel → 401;
+    de vergelijking gebeurt op de sleutel zelf (``x``), niet alleen op ``kid`` (§4.5)."""
+    pair(client, hub)
+    pinned_kid = client.app.state.ctx.store.read().pins.jwt[0].kid  # type: ignore[attr-defined]
+    forged = hub.jwt(key=Ed25519PrivateKey.generate(), kid=pinned_kid, roles=["admin"])
+    assert _reason(client.get(URL, headers={"Authorization": f"Bearer {forged}"})) == "invalid_token"
+    # ook een policy-sleutel is geen JWT-sleutel: ondertekend met de gepinde policy-sleutel → geweigerd
+    by_policy = hub.jwt(key=hub.policy_key, roles=["admin"])
+    assert _reason(client.get(URL, headers={"Authorization": f"Bearer {by_policy}"})) == "unknown_key"
+    assert client.get(URL, headers=hub.auth(roles=["viewer"])).status_code == 200  # de echte sleutel werkt
+
+
+def test_jwt_without_kid_is_unknown_key(client: TestClient, hub: FakeHub) -> None:
+    import jwt as pyjwt
+
+    pair(client, hub)
+    now = int(time.time())
+    claims = {"iss": "hub", "aud": "appstore-en-fork", "sub": "x", "roles": ["admin"], "iat": now, "nbf": now}
+    claims |= {"exp": now + 60, "token_use": "user", "jti": str(uuid.uuid4())}
+    token = pyjwt.encode(claims, hub.key, algorithm="EdDSA")  # geen kid in de header
+    assert _reason(client.get(URL, headers={"Authorization": f"Bearer {token}"})) == "unknown_key"
+
+
+@pytest.mark.parametrize("field", ["iat", "nbf"])
+def test_jwt_from_the_future_is_refused(client: TestClient, hub: FakeHub, field: str) -> None:
+    """``iat``/``nbf`` verder dan de klokspeling (30 s) in de toekomst → ``invalid_token``."""
+    pair(client, hub)
+    future = int(time.time()) + 300
+    extra = {"nbf": future} if field == "nbf" else {"iat": future, "nbf": future - 300, "exp": future + 60}
+    token = hub.jwt(roles=["admin"], extra=extra)
+    assert _reason(client.get(URL, headers={"Authorization": f"Bearer {token}"})) == "invalid_token"
+
+
+def test_replay_cache_is_shared_between_processes(client: TestClient, hub: FakeHub, settings: object) -> None:
+    """§4.6: de replaycache is persistent en gedeeld (tabel): een tweede API-proces weigert dezelfde ``jti`` ook,
+    ook na een herstart."""
+    from appstore.app import create_app
+
+    pair(client, hub)
+    token = hub.jwt(roles=["viewer"])
+    auth = {"Authorization": f"Bearer {token}"}
+    assert client.post("/catalog/v1/validate", headers=auth, json={"manifest_yaml": "a: 1"}).status_code == 200
+    other = create_app(settings, http_factory=hub.client_factory())  # type: ignore[arg-type]
+    try:
+        with TestClient(other) as second:
+            resp = second.post("/catalog/v1/validate", headers=auth, json={"manifest_yaml": "a: 1"})
+            assert _reason(resp) == "token_replayed"
+    finally:
+        other.state.ctx.engine.dispose()

@@ -120,6 +120,59 @@ def test_unknown_token_gets_invalid_enrollment(settings: Settings, hub: FakeHub)
         c.engine.dispose()
 
 
+def test_expired_env_token_is_definitive(settings: Settings, hub: FakeHub) -> None:
+    """Verlopen enrollment-token (> 60 min na aanmaak bij de Hub): 401 ``invalid_enrollment`` → definitief, de hash
+    gaat in ``used_enrollment_token_sha256`` en het token wordt nooit opnieuw geprobeerd (§3.3, §3.6)."""
+    token = hub.add_token(age=3601)
+    c = build_context(dataclasses.replace(settings, hub_url=HUB_URL, enrollment_token=token), hub.client_factory())
+    try:
+        startup(c)
+        run_once(c)
+        run_once(c)
+        st = c.store.read()
+        assert len(hub.enroll_requests) == 1 and hub.enroll_responses == []
+        assert st.state == "nooit_gekoppeld" and st.pending is None and st.pins is None
+        assert st.last_error is not None and st.last_error.code == "hub_weigerde"
+        assert sha256_hex(token) in st.used_enrollment_token_sha256
+        c2 = _restart(c, hub)  # ook na een herstart niet opnieuw
+        try:
+            run_once(c2)
+            assert len(hub.enroll_requests) == 1
+        finally:
+            c2.engine.dispose()
+    finally:
+        c.engine.dispose()
+
+
+def test_reused_env_token_is_definitive(settings: Settings, hub: FakeHub) -> None:
+    """Hergebruikt token: al gebruikt door een andere installatie (andere identiteitssleutel) → 401, definitief; er wordt
+    niets opgeslagen en de andere registratie wordt niet overgenomen."""
+    from appstore.hubkeys import enroll_jwk
+
+    token = hub.add_token()
+    other = {
+        "app_id": "appstore-en-fork",
+        "enrollment_token": token,
+        "version": "0.1.0",
+        "base_url": None,
+        "public_key_jwk": enroll_jwk(Ed25519PrivateKey.generate().public_key()),
+    }
+    with hub.client_factory()() as http:
+        assert http.post(f"{HUB_URL}/api/v1/services/enroll", json=other).status_code == 200
+    c = build_context(dataclasses.replace(settings, hub_url=HUB_URL, enrollment_token=token), hub.client_factory())
+    try:
+        startup(c)
+        run_once(c)
+        run_once(c)
+        st = c.store.read()
+        assert len(hub.enroll_requests) == 2  # de andere installatie + precies één poging van deze dienst
+        assert st.state == "nooit_gekoppeld" and st.service_token is None
+        assert st.last_error is not None and st.last_error.code == "hub_weigerde"
+        assert sha256_hex(token) in st.used_enrollment_token_sha256
+    finally:
+        c.engine.dispose()
+
+
 def test_malformed_env_token_is_not_sent(settings: Settings, hub: FakeHub) -> None:
     s = dataclasses.replace(settings, hub_url=HUB_URL, enrollment_token="eenmalig-token-1234567890")
     c = build_context(s, hub.client_factory())
