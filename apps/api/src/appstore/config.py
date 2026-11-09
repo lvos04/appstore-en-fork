@@ -26,6 +26,21 @@ def _opt(env: Mapping[str, str], name: str) -> str | None:
     return value or None
 
 
+def _interval(env: Mapping[str, str], name: str, default: int) -> int:
+    """Interval in seconden: 0 = uit, anders 300…86400 (een ongeldige waarde → standaard, met een waarschuwing)."""
+    raw = _opt(env, name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value == 0 or 300 <= value <= 86400:
+        return value
+    log.warning("%s moet 0 (uit) of 300…86400 seconden zijn; standaard %d s wordt gebruikt", name, default)
+    return default
+
+
 def _bool(env: Mapping[str, str], name: str) -> bool:
     return env.get(name, "").strip().lower() in ("1", "true", "ja", "yes", "on")
 
@@ -87,6 +102,8 @@ class Settings:
     connect_timeout: float = 5.0
     read_timeout: float = 15.0
     log_level: str = "info"
+    #: B08-002: periodiek de app-inventaris van de Hub lezen (alleen lezen); 0 = uit (alleen op verzoek via de API)
+    import_interval_s: int = 900
 
     @property
     def secrets_dir(self) -> Path:
@@ -126,4 +143,5 @@ class Settings:
             log_level=env.get("APPSTORE_LOG_LEVEL", "info"),
             hub_key_fingerprint=fingerprint,
             allow_loopback_hub=allow_loopback,
+            import_interval_s=_interval(env, "APPSTORE_IMPORT_INTERVAL_S", 900),
         )

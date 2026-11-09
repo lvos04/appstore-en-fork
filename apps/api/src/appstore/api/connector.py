@@ -20,10 +20,19 @@ from ..errors import ApiError
 from ..events import envelope, redact
 from ..hublink_store import LinkState
 from ..idempotency import run_idempotent
-from ..models import CatalogEntry, CatalogSource, EvidenceRecord, ManifestVersion, OutboxEvent
+from ..models import (
+    CatalogEntry,
+    CatalogSource,
+    DecisionRecord,
+    EvidenceRecord,
+    ExistingApp,
+    ManifestVersion,
+    OutboxEvent,
+)
 from ..timeutil import iso, utcnow
 from .catalog import entry_out, source_out, version_summary
 from .common import check_limit, ctx, decode_cursor, encode_cursor, get_db, tid
+from .existing_apps import decision_summary, existing_out
 
 router = APIRouter(prefix="/connector/v1", tags=["connector"])
 DB = Annotated[Session, Depends(get_db)]
@@ -46,9 +55,16 @@ def discover(_: Reader) -> dict[str, Any]:
         "schema_version": "1.0",
         "capabilities": CAPABILITIES,
         "unavailable_capabilities": [*sorted(NOT_BUILT), "stream"],
-        "permissions": ["catalog:read", "catalog:validate", "catalog:preview", "catalog:import_preview"],
+        "permissions": [
+            "catalog:read",
+            "catalog:validate",
+            "catalog:preview",
+            "catalog:import_preview",
+            "catalog:import",
+            "catalog:decommission_plan",
+        ],
         "limits": {"page_max": 200, "manifest_max_bytes": 262144, "heavy_requests_per_minute": 120},
-        "item_types": ["catalog_entry", "manifest_version", "catalog_source"],
+        "item_types": ["catalog_entry", "manifest_version", "catalog_source", "existing_app", "decision_record"],
         "timestamp_utc": iso(utcnow()),
     }
 
@@ -127,7 +143,9 @@ def items(
     request: Request,
     db: DB,
     _: Reader,
-    type: Literal["catalog_entry", "manifest_version", "catalog_source"] = "catalog_entry",
+    type: Literal[
+        "catalog_entry", "manifest_version", "catalog_source", "existing_app", "decision_record"
+    ] = "catalog_entry",
     cursor: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
@@ -161,6 +179,22 @@ def items(
         page2 = rows2[:limit]
         out = [version_summary(v) for v in page2]
         nxt = encode_cursor(str(page2[-1].id)) if len(rows2) > limit else None
+    elif type == "existing_app":
+        stmt4 = select(ExistingApp).order_by(ExistingApp.runtime_name)
+        if after is not None:
+            stmt4 = stmt4.where(ExistingApp.runtime_name > str(after))
+        rows4 = db.scalars(stmt4.limit(limit + 1)).all()
+        page4 = rows4[:limit]
+        out = [existing_out(r) for r in page4]
+        nxt = encode_cursor(page4[-1].runtime_name) if len(rows4) > limit else None
+    elif type == "decision_record":
+        stmt5 = select(DecisionRecord).order_by(DecisionRecord.app_id)
+        if after is not None:
+            stmt5 = stmt5.where(DecisionRecord.app_id > str(after))
+        rows5 = db.scalars(stmt5.limit(limit + 1)).all()
+        page5 = rows5[:limit]
+        out = [decision_summary(r) for r in page5]
+        nxt = encode_cursor(page5[-1].app_id) if len(rows5) > limit else None
     else:
         rows3 = db.scalars(select(CatalogSource).order_by(CatalogSource.name)).all()
         out, nxt = [source_out(s) for s in rows3], None

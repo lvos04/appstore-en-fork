@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import APP_ID, __version__
-from .api import catalog, connector, health, status_page
+from .api import catalog, connector, existing_apps, health, status_page
 from .api.common import AppContext
 from .auth import Authenticator
 from .config import Settings
@@ -130,9 +130,10 @@ def create_app(settings: Settings | None = None, *, http_factory: Callable[[], h
     app = FastAPI(
         title="appstore-en-fork",
         version=__version__,
-        summary="Appstore-catalogus van het TrueNAS Home Platform V2 (B08-001 manifeststandaard).",
+        summary="Appstore-catalogus van het TrueNAS Home Platform V2 (B08-001 manifeststandaard, B08-002 bestaande apps).",
         description=(
-            "Catalogus-API (`/catalog/v1`), connectorcontract (`/connector/v1`), gezondheid en een kleine NL-statuspagina. "
+            "Catalogus-API (`/catalog/v1`, incl. bestaande apps en beslisregister), connectorcontract (`/connector/v1`), "
+            "gezondheid en een kleine NL-statuspagina. "
             "Fouten: `{code, message, details, trace_id}`. Mutaties vereisen `Idempotency-Key`. Er wordt nooit iets op "
             "TrueNAS uitgevoerd: installatievoorbeelden leveren alleen getypte `app.create`-waarden."
         ),
@@ -180,6 +181,7 @@ def create_app(settings: Settings | None = None, *, http_factory: Callable[[], h
     app.include_router(health.router)
     app.include_router(status_page.router)
     app.include_router(catalog.router)
+    app.include_router(existing_apps.router)
     app.include_router(connector.router)
     return app
 
@@ -189,14 +191,16 @@ def openapi_document(app: FastAPI | None = None) -> dict[str, Any]:
     from fastapi.openapi.utils import get_openapi
 
     probe = FastAPI(title="appstore-en-fork", version=__version__)
-    for router in (health.router, status_page.router, catalog.router, connector.router):
+    for router in (health.router, status_page.router, catalog.router, existing_apps.router, connector.router):
         probe.include_router(router)
     doc = get_openapi(
         title="appstore-en-fork",
         version=__version__,
-        summary="Appstore-catalogus van het TrueNAS Home Platform V2 (B08-001 manifeststandaard).",
+        summary="Appstore-catalogus van het TrueNAS Home Platform V2 (B08-001 manifeststandaard, B08-002 bestaande apps).",
         description=(
-            "Catalogus-API (`/catalog/v1`), connectorcontract (`/connector/v1`, incl. `hub-link`), gezondheid. Fouten: "
+            "Catalogus-API (`/catalog/v1`; bestaande apps `existing-apps` en beslisregister `decisions`: alleen een "
+            "register, nooit een actie op de NAS), connectorcontract (`/connector/v1`, incl. `hub-link`), gezondheid. "
+            "Fouten: "
             "`{code, message, details, trace_id}`. Mutaties vereisen `Idempotency-Key`. Auth (platformcontract 1.2 §4): "
             "alleen Hub-JWT's (EdDSA, gepinde sleutels uit de koppeling) als `Authorization: Bearer` — gebruikers-JWT "
             "(`token_use: user`) of dienst-JWT van de Hub (`token_use: hub_service`); `jti` verplicht, hergebruik bij "

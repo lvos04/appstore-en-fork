@@ -1,5 +1,6 @@
 """Worker: synchronisatietaken, koppelen met het enrollment-token (contract 1.2 §3.6), bevestigen, token- en
-sleutelrotatie (§3.8, §4.5) en de outbox naar de Hub pushen (§7)."""
+sleutelrotatie (§3.8, §4.5), de outbox naar de Hub pushen (§7) en periodiek de app-inventaris van de Hub lezen
+(B08-002, alleen lezen)."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ import logging
 import random
 import signal
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import timedelta
@@ -18,6 +20,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .api.common import AppContext
 from .auth import purge_replay
+from .bestaande_apps import load_register
+from .catalog.adoption import ImportBusyError
+from .catalog.decisions import ensure_register
+from .catalog.importrun import run_import
 from .catalog.service import ensure_bundled_source, sync_source
 from .config import Settings
 from .db import make_engine, make_sessionmaker
@@ -160,12 +166,31 @@ def purge(c: AppContext) -> None:
         db.commit()
 
 
+def periodic_import(c: AppContext) -> dict[str, Any] | None:
+    """B08-002: de app-inventaris van de Hub lezen en het register bijwerken (alleen als gekoppeld en bevestigd).
+    Nooit een actie op de NAS of in de Hub; een storing verandert niets."""
+    st = c.store.read()
+    if not st.linked or st.confirmed_at is None:
+        return None
+    with c.sessions() as db:
+        try:
+            result = run_import(db, c.hub, None, trace_id=str(uuid.uuid4()), now=utcnow())
+        except ImportBusyError:
+            db.rollback()
+            return None
+        db.commit()
+    if result["status"] != "ok":
+        log.warning("periodieke import: %s (%s)", result["status"], result["reason_code"])
+    return result
+
+
 def startup(c: AppContext) -> None:
     ensure_link_file(c.store, c.sessions, c.secrets)  # eenmalige overzetting uit de database (contract 1.2 §3.5)
     c.hub.recover_after_restart(process="worker")  # §3.6 stap 5
     with c.sessions() as db:
         recovered = recover_interrupted(db)
         enqueue_bundled_sync(db)
+        ensure_register(db, load_register(), now=utcnow())  # beslisregister APP-01…APP-20 (idempotent)
         db.commit()
     if recovered:
         log.warning("%d onderbroken synchronisatie(s) als mislukt gemarkeerd", recovered)
@@ -210,6 +235,7 @@ def main(settings: Settings | None = None) -> None:
     startup(c)
     log.info("worker gestart")
     tick = 0
+    next_import = time.monotonic() + 60.0  # eerst koppelen en de catalogus synchroniseren
     while not stop.is_set():
         try:
             while process_one_job(c) and not stop.is_set():
@@ -217,6 +243,9 @@ def main(settings: Settings | None = None) -> None:
             try_enroll(c)  # goedkoop (leest alleen het bestand); de backoff zit in de client
             hub_maintenance(c)
             push_outbox(c)
+            if settings.import_interval_s and time.monotonic() >= next_import:
+                next_import = time.monotonic() + settings.import_interval_s
+                periodic_import(c)
             if tick % 1800 == 0:
                 purge(c)
         except Exception:
