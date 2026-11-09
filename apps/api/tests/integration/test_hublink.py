@@ -293,6 +293,33 @@ def test_api_restart_clears_pending_koppelcode(settings: Settings, hub: FakeHub,
         app.state.ctx.engine.dispose()
 
 
+def test_env_token_waits_while_a_pairing_code_attempt_runs(ctx: AppContext, hub: FakeHub) -> None:
+    """Nooit twee enrollments tegelijk: een lopende koppelcodepoging (API-proces) gaat voor."""
+    ctx.store.update(
+        lambda s: s.model_copy(
+            update={
+                "pending": Pending(
+                    kind="koppelcode", secret_sha256="cd" * 32, hub_url=HUB_URL, started_at=iso(utcnow()) or ""
+                )
+            }
+        )
+    )
+    run_once(ctx)
+    assert hub.enroll_requests == [] and ctx.store.read().pending.kind == "koppelcode"  # type: ignore[union-attr]
+    # een koppelcodepoging ouder dan 2 min is onderbroken; daarna gaat het env-token alsnog
+    ctx.store.update(
+        lambda s: s.model_copy(
+            update={"pending": s.pending.model_copy(update={"started_at": iso(utcnow() - timedelta(minutes=3))})}  # type: ignore[union-attr]
+        )
+    )
+    c2 = _restart(ctx, hub)
+    try:
+        run_once(c2)
+        assert c2.store.read().state == "gekoppeld" and len(hub.enroll_requests) == 1
+    finally:
+        c2.engine.dispose()
+
+
 def test_linked_without_confirmation_only_confirms_again(ctx: AppContext, hub: FakeHub) -> None:
     hub.self_status = 503
     run_once(ctx)

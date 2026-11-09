@@ -216,6 +216,9 @@ def test_env_settings(caplog: pytest.LogCaptureFixture) -> None:
     s = Settings.from_env({"HUB_ENROLLMENT_TOKEN": "enr_y", "ENROLLMENT_TOKEN": "enr_x", "HUB_KEY_FINGERPRINT": "MEGG"})
     assert s.enrollment_token == "enr_y" and s.hub_key_fingerprint == "MEGG"
     assert Settings.from_env({"HUB_URL": "http://127.0.0.1:1"}).hub_url is None
+    with caplog.at_level(logging.WARNING):
+        Settings.from_env({"HUB_KEY_FINGERPRINT": "geen-vingerafdruk"})
+    assert "HUB_KEY_FINGERPRINT heeft niet het formaat" in caplog.text
     dev = Settings.from_env({"HUB_URL": "http://127.0.0.1:1", "APPSTORE_ALLOW_LOOPBACK_HUB": "1"})
     assert dev.hub_url == "http://127.0.0.1:1" and dev.allow_loopback_hub
 

@@ -105,6 +105,14 @@ class Settings:
         if token is None and _opt(env, "ENROLLMENT_TOKEN"):
             log.warning("ENROLLMENT_TOKEN is vervallen (contract 1.2 §3.2); gebruik HUB_ENROLLMENT_TOKEN")
             token = _opt(env, "ENROLLMENT_TOKEN")
+        fingerprint = _opt(env, "HUB_KEY_FINGERPRINT")
+        if fingerprint is not None:
+            from .hubkeys import normalize_fingerprint
+
+            if normalize_fingerprint(fingerprint) is None:
+                log.warning(
+                    "HUB_KEY_FINGERPRINT heeft niet het formaat XXXX-XXXX-XXXX-XXXX; koppelen met het env-token zal mislukken"
+                )
         return cls(
             data_dir=Path(env.get("APPSTORE_DATA_DIR", "/appdata")),
             database_url=env.get("APPSTORE_DATABASE_URL", DEFAULT_DB_URL),
@@ -116,6 +124,6 @@ class Settings:
             bundled_catalog_dir=Path(env.get("APPSTORE_BUNDLED_CATALOG_DIR", DEFAULT_BUNDLED_DIR)),
             allow_insecure_sources=_bool(env, "APPSTORE_ALLOW_INSECURE_SOURCES"),
             log_level=env.get("APPSTORE_LOG_LEVEL", "info"),
-            hub_key_fingerprint=_opt(env, "HUB_KEY_FINGERPRINT"),
+            hub_key_fingerprint=fingerprint,
             allow_loopback_hub=allow_loopback,
         )

@@ -325,9 +325,9 @@ class HubLinkClient:
         return EnrollOutcome("definitive", last)
 
     def _transient_or_fail(self, code: str, koppelcode: bool, digest: str) -> EnrollOutcome:
-        if (
-            koppelcode
-        ):  # het geheim staat alleen in dit verzoek: geen achtergrondherhaling, de gebruiker probeert opnieuw
+        # koppelcode: het geheim staat alleen in dit verzoek, dus geen herhaling op de achtergrond (de gebruiker probeert
+        # opnieuw); env-token: pending blijft staan en de worker probeert het met backoff opnieuw
+        if koppelcode:
             self._fail(code, kind="koppelcode", secret_digest=digest, definitive=False)
         else:
             self._transient(code)
@@ -396,6 +396,8 @@ class HubLinkClient:
         digest = sha256_hex(token)
         if digest in st.used_enrollment_token_sha256:
             return None
+        if st.pending is not None and st.pending.kind == "koppelcode":
+            return None  # een koppelpoging via de statuspagina loopt; nooit twee enrollments tegelijk
         if st.pending is not None and st.pending.kind == "token" and st.pending.secret_sha256 != digest:
             self._interrupted(st.pending.secret_sha256)  # ander env-token: oude poging is onderbroken
             st = self.store.read()
