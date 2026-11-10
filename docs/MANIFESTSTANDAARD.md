@@ -1,7 +1,8 @@
-# Manifeststandaard v1 — handleiding voor app-auteurs (B08-001, platformcontract 1.2 §9)
+# Manifeststandaard v1 — handleiding voor app-auteurs (B08-001, platformcontract 1.3 §9)
 
 Normatief: [`schemas/manifest-v1.schema.json`](../schemas/manifest-v1.schema.json) (JSON Schema draft 2020-12) plus de
-regels in `apps/api/src/appstore/manifest/rules.py`. Keuzes en redenen: [ADR-0002](adr/ADR-0002-manifeststandaard-v1.md),
+regels in `apps/api/src/appstore/manifest/rules.py`; controlelijsten zonder installatie:
+[`schemas/checklist-v1.schema.json`](../schemas/checklist-v1.schema.json). Keuzes en redenen: [ADR-0002](adr/ADR-0002-manifeststandaard-v1.md),
 vertaling naar TrueNAS: [ADR-0004](adr/ADR-0004-truenas-vertaling.md) en [TRUENAS_APP_VALUES.md](TRUENAS_APP_VALUES.md).
 Voorbeeld: [`deploy/manifest/appstore-en-fork.manifest.yaml`](../deploy/manifest/appstore-en-fork.manifest.yaml).
 
@@ -10,7 +11,8 @@ Voorbeeld: [`deploy/manifest/appstore-en-fork.manifest.yaml`](../deploy/manifest
 ```
 jl-manifest validate mijn-app.manifest.yaml            # Nederlandse uitvoer, exit 0 = geldig
 jl-manifest validate --format json mijn-app.manifest.yaml
-jl-manifest validate --strict …                         # waarschuwingen tellen als fout (release-CI)
+jl-manifest validate --strict …                         # release-CI: elke niet-geaccepteerde waarschuwing is een fout
+jl-manifest checklist I01_TRUENAS_BASIS.checklist.yaml # kind: checklist (I-document zonder installatie)
 jl-manifest translate mijn-app.manifest.yaml --params p.json --truenas-version <gemeten> --ix-app-version <gemeten>
 ```
 Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert niets uit).
@@ -21,16 +23,17 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 |---|---|
 | `manifest_version` | altijd `"1"` |
 | `app_id`, `name`, `owner_repo`, `category`, `description_nl`, `version` | identiteit; `app_id` = vaste naam van de app en voorgestelde TrueNAS-appnaam (`^[a-z]([-a-z0-9]*[a-z0-9])?$`, max 40) |
-| `install.method` | `custom_app` (één image + formulierwaarden) of `catalog_app` (officiële TrueNAS-catalogus); compose/YAML is verboden |
+| `install.method` (+ `install.reason`) | `custom_app` (één image + formulierwaarden; standaard, ook voor derden-apps met één container) of `catalog_app` (officiële TrueNAS-catalogus, met reden: `meerdere_containers` of een NL-reden); compose/YAML is verboden |
 | `image` | `repository` (zonder tag), `tag` (exacte versie, nooit `latest`), `digest` (`sha256:…`, verplicht voor upstream; eigen GHCR-images: release-CI) |
 | `custom_app` | het standaardformulier: `storage` (host_path via parameter, ix_volume, tmpfs), `env`, `resources`, `gpu` (`none`, `intel_render` of `{param: …}` naar een `gpu`-parameter), `run_as`, `timezone`, `restart_policy`, `portal`; **geen** `ports` meer (1.2) |
 | `catalog` + `values` | `train`/`app`/exacte `version` + waarden; parameters als `{"param": "<naam>"}` |
-| `parameters` | getypt (`string, integer, boolean, port, path, dataset, url, timezone, duration, secret_ref, gpu`) met `source: wizard, dataset_picker, secret, generated, default`; alleen `default` mag een default hebben; `example` wordt nooit als waarde gebruikt |
+| `parameters` | getypt (`string, integer, boolean, port, path, dataset, url, timezone, duration, secret_ref, gpu`) met `source: wizard, dataset_picker, secret, generated, default`; alleen `default` mag een default hebben; `example` wordt nooit als waarde gebruikt; `secret: true` + `source: generated` = een geheim dat de Hub maakt (vault); een naam die met `HUB_` begint is gereserveerd |
 | `storage` | `name`, `mount` (in de container), `kind: config, data, media, scratch`, `required_dataset_role` |
-| `network` | `ports` — **de enige bron** voor de poorten van het formulier —, `host_network` (+ `host_network_reason`) |
+| `network` | `ports` — **de enige bron** voor de poorten van het formulier; `container_port` mag bij een catalogusapp `same_as_host` zijn —, `host_network` (+ `host_network_reason`) |
 | `privileges` + `privilege_reason` | `privileged: false`, `cap_add`, `devices`, `gpu: none, intel_render` (het **maximum**; `intel_render` vereist een reden én D08 in `decisions_required`); alles behalve niets vereist een reden |
-| `healthcheck` | `http` (pad + poort), `tcp` (poort) of `builtin` (HEALTHCHECK van de image) |
-| `backup` | `db_export` (`pg_dump, sqlite_backup, app_native, none`), `snapshot_datasets`, `rpo`/`rto` (ISO-8601 of parameter, D16) |
+| `healthcheck` | `http` (pad + poort), `tcp` (poort) of `builtin` (HEALTHCHECK van de image) + `monitor` (monitorplan) |
+| `backup` | `db_export.method` (`pg_dump, sqlite_backup, app_native, stopped_snapshot, none`), `snapshot_datasets`, `rpo`/`rto` (ISO-8601 of parameter, D16) |
+| `accepted_findings`, `post_install_checks` | geaccepteerde waarschuwingen uit de vaste lijst; taken voor de beheerder na installatie (contract 1.3) |
 | `dependencies`, `sso`, `risk` (≥ R2), `upgrade` (`migrations`, `tag_only_rollback_safe`), `decisions_required` (D01–D18), `docs`, `validation_status`, `compatibility`, `provenance` | beheer en herkomst |
 
 ## Wijzigingen in contract 1.2 (overgang, ADR-0008)
@@ -52,6 +55,45 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
   en incident). Meldt het doel welke versies de catalogus nog heeft (`target.available_versions`) en ontbreekt de
   vastgezette versie (of bij een Custom App elke geteste `ix-app`-versie), dan de blokkade `version_unavailable` met
   een voorstel; er wordt nooit stil een nieuwere versie gekozen. Niet gemeten: `version_availability_unknown`.
+
+## Wijzigingen in contract 1.3 (validator eerst, ADR-0013)
+
+Oude manifesten blijven tijdens de overgang **geldig**; de nieuwe eisen geven waarschuwingen, die in `--strict`
+(release-CI) een fout zijn. Zo kan elke repo zijn manifest bijwerken nadat deze validator er is.
+
+- **Catalogusapp met reden:** `install.method: catalog_app` vraagt `install.reason` (`meerdere_containers` of een
+  NL-reden waarom één container een catalogusapp nodig heeft); ontbreekt hij → `install_reason_ontbreekt`. Een
+  upstream-image als Custom App noemt in `privilege_reason` het restrisico "zonder no-new-privileges kan een
+  setuid-programma binnen de container root worden" (anders `restrisico_nnp_ontbreekt`).
+- **Gereserveerde namen:** een parameter- of `custom_app.env`-naam die met `HUB_` begint (ook een sleutel of `name` in
+  de `values` van een catalogusapp) → fout `reserved_env`. `HUB_URL`, `HUB_ENROLLMENT_TOKEN` en
+  `HUB_KEY_FINGERPRINT` zet de vertaling zelf als de Hub koppelt.
+- **Geheimen die de Hub maakt:** `source: generated` + `secret: true` (contract 1.3 §3.1 a). De waarde staat nooit in
+  het manifest (geen `default` of `example`, anders `secret_literal_forbidden`); in het formulier of de `values` geeft
+  dat de **waarschuwing** `secret_in_form` (te accepteren) in plaats van een fout. `secret: true` met een andere
+  `source` dan `generated`/`secret` → `secret_param_invalid`. Tot de vault-verwijzing in de vertaling bestaat (P2,
+  C1.3-ASF-14) weigert de vertaling een geheime waarde (`parameter_value_not_allowed`): nooit een geheim in een payload.
+- **`accepted_findings: [{code, reden_nl}]`** — alleen `backup_db_export_none`, `secret_in_form` (alleen bij een
+  geheim dat de Hub maakt) en `digest_pending_release` (alleen vóór de eerste release van een eigen image).
+  `--strict` faalt op elke andere waarschuwing én op een geaccepteerde code die niet (meer) optreedt
+  (`accepted_finding_unused`). Fouten zijn nooit te accepteren. Een losse uitzonderingenlijst buiten het manifest
+  vervalt. In de uitvoer heet zo'n bevinding `GEACC.` (`accepted: true`, `accepted_reden_nl`); het rapport heeft
+  `accepted` en `strict_valid`.
+- **`backup.db_export.method: stopped_snapshot`** (app stoppen + ZFS-snapshot) voor apps zonder exportfunctie; vraagt
+  minstens één dataset in `snapshot_datasets` (anders `stopped_snapshot_without_dataset`); de stilstand telt mee in
+  `rto`.
+- **`post_install_checks: [{id, soort: http|handmatig, beschrijving_nl}]`** voor open eerste-gebruik-vensters en
+  runtime-kenmerken; de Hub toont ze na installatie als taak; tot de beheerder ze bevestigt is de app niet "gezond".
+- **`network.ports[].container_port: same_as_host`** alleen bij een catalogusapp waarvan de container op de gekozen
+  hostpoort luistert (anders `same_as_host_not_allowed`).
+- **Monitorplan:** `healthcheck.monitor: {pad, verwachte_status, timeout_s, interval_s}`; ontbreekt → waarschuwing
+  `healthcheck_monitor_missing`. De Hub (B09) maakt er een monitorplan van; de beheerder neemt het over in Uptime Kuma
+  en bevestigt het per monitor ("handmatig bevestigd", nooit "gevalideerd door de Hub").
+- **Documentsoort `kind: checklist`** (`install: {method: none}`) voor I-documenten zonder installatie (bv. I01, I02),
+  met een eigen schema ([`schemas/checklist-v1.schema.json`](../schemas/checklist-v1.schema.json), afgeleid van het
+  formaat van jelly-leon-platform, met `kind` en `install` erbij). Valideren met `jl-manifest checklist`; de validator
+  van manifest v1 weigert hem (`checklist_not_installable`). Regels: stap-ID's horen bij het document, besluiten van een
+  stap staan in `besluiten`, alleen-lezen TrueNAS-methoden, geen voorbeeldwaarden.
 
 ## Adoptiemanifest van een bestaande app (B08-002, ADR-0010)
 
@@ -112,6 +154,10 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `compose_forbidden` | Compose/YAML-installatie is verboden. |
 | `install_method_forbidden` | Installatiemethode is niet toegestaan. |
 | `adoption_manifest_not_installable` | Adoptiemanifest van een bestaande app: alleen inventaris, nooit installeren. |
+| `checklist_not_installable` | Controlelijst (kind: checklist) zonder installatie: eigen schema, nooit installeren. |
+| `install_reason_ontbreekt` | Catalogusapp zonder install.reason (waarschuwing; fout in --strict). |
+| `restrisico_nnp_ontbreekt` | Upstream-image als Custom App noemt het restrisico zonder no-new-privileges niet. |
+| `accepted_finding_unused` | Geaccepteerde code treedt niet (meer) op; haal hem uit accepted_findings. |
 | `tag_missing` | Image-tag ontbreekt. |
 | `mutable_tag_forbidden` | Veranderlijke tag (zoals latest) is verboden. |
 | `tag_in_repository` | Tag of digest hoort niet in het repository-veld. |
@@ -154,6 +200,8 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `example_value_as_real` | Voorbeeldwaarde gebruikt als echte waarde. |
 | `secret_literal_forbidden` | Geheim als letterlijke waarde in het manifest. |
 | `secret_in_form` | Geheim zou in het Custom App-formulier terechtkomen. |
+| `secret_param_invalid` | secret: true alleen bij source generated (de Hub maakt hem) of secret. |
+| `reserved_env` | HUB_* is gereserveerd voor het koppelen en geen parameter of omgevingsvariabele. |
 | `interpolation_forbidden` | Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan. |
 | `decision_not_listed` | Besluit ontbreekt in decisions_required. |
 | `risk_below_policy_minimum` | Risicoklasse lager dan het platformminimum. |
@@ -161,7 +209,10 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `backup_unknown_dataset` | Back-up verwijst naar onbekende opslag. |
 | `backup_dataset_not_covered` | Data-opslag zit niet in de snapshotlijst. |
 | `backup_db_export_none` | Geen database-export opgegeven. |
+| `stopped_snapshot_without_dataset` | stopped_snapshot zonder dataset in snapshot_datasets. |
 | `healthcheck_unknown_port` | Healthcheck verwijst naar onbekende poort. |
+| `healthcheck_monitor_missing` | Geen monitorplan (healthcheck.monitor) voor Uptime Kuma. |
+| `same_as_host_not_allowed` | container_port same_as_host alleen bij een catalogusapp. |
 | `portal_unknown_port` | Portal verwijst naar onbekende poort. |
 | `dependency_self` | App hangt van zichzelf af. |
 | `compatibility_missing` | Geen TrueNAS-compatibiliteit opgegeven. |

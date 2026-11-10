@@ -328,7 +328,7 @@ def requirements(m: Manifest) -> dict[str, Any]:
         "storage": [s.model_dump() for s in m.storage],
         "privileges": m.privileges.model_dump(),
         "privilege_reason": m.privilege_reason,
-        "gpu": m.privileges.gpu,  # het maximum (contract 1.2 §9)
+        "gpu": m.privileges.gpu,  # het maximum (contract 1.3 §9)
         "gpu_request": (
             None
             if m.custom_app is None
@@ -344,6 +344,11 @@ def requirements(m: Manifest) -> dict[str, Any]:
         "parameters": [{k: v for k, v in p.model_dump().items() if k != "example"} for p in m.parameters],
         "sso": m.sso,
         "compatibility": m.compatibility.model_dump() if m.compatibility else None,
+        # contract 1.3 §9: reden van de installatiemethode, taken na installatie (gate) en het monitorplan
+        "install_reason": m.install.reason,
+        "post_install_checks": [c.model_dump() for c in m.post_install_checks],
+        "monitor": m.healthcheck.monitor.model_dump() if m.healthcheck.monitor else None,
+        "accepted_findings": [a.model_dump() for a in m.accepted_findings],
     }
 
 

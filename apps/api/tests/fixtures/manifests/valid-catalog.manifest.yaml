@@ -1,4 +1,4 @@
-# TESTFIXTURE (contract 1.2 §9) — fictieve catalogusapp; train/app/versie zijn testwaarden.
+# TESTFIXTURE (contract 1.3 §9) — fictieve catalogusapp; train/app/versie zijn testwaarden.
 manifest_version: "1"
 app_id: voorbeeld-catalogus
 name: Voorbeeld catalogus
@@ -6,7 +6,7 @@ owner_repo: lvos04/appstore-en-fork
 category: photos
 description_nl: Fictieve catalogusapp met meerdere containers voor de tests.
 version: "2.4.1"
-install: {method: catalog_app}
+install: {method: catalog_app, reason: meerdere_containers}
 catalog: {train: community, app: voorbeeldapp, version: "1.6.12"}
 values:
   TZ: {param: timezone}
@@ -27,7 +27,9 @@ network:
     - {name: web, container_port: 2283, host_port: {param: web_port}, protocol: tcp}
   host_network: false
 privileges: {privileged: false, cap_add: [], devices: [], gpu: none}
-healthcheck: {type: builtin}
+healthcheck:
+  type: builtin
+  monitor: {pad: /api/server/ping, verwachte_status: 200, timeout_s: 10, interval_s: 60}
 backup:
   db_export: {method: app_native, description_nl: Ingebouwde database-dump van de app.}
   snapshot_datasets: [library]

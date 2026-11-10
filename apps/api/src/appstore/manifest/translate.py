@@ -362,7 +362,9 @@ def _custom_app_values(
         if host is None:
             continue
         host_port_by_name[p.name] = int(host)
-        ports.append(IxPort(port_number=int(host), container_port=p.container_port, protocol=p.protocol))
+        # same_as_host is alleen voor catalogusapps; de validator weigert het bij custom_app (same_as_host_not_allowed)
+        container = int(host) if p.container_port == "same_as_host" else p.container_port
+        ports.append(IxPort(port_number=int(host), container_port=container, protocol=p.protocol))
     storage: list[IxStorage] = []
     for idx, sb in enumerate(ca.storage):
         decl = decls[sb.name]

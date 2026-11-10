@@ -1,4 +1,4 @@
-# TESTFIXTURE (contract 1.2 §9) — fictieve upstream-app; image, digest en versies zijn testwaarden, geen catalogusgegevens.
+# TESTFIXTURE (contract 1.3 §9) — fictieve upstream-app; image, digest en versies zijn testwaarden, geen catalogusgegevens.
 manifest_version: "1"
 app_id: voorbeeld-web
 name: Voorbeeld web
@@ -42,8 +42,17 @@ network:
   host_network: false
   host_network_reason: null
 privileges: {privileged: false, cap_add: [], devices: [], gpu: intel_render}
-privilege_reason: Hardware-transcodering via de Intel-GPU (/dev/dri).
-healthcheck: {type: http, path: /healthz, port: web, interval_s: 30, timeout_s: 5, retries: 3}
+privilege_reason: >-
+  Hardware-transcodering via de Intel-GPU (/dev/dri). Restrisico: het formulier zet geen no-new-privileges; zonder
+  no-new-privileges kan een setuid-programma binnen de container root worden.
+healthcheck:
+  type: http
+  path: /healthz
+  port: web
+  interval_s: 30
+  timeout_s: 5
+  retries: 3
+  monitor: {pad: /healthz, verwachte_status: 200, timeout_s: 5, interval_s: 60}
 backup:
   db_export: {method: none}
   snapshot_datasets: [config]

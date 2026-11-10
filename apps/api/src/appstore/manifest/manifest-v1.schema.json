@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/lvos04/appstore-en-fork/schemas/manifest-v1.schema.json",
   "title": "TrueNAS Home Platform V2 — app-manifest v1",
-  "description": "Manifeststandaard B08-001 (platformcontracten 1.2 §9). Installatie uitsluitend als standaard TrueNAS Custom App (ix-app) of officiële catalogusapp; compose/YAML is verboden. Poorten staan alleen in network.ports; network.joins_platform_network en custom_app.ports zijn vervallen en worden alleen nog voor de overgang geaccepteerd (melding deprecated_field). Semantische veiligheidsregels (privileged, Docker-socket, hostpaden, latest, digest, voorbeeldwaarden, GPU) staan in de validator (appstore.manifest.rules).",
+  "description": "Manifeststandaard B08-001 (platformcontract 1.3 §9). Installatie uitsluitend als standaard TrueNAS Custom App (ix-app) of officiële catalogusapp; compose/YAML is verboden. Poorten staan alleen in network.ports; network.joins_platform_network en custom_app.ports zijn vervallen en worden alleen nog voor de overgang geaccepteerd (melding deprecated_field). Nieuw in 1.3: install.reason (catalogusapp met reden), geheime parameters die de Hub maakt (source generated + secret true), accepted_findings (alleen backup_db_export_none, secret_in_form, digest_pending_release), backup.db_export stopped_snapshot, post_install_checks, network.ports[].container_port same_as_host (catalogusapps) en healthcheck.monitor; HUB_* is gereserveerd (reserved_env). Documentsoorten kind: adoption en kind: checklist hebben een eigen schema en worden door deze validator geweigerd. Semantische veiligheidsregels (privileged, Docker-socket, hostpaden, latest, digest, voorbeeldwaarden, GPU, HUB_*) staan in de validator (appstore.manifest.rules).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -25,7 +25,15 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["method"],
-      "properties": {"method": {"enum": ["custom_app", "catalog_app"]}}
+      "properties": {
+        "method": {"enum": ["custom_app", "catalog_app"]},
+        "reason": {
+          "description": "Waarom deze installatiemethode (contract 1.3 §9): bij catalog_app 'meerdere_containers' of een NL-reden waarom een catalogusapp nodig is bij één container; ontbreekt hij → install_reason_ontbreekt (waarschuwing, fout in --strict).",
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 500
+        }
+      }
     },
     "image": {"$ref": "#/$defs/Image"},
     "custom_app": {"$ref": "#/$defs/CustomApp"},
@@ -55,7 +63,17 @@
     },
     "validation_status": {"enum": ["unvalidated", "unit_tested", "sim_tested", "validated_on_nas"]},
     "compatibility": {"$ref": "#/$defs/Compatibility"},
-    "provenance": {"$ref": "#/$defs/Provenance"}
+    "provenance": {"$ref": "#/$defs/Provenance"},
+    "accepted_findings": {
+      "description": "Geaccepteerde waarschuwingen (contract 1.3 §9), alleen uit de vaste lijst. --strict faalt op elke andere waarschuwing en op een geaccepteerde code die niet (meer) optreedt. Fouten zijn nooit te accepteren.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/AcceptedFinding"}
+    },
+    "post_install_checks": {
+      "description": "Taken voor de beheerder na installatie (open eerste-gebruik-vensters, runtime-kenmerken die pas bij starten blijken); tot de bevestiging is de app niet 'gezond' (gate).",
+      "type": "array",
+      "items": {"$ref": "#/$defs/PostInstallCheck"}
+    }
   },
   "allOf": [
     {
@@ -159,7 +177,10 @@
       "required": ["name", "container_port", "host_port", "protocol"],
       "properties": {
         "name": {"$ref": "#/$defs/Name"},
-        "container_port": {"$ref": "#/$defs/Port"},
+        "container_port": {
+          "description": "same_as_host alleen voor catalogusapps waarvan de container op de gekozen hostpoort luistert (contract 1.3 §9).",
+          "oneOf": [{"$ref": "#/$defs/Port"}, {"const": "same_as_host"}]
+        },
         "host_port": {"oneOf": [{"$ref": "#/$defs/Port"}, {"$ref": "#/$defs/ParamRef"}]},
         "protocol": {"enum": ["tcp", "udp"]},
         "purpose_nl": {"type": "string", "maxLength": 300}
@@ -220,7 +241,11 @@
         "default": {"type": ["string", "integer", "boolean"]},
         "example": {"type": ["string", "integer", "boolean"]},
         "dataset_role": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,40}$"},
-        "decision": {"type": "string", "pattern": "^D(0[1-9]|1[0-8])$"}
+        "decision": {"type": "string", "pattern": "^D(0[1-9]|1[0-8])$"},
+        "secret": {
+          "description": "Geheime waarde (contract 1.3 §3.1 a, §9): met source generated maakt de Hub hem (vault) en geeft hem alleen in de values mee; de waarde staat nooit in het manifest.",
+          "type": "boolean"
+        }
       }
     },
     "StorageDecl": {
@@ -289,7 +314,8 @@
         "interval_s": {"type": "integer", "minimum": 5, "maximum": 3600},
         "timeout_s": {"type": "integer", "minimum": 1, "maximum": 300},
         "retries": {"type": "integer", "minimum": 1, "maximum": 20},
-        "start_period_s": {"type": "integer", "minimum": 0, "maximum": 3600}
+        "start_period_s": {"type": "integer", "minimum": 0, "maximum": 3600},
+        "monitor": {"$ref": "#/$defs/Monitor"}
       },
       "allOf": [
         {"if": {"properties": {"type": {"const": "http"}}}, "then": {"required": ["path", "port"]}},
@@ -306,7 +332,7 @@
           "additionalProperties": false,
           "required": ["method"],
           "properties": {
-            "method": {"enum": ["pg_dump", "sqlite_backup", "app_native", "none"]},
+            "method": {"enum": ["pg_dump", "sqlite_backup", "app_native", "stopped_snapshot", "none"]},
             "description_nl": {"type": "string", "maxLength": 500}
           }
         },
@@ -354,6 +380,37 @@
         "truenas_min_version": {"type": "string", "pattern": "^[0-9]{2}\\.[0-9]{1,2}(\\.[0-9]+){0,3}$"},
         "truenas_max_version": {"type": ["string", "null"], "pattern": "^[0-9]{2}\\.[0-9]{1,2}(\\.[0-9]+){0,3}$"},
         "ix_app_min_version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+      }
+    },
+    "AcceptedFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "reden_nl"],
+      "properties": {
+        "code": {"enum": ["backup_db_export_none", "secret_in_form", "digest_pending_release"]},
+        "reden_nl": {"type": "string", "minLength": 10, "maxLength": 1000}
+      }
+    },
+    "PostInstallCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "soort", "beschrijving_nl"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Name"},
+        "soort": {"enum": ["http", "handmatig"]},
+        "beschrijving_nl": {"type": "string", "minLength": 10, "maxLength": 1000}
+      }
+    },
+    "Monitor": {
+      "description": "Monitorplan (contract 1.3 §9): de Hub (B09) maakt er per app een monitorplan van; de beheerder neemt het over in Uptime Kuma en bevestigt het per monitor ('handmatig bevestigd').",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pad", "verwachte_status", "timeout_s", "interval_s"],
+      "properties": {
+        "pad": {"type": "string", "pattern": "^/[A-Za-z0-9._~/?=&-]*$", "maxLength": 255},
+        "verwachte_status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "timeout_s": {"type": "integer", "minimum": 1, "maximum": 300},
+        "interval_s": {"type": "integer", "minimum": 10, "maximum": 86400}
       }
     },
     "Provenance": {

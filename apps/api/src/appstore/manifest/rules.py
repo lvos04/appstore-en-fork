@@ -16,7 +16,7 @@ import unicodedata
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from .findings import Finding, error, warning
+from .findings import Finding, Severity, error, warning
 from .model import (
     Manifest,
     Parameter,
@@ -545,18 +545,27 @@ def _param_refs(value: Any, path: str, key: str = "") -> Iterator[tuple[str, str
 
 
 # ---------------------------------------------------------------------------------------------- regels
+#: contract 1.3 §9: restrisico dat een upstream-image als Custom App in ``privilege_reason`` noemt
+NNP_RISK_NL = "zonder no-new-privileges kan een setuid-programma binnen de container root worden"
+_HUB_RESERVED = re.compile(r"^hub_", re.I)
+
+
 class _Rules:
     def __init__(self, m: Manifest) -> None:
         self.m = m
         self.out: list[Finding] = []
         self.params: dict[str, Parameter] = {p.name: p for p in m.parameters}
         self.used_params: set[str] = set()
+        #: indexen in ``out`` van waarschuwingen die ``accepted_findings`` mag accepteren (contract 1.3 §9)
+        self.acceptable: set[int] = set()
 
     # -- registratie
     def err(self, code: str, path: str, msg: str) -> None:
         self.out.append(error(code, path, msg))
 
-    def warn(self, code: str, path: str, msg: str) -> None:
+    def warn(self, code: str, path: str, msg: str, *, acceptable: bool = False) -> None:
+        if acceptable:
+            self.acceptable.add(len(self.out))
         self.out.append(warning(code, path, msg))
 
     def ref(self, ref: ParamRef, path: str, allowed_types: Iterable[str], what: str) -> Parameter | None:
@@ -591,10 +600,111 @@ class _Rules:
         self.dependencies()
         self.risk_and_upgrade()
         self.meta()
+        self.contract_1_3()
         for name, param in self.params.items():
             if name not in self.used_params and param.decision is None:
                 self.warn("parameter_unused", f"parameters[{name}]", f"Parameter {name!r} wordt nergens gebruikt.")
+        self.accept()
         return self.out
+
+    # -- contract 1.3 §9
+    def contract_1_3(self) -> None:
+        m = self.m
+        if m.install.method == "catalog_app" and not (m.install.reason or "").strip():
+            self.warn(
+                "install_reason_ontbreekt",
+                "install.reason",
+                "Een catalogusapp vraagt install.reason: 'meerdere_containers' of een reden waarom een catalogusapp "
+                "nodig is bij één container (standaard is een Custom App).",
+            )
+        upstream = m.install.method == "custom_app" and m.image is not None and not is_own_image(m.image.repository)
+        if upstream and "no-new-privileges" not in (m.privilege_reason or "").lower():
+            self.warn(
+                "restrisico_nnp_ontbreekt",
+                "privilege_reason",
+                "Een upstream-image als Custom App draait zonder no-new-privileges (het formulier zet die niet). "
+                f"Noem in privilege_reason het restrisico: '{NNP_RISK_NL}'.",
+            )
+        # gereserveerde namen (§3.2): HUB_* is het koppelen van de Hub, nooit een parameter of env
+        for idx, p in enumerate(m.parameters):
+            if _HUB_RESERVED.match(p.name):
+                self.err("reserved_env", f"parameters[{idx}].name", f"{p.name!r}: HUB_* is gereserveerd (§3.2).")
+            if p.secret and p.source not in ("generated", "secret"):
+                self.err(
+                    "secret_param_invalid",
+                    f"parameters[{idx}].secret",
+                    f"Parameter {p.name!r} is geheim maar heeft source {p.source!r}; gebruik 'generated' (de Hub maakt "
+                    "hem in zijn vault) of 'secret'.",
+                )
+            if p.secret and p.example is not None:
+                self.err(
+                    "secret_literal_forbidden",
+                    f"parameters[{idx}].example",
+                    f"Geheime parameter {p.name!r} heeft een voorbeeldwaarde; de waarde staat nooit in het manifest.",
+                )
+        if m.custom_app is not None:
+            for idx, env in enumerate(m.custom_app.env):
+                if _HUB_RESERVED.match(env.name):
+                    self.err(
+                        "reserved_env",
+                        f"custom_app.env[{idx}].name",
+                        f"{env.name} is gereserveerd: HUB_URL, HUB_ENROLLMENT_TOKEN en HUB_KEY_FINGERPRINT zet de "
+                        "vertaling zelf als de Hub koppelt (§3.2).",
+                    )
+        if m.values is not None:
+            for path in _hub_names_in_values(m.values, "values"):
+                self.err(
+                    "reserved_env", path, "HUB_* is gereserveerd en hoort niet in de waarden van een catalogusapp."
+                )
+        for idx, port in enumerate(m.network.ports):
+            if port.container_port == "same_as_host" and m.install.method != "catalog_app":
+                self.err(
+                    "same_as_host_not_allowed",
+                    f"network.ports[{idx}].container_port",
+                    "container_port 'same_as_host' mag alleen bij een catalogusapp waarvan de container op de gekozen "
+                    "hostpoort luistert; geef bij een Custom App de echte containerpoort.",
+                )
+        seen: set[str] = set()
+        for idx, check in enumerate(m.post_install_checks):
+            if check.id in seen:
+                self.err("duplicate_name", f"post_install_checks[{idx}].id", f"Controle {check.id!r} komt dubbel voor.")
+            seen.add(check.id)
+        if m.healthcheck.monitor is None:
+            self.warn(
+                "healthcheck_monitor_missing",
+                "healthcheck.monitor",
+                "Geen monitorplan: geef healthcheck.monitor {pad, verwachte_status, timeout_s, interval_s}; de Hub maakt "
+                "er een monitorplan van dat de beheerder in Uptime Kuma overneemt.",
+            )
+
+    def accept(self) -> None:
+        """``accepted_findings`` (contract 1.3 §9): alleen waarschuwingen uit de vaste lijst, alleen waar de voorwaarde
+        geldt (``secret_in_form`` alleen bij een parameter met ``source: generated`` en ``secret: true``). Een
+        geaccepteerde code die niet (meer) optreedt geeft ``accepted_finding_unused`` (faalt in --strict). Fouten zijn
+        nooit te accepteren."""
+        accepted: dict[str, str] = {}
+        for idx, a in enumerate(self.m.accepted_findings):
+            if a.code in accepted:
+                self.err("duplicate_name", f"accepted_findings[{idx}].code", f"Code {a.code!r} staat er dubbel in.")
+            accepted.setdefault(a.code, a.reden_nl)
+        used: set[str] = set()
+        for idx, f in enumerate(self.out):
+            if f.severity is Severity.WARNING and f.code in accepted and idx in self.acceptable:
+                self.out[idx] = f.model_copy(update={"accepted": True, "accepted_reden_nl": accepted[f.code]})
+                used.add(f.code)
+        for idx, a in enumerate(self.m.accepted_findings):
+            if a.code not in used:
+                self.warn(
+                    "accepted_finding_unused",
+                    f"accepted_findings[{idx}]",
+                    f"{a.code!r} wordt geaccepteerd maar treedt niet (meer) op"
+                    + (
+                        " bij een geheim dat de Hub maakt (source generated + secret true)"
+                        if a.code == "secret_in_form"
+                        else ""
+                    )
+                    + "; haal de regel weg.",
+                )
 
     # -- parameters
     def parameters(self) -> None:
@@ -686,6 +796,7 @@ class _Rules:
                     "digest_pending_release",
                     "image.digest",
                     "Eigen image zonder digest: de release-CI vult die in; installeren vereist de digest.",
+                    acceptable=True,
                 )
             else:
                 self.err(
@@ -801,7 +912,18 @@ class _Rules:
                     ("string", "integer", "boolean", "port", "url", "timezone", "duration", "secret_ref", "dataset"),
                     f"Omgevingsvariabele {env.name}",
                 )
-                if param is not None and (param.type == "secret_ref" or param.source in ("secret", "generated")):
+                if param is not None and param.hub_generated_secret:
+                    # contract 1.3 §3.1 a: de Hub maakt het geheim (vault) en geeft het alleen in de values mee
+                    self.warn(
+                        "secret_in_form",
+                        path,
+                        f"{env.name} krijgt een geheim dat de Hub maakt ({param.name!r}, source generated); het staat "
+                        "nooit in het manifest, een log of evidence.",
+                        acceptable=True,
+                    )
+                elif param is not None and (
+                    param.type == "secret_ref" or param.source in ("secret", "generated") or param.secret
+                ):
                     self.err(
                         "secret_in_form",
                         path,
@@ -896,12 +1018,14 @@ class _Rules:
                     path,
                     "Apparaten en koppelpaden moeten letterlijk (en dus beoordeelbaar) in het manifest staan.",
                 )
-            if param.source in ("secret", "generated") or param.type == "secret_ref":
+            if param.source in ("secret", "generated") or param.type == "secret_ref" or param.secret:
                 self.warn(
                     "secret_in_form",
                     path,
                     f"Geheim {name!r} gaat als (door TrueNAS als privé gemarkeerde) catalogus-waarde mee; "
-                    "controleer dat het niet in logs of evidence verschijnt.",
+                    "controleer dat het niet in logs of evidence verschijnt."
+                    + (" De Hub maakt het (vault, contract 1.3 §3.1 a)." if param.hub_generated_secret else ""),
+                    acceptable=param.hub_generated_secret,
                 )
 
     # -- netwerk
@@ -1041,7 +1165,16 @@ class _Rules:
             self.warn(
                 "backup_db_export_none",
                 "backup.db_export",
-                "Databasemigraties zonder consistente database-export; rollback vereist dan een snapshot-restore.",
+                "Databasemigraties zonder consistente database-export; rollback vereist dan een snapshot-restore. "
+                "Kan de app niet exporteren, gebruik dan stopped_snapshot (app stoppen + ZFS-snapshot).",
+                acceptable=True,
+            )
+        if b.db_export.method == "stopped_snapshot" and not b.snapshot_datasets:
+            self.err(
+                "stopped_snapshot_without_dataset",
+                "backup.snapshot_datasets",
+                "stopped_snapshot (app stoppen + ZFS-snapshot) vraagt minstens één dataset in snapshot_datasets; de "
+                "stilstand telt mee in rto.",
             )
         for field in ("rpo", "rto"):
             value = getattr(b, field)
@@ -1093,16 +1226,32 @@ class _Rules:
             )
 
 
-def _ports_key(ports: list[PortBinding]) -> list[tuple[str, int, str, str]]:
+def _ports_key(ports: list[PortBinding]) -> list[tuple[str, str, str, str]]:
     return sorted(
         (
             p.name,
-            p.container_port,
+            str(p.container_port),
             p.protocol,
             p.host_port.param if isinstance(p.host_port, ParamRef) else str(p.host_port),
         )
         for p in ports
     )
+
+
+def _hub_names_in_values(value: Any, path: str) -> Iterator[str]:
+    """Paden in catalogus-``values`` met een gereserveerde naam (sleutel ``HUB_…`` of ``{name: "HUB_…"}``)."""
+    if isinstance(value, dict):
+        name = value.get("name")
+        if isinstance(name, str) and _HUB_RESERVED.match(name):
+            yield f"{path}.name"
+        for key, item in value.items():
+            sub = f"{path}.{key}"
+            if isinstance(key, str) and _HUB_RESERVED.match(key):
+                yield sub
+            yield from _hub_names_in_values(item, sub)
+    elif isinstance(value, list):
+        for idx, item in enumerate(value):
+            yield from _hub_names_in_values(item, f"{path}[{idx}]")
 
 
 def check_manifest(manifest: Manifest) -> list[Finding]:

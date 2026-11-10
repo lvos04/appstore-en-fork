@@ -100,7 +100,7 @@ def _requested_ports(manifest: Manifest, payload: AppCreatePayload | None) -> li
             out.append((port["port_number"], str(port.get("protocol", "tcp")).lower()))
     if manifest.network.host_network or values.get("host_network") is True:
         # host network: de container bindt zijn eigen poorten direct op de NAS (ports-lijst is dan leeg)
-        out.extend((p.container_port, p.protocol) for p in manifest.network.ports)
+        out.extend((p.container_port, p.protocol) for p in manifest.network.ports if isinstance(p.container_port, int))
     return sorted(set(out))
 
 

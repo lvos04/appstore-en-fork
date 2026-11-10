@@ -1,6 +1,7 @@
 """``jl-manifest`` — manifest v1 valideren, vertalen en ondertekenen vanaf de commandoregel (ontwikkeling/CI).
 
     jl-manifest validate <bestand> [--format text|json] [--strict]
+    jl-manifest checklist <bestand> [--format text|json]     (kind: checklist, contract 1.3 §9)
     jl-manifest translate <bestand> --params <params.json> --truenas-version X --ix-app-version Y [--app-name N]
     jl-manifest sign <bestand> --key <ed25519.pem>          (schrijft <bestand>.sig)
     jl-manifest verify <bestand> --public-key <sleutel>
@@ -36,7 +37,7 @@ def _read(path: str) -> bytes:
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     report, _, _ = validate_text(_read(args.file))
-    ok = report.valid and not (args.strict and report.warnings)
+    ok = report.strict_valid if args.strict else report.valid
     if args.format == "json":
         out: dict[str, Any] = report.model_dump(mode="json")
         out["file"] = args.file
@@ -46,9 +47,27 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     else:
         print(f"{args.file}")
         print(report.as_text())
-        if args.strict and report.warnings and report.valid:
-            print("Ongeldig in --strict-modus: waarschuwingen tellen als fout.")
+        if args.strict and report.valid and not report.strict_valid:
+            print(
+                "Ongeldig in --strict-modus: elke waarschuwing die niet met reden in accepted_findings staat, telt "
+                "als fout (contract 1.3 §9)."
+            )
     return 0 if ok else 1
+
+
+def _cmd_checklist(args: argparse.Namespace) -> int:
+    from .checklist import validate_checklist_text
+
+    report = validate_checklist_text(_read(args.file))
+    if args.format == "json":
+        out: dict[str, Any] = report.model_dump(mode="json")
+        out["file"] = args.file
+        out["result"] = "geldig" if report.valid else "ongeldig"
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(args.file)
+        print(report.as_text().replace("Manifest ", "Controlelijst ", 1))
+    return 0 if report.valid else 1
 
 
 def _cmd_translate(args: argparse.Namespace) -> int:
@@ -120,6 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=("text", "json"), default="text")
     p.add_argument("--strict", action="store_true", help="waarschuwingen tellen als fout")
     p.set_defaults(func=_cmd_validate)
+    c = sub.add_parser("checklist", help="valideer een controlelijst (kind: checklist, I-document zonder installatie)")
+    c.add_argument("file")
+    c.add_argument("--format", choices=("text", "json"), default="text")
+    c.set_defaults(func=_cmd_checklist)
     t = sub.add_parser("translate", help="vertaal naar TrueNAS app.create-waarden (voert niets uit)")
     t.add_argument("file")
     t.add_argument("--params", help="JSON-bestand met parameterwaarden")

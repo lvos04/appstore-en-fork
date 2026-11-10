@@ -1,7 +1,10 @@
 """Validator van manifest v1: veilige lader → compose-detectie → JSON Schema → getypt model → semantische regels.
 
 Uitkomst is een :class:`ValidationReport` met machineleesbare codes en Nederlandse uitleg. ``valid`` is alleen
-``True`` als er géén fouten zijn; waarschuwingen blokkeren niet (behalve met ``strict=True``).
+``True`` als er géén fouten zijn; waarschuwingen blokkeren niet. ``strict_valid`` (release-CI, ``--strict``) vraagt
+bovendien dat elke waarschuwing met reden in ``accepted_findings`` staat (contract 1.3 §9: alleen
+``backup_db_export_none``, ``secret_in_form`` bij een geheim dat de Hub maakt, en ``digest_pending_release``).
+Documentsoorten ``kind: adoption`` en ``kind: checklist`` worden hier geweigerd; ze hebben een eigen schema.
 """
 
 from __future__ import annotations
@@ -70,6 +73,10 @@ class ValidationReport(BaseModel):
     validator_version: str
     errors: int
     warnings: int
+    #: contract 1.3 §9: waarschuwingen die het manifest met reden accepteert (vaste lijst)
+    accepted: int = 0
+    #: geldig in ``--strict`` (release-CI): geen fouten en geen niet-geaccepteerde waarschuwing
+    strict_valid: bool = False
     findings: list[Finding]
 
     def codes(self) -> list[str]:
@@ -191,6 +198,8 @@ def _compose_findings(data: dict[str, Any]) -> list[Finding]:
 def build_report(data: dict[str, Any] | None, findings: list[Finding], manifest_sha: str | None) -> ValidationReport:
     findings = sorted(findings, key=lambda f: (f.severity is not Severity.ERROR, f.path, f.code))
     errors = sum(1 for f in findings if f.severity is Severity.ERROR)
+    accepted = sum(1 for f in findings if f.severity is Severity.WARNING and f.accepted)
+    open_warnings = len(findings) - errors - accepted
     install = data.get("install") if isinstance(data, dict) else None
     return ValidationReport(
         valid=errors == 0,
@@ -202,6 +211,8 @@ def build_report(data: dict[str, Any] | None, findings: list[Finding], manifest_
         validator_version=__version__,
         errors=errors,
         warnings=len(findings) - errors,
+        accepted=accepted,
+        strict_valid=errors == 0 and open_warnings == 0,
         findings=findings,
     )
 
@@ -217,6 +228,20 @@ def validate_data(data: Any) -> tuple[ValidationReport, Manifest | None]:
     except (TypeError, ValueError):
         return build_report(
             data, [error("wrong_type", "", "Het manifest bevat waarden die geen JSON zijn.")], None
+        ), None
+    if data.get("kind") == "checklist":
+        # contract 1.3 §9: documentsoort voor I-documenten zonder installatie, met een eigen schema
+        return build_report(
+            data,
+            [
+                error(
+                    "checklist_not_installable",
+                    "kind",
+                    "Dit is een controlelijst (kind: checklist, install.method none) voor een I-document zonder "
+                    "installatie. Valideer hem met 'jl-manifest checklist'; als installatie wordt hij geweigerd.",
+                )
+            ],
+            manifest_sha,
         ), None
     if data.get("kind") == "adoption":
         # B08-002: een adoptiemanifest beschrijft een bestaande app zoals hij nu draait; het is nooit installeerbaar

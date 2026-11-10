@@ -32,13 +32,18 @@ def test_valid_fixtures_have_no_findings() -> None:
         assert report.valid, report.as_text()
         assert model is not None
         assert report.findings == [], report.as_text()
+        assert report.strict_valid
 
 
-def test_own_manifest_is_valid_with_only_pending_digest(own_manifest_text: str) -> None:
+def test_own_manifest_is_strict_valid_with_only_accepted_pending_digest(own_manifest_text: str) -> None:
+    """C1.3-ASF-13: geen HUB_*, healthcheck.monitor, digest_pending_release met reden geaccepteerd → --strict geldig."""
     report, model, _ = validate_text(own_manifest_text)
-    assert report.valid, report.as_text()
+    assert report.valid and report.strict_valid, report.as_text()
     assert model is not None and model.app_id == "appstore-en-fork"
-    assert report.codes() == ["digest_pending_release"]
+    assert report.codes() == ["digest_pending_release"] and report.findings[0].accepted
+    assert model.healthcheck.monitor is not None and model.healthcheck.monitor.pad == "/readyz"
+    assert not any(p.name.lower().startswith("hub_") for p in model.parameters)
+    assert "platformcontract 1.3" in own_manifest_text.splitlines()[0]
 
 
 def test_all_emitted_codes_are_documented() -> None:
@@ -73,12 +78,15 @@ def test_every_code_is_in_the_author_documentation() -> None:
 
 
 def test_legacy_1_1_manifest_is_accepted_with_deprecated_fields() -> None:
-    """Contract 1.2 §9: overgang — custom_app.ports (gelijk) en joins_platform_network: false → deprecated_field."""
+    """Contract 1.2 §9: overgang — custom_app.ports (gelijk) en joins_platform_network: false → deprecated_field.
+    Contract 1.3 §9: een oud manifest blijft geldig met waarschuwingen (monitorplan, restrisico), fout in --strict."""
     report, model, _ = validate_text((FIXTURES / "manifests" / "legacy-1-1-custom.manifest.yaml").read_bytes())
-    assert report.valid and model is not None, report.as_text()
+    assert report.valid and model is not None and not report.strict_valid, report.as_text()
     assert sorted((f.code, f.path) for f in report.findings) == [
         ("deprecated_field", "custom_app.ports"),
         ("deprecated_field", "network.joins_platform_network"),
+        ("healthcheck_monitor_missing", "healthcheck.monitor"),
+        ("restrisico_nnp_ontbreekt", "privilege_reason"),
     ]
     assert all(f.severity.value == "warning" for f in report.findings)
 

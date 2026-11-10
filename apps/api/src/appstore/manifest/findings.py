@@ -19,9 +19,12 @@ class Finding(BaseModel):
     severity: Severity
     path: str
     message: str
+    #: contract 1.3 §9: waarschuwing uit de vaste lijst die het manifest in ``accepted_findings`` accepteert
+    accepted: bool = False
+    accepted_reden_nl: str | None = None
 
     def as_text(self) -> str:
-        label = "FOUT" if self.severity is Severity.ERROR else "LET OP"
+        label = "FOUT" if self.severity is Severity.ERROR else ("GEACC." if self.accepted else "LET OP")
         return f"{label:<7}{self.path:<40} {self.code}: {self.message}"
 
 
@@ -59,6 +62,11 @@ CODES: dict[str, str] = {
     "compose_forbidden": "Compose/YAML-installatie is verboden.",
     "install_method_forbidden": "Installatiemethode is niet toegestaan.",
     "adoption_manifest_not_installable": "Adoptiemanifest van een bestaande app: alleen inventaris, nooit installeren.",
+    "checklist_not_installable": "Controlelijst (kind: checklist) zonder installatie: eigen schema, nooit installeren.",
+    "install_reason_ontbreekt": "Catalogusapp zonder install.reason (waarschuwing; fout in --strict).",
+    "restrisico_nnp_ontbreekt": "Upstream-image als Custom App noemt het restrisico zonder no-new-privileges niet.",
+    # contract 1.3 §9: geaccepteerde bevindingen
+    "accepted_finding_unused": "Geaccepteerde code treedt niet (meer) op; haal hem uit accepted_findings.",
     # image
     "tag_missing": "Image-tag ontbreekt.",
     "mutable_tag_forbidden": "Veranderlijke tag (zoals latest) is verboden.",
@@ -106,6 +114,8 @@ CODES: dict[str, str] = {
     "example_value_as_real": "Voorbeeldwaarde gebruikt als echte waarde.",
     "secret_literal_forbidden": "Geheim als letterlijke waarde in het manifest.",
     "secret_in_form": "Geheim zou in het Custom App-formulier terechtkomen.",
+    "secret_param_invalid": "secret: true alleen bij source generated (de Hub maakt hem) of secret.",
+    "reserved_env": "HUB_* is gereserveerd voor het koppelen en geen parameter of omgevingsvariabele.",
     "interpolation_forbidden": "Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan.",
     "decision_not_listed": "Besluit ontbreekt in decisions_required.",
     # beheer
@@ -114,7 +124,10 @@ CODES: dict[str, str] = {
     "backup_unknown_dataset": "Back-up verwijst naar onbekende opslag.",
     "backup_dataset_not_covered": "Data-opslag zit niet in de snapshotlijst.",
     "backup_db_export_none": "Geen database-export opgegeven.",
+    "stopped_snapshot_without_dataset": "stopped_snapshot zonder dataset in snapshot_datasets.",
     "healthcheck_unknown_port": "Healthcheck verwijst naar onbekende poort.",
+    "healthcheck_monitor_missing": "Geen monitorplan (healthcheck.monitor) voor Uptime Kuma.",
+    "same_as_host_not_allowed": "container_port same_as_host alleen bij een catalogusapp.",
     "portal_unknown_port": "Portal verwijst naar onbekende poort.",
     "dependency_self": "App hangt van zichzelf af.",
     "compatibility_missing": "Geen TrueNAS-compatibiliteit opgegeven.",

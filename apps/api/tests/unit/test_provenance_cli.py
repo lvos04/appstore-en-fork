@@ -84,7 +84,7 @@ def test_cli_validate_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:
 def test_cli_strict_and_missing_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     own = Path(__file__).resolve().parents[4] / "deploy" / "manifest" / "appstore-en-fork.manifest.yaml"
     assert main(["validate", str(own)]) == 0
-    assert main(["validate", "--strict", str(own)]) == 1
+    assert main(["validate", "--strict", str(own)]) == 0  # contract 1.3: digest_pending_release met reden geaccepteerd
     with pytest.raises(SystemExit) as exc:
         main(["validate", str(tmp_path / "bestaat-niet.yaml")])
     assert exc.value.code == 2
@@ -133,4 +133,10 @@ def test_cli_strict_fails_on_deprecated_fields(capsys: pytest.CaptureFixture[str
     assert main(["validate", "--strict", "--format", "json", str(legacy)]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["valid"] is True and report["result"] == "ongeldig"
-    assert sorted(f["code"] for f in report["findings"]) == ["deprecated_field", "deprecated_field"]
+    assert sorted(f["code"] for f in report["findings"]) == [
+        "deprecated_field",
+        "deprecated_field",
+        "healthcheck_monitor_missing",
+        "restrisico_nnp_ontbreekt",
+    ]
+    assert report["strict_valid"] is False

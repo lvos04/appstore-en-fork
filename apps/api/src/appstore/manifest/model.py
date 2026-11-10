@@ -33,6 +33,8 @@ class ParamRef(_Strict):
 
 class Install(_Strict):
     method: Literal["custom_app", "catalog_app"]
+    #: contract 1.3 §9: waarom een catalogusapp ('meerdere_containers' of een NL-reden)
+    reason: str | None = None
 
 
 class Image(_Strict):
@@ -47,9 +49,13 @@ class Image(_Strict):
         return ref
 
 
+SAME_AS_HOST = "same_as_host"
+
+
 class PortBinding(_Strict):
     name: Name
-    container_port: PortNumber
+    #: ``same_as_host`` alleen bij catalogusapps waarvan de container op de gekozen hostpoort luistert (1.3 §9)
+    container_port: PortNumber | Literal["same_as_host"]
     host_port: PortNumber | ParamRef
     protocol: Literal["tcp", "udp"]
     purpose_nl: str | None = None
@@ -127,6 +133,12 @@ class Parameter(_Strict):
     example: str | int | bool | None = None
     dataset_role: str | None = None
     decision: str | None = None
+    #: contract 1.3 §3.1 a: geheime waarde; met ``source: generated`` maakt de Hub hem (vault)
+    secret: bool = False
+
+    @property
+    def hub_generated_secret(self) -> bool:
+        return self.secret and self.source == "generated"
 
 
 class StorageDecl(_Strict):
@@ -159,6 +171,15 @@ class Privileges(_Strict):
     gpu: GpuChoice
 
 
+class Monitor(_Strict):
+    """Monitorplan (contract 1.3 §9): de beheerder neemt het over in Uptime Kuma ('handmatig bevestigd')."""
+
+    pad: str
+    verwachte_status: Annotated[int, Field(ge=100, le=599)]
+    timeout_s: Annotated[int, Field(ge=1, le=300)]
+    interval_s: Annotated[int, Field(ge=10, le=86400)]
+
+
 class Healthcheck(_Strict):
     type: Literal["http", "tcp", "builtin"]
     path: str | None = None
@@ -167,10 +188,11 @@ class Healthcheck(_Strict):
     timeout_s: int | None = None
     retries: int | None = None
     start_period_s: int | None = None
+    monitor: Monitor | None = None
 
 
 class DbExport(_Strict):
-    method: Literal["pg_dump", "sqlite_backup", "app_native", "none"]
+    method: Literal["pg_dump", "sqlite_backup", "app_native", "stopped_snapshot", "none"]
     description_nl: str | None = None
 
 
@@ -204,6 +226,20 @@ class Compatibility(_Strict):
     truenas_min_version: str
     truenas_max_version: str | None = None
     ix_app_min_version: str | None = None
+
+
+ACCEPTABLE_FINDINGS = ("backup_db_export_none", "secret_in_form", "digest_pending_release")
+
+
+class AcceptedFinding(_Strict):
+    code: Literal["backup_db_export_none", "secret_in_form", "digest_pending_release"]
+    reden_nl: str
+
+
+class PostInstallCheck(_Strict):
+    id: Name
+    soort: Literal["http", "handmatig"]
+    beschrijving_nl: str
 
 
 class Provenance(_Strict):
@@ -242,6 +278,8 @@ class Manifest(_Strict):
     validation_status: Literal["unvalidated", "unit_tested", "sim_tested", "validated_on_nas"]
     compatibility: Compatibility | None = None
     provenance: Provenance | None = None
+    accepted_findings: list[AcceptedFinding] = Field(default_factory=list)
+    post_install_checks: list[PostInstallCheck] = Field(default_factory=list)
 
     def parameter(self, name: str) -> Parameter | None:
         return next((p for p in self.parameters if p.name == name), None)
