@@ -120,7 +120,7 @@ def _cursor(value: object) -> str:
 @pytest.mark.parametrize(
     "cursor", ["!!!", _cursor({"a": 1}), _cursor(5), _cursor(["geen-datum", "x"]), _cursor(["2026-11-09T00:00:00", 1])]
 )
-def test_manipulated_cursors_give_400_not_500(client: TestClient, hub: FakeHub, cursor: str) -> None:
+def test_manipulated_cursors_give_422_not_500(client: TestClient, hub: FakeHub, cursor: str) -> None:
     pair(client, hub)
     viewer = hub.auth(roles=["viewer"])
     for url in (
