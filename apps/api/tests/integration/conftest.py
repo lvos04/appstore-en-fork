@@ -113,15 +113,19 @@ def worker_ctx(settings: Settings, hub: FakeHub) -> Iterator[AppContext]:
 ORIGIN = {"Origin": "http://testserver"}
 
 
-CODE_IN_PAGINA = re.compile(r"Code <code>([a-z_]+)</code> · Trace-ID")
+CODE_IN_PAGINA = re.compile(r'<p class="meta">Code <code>([a-z_]+)</code></p>')
 
 
-def melding_code(resp: Any) -> str:
-    """Vaste code uit de foutpagina van de statuspagina; controleert dat de trace-ID die van het verzoek is."""
+def melding_code(resp: Any, *, trace: bool = True) -> str:
+    """Vaste code uit de melding van de statuspagina (Peil 1.1.1: ``melding_code`` los van de trace-ID). ``trace``:
+    de fout van dít verzoek heeft de selecteerbare trace-ID van het verzoek; een bestaande toestand heeft er geen."""
     m = CODE_IN_PAGINA.search(resp.text)
     assert m, resp.text[:2000]
-    trace = resp.headers["X-Trace-Id"]
-    assert f'<code class="selecteer">{trace}</code>' in resp.text  # selecteerbare trace-ID = die van dit verzoek
+    if trace:
+        assert f'<code class="selecteer">{resp.headers["X-Trace-Id"]}</code>' in resp.text  # die van dit verzoek
+        assert 'role="alert"' in resp.text  # E05: de fout van dít verzoek
+    else:
+        assert '<code class="selecteer">' not in resp.text and 'role="alert"' not in resp.text
     return m.group(1)
 
 
@@ -147,12 +151,16 @@ def post_form(
     )
 
 
+POGING_URL = re.compile(r"^/\?poging=[A-Za-z0-9_-]{16,64}$")
+
+
 def pair_form(client: TestClient, **kwargs: Any) -> str:
-    """Geslaagd → ``"gekoppeld"`` (303 naar ``/?melding=gekoppeld``); anders de vaste code uit de foutpagina (geen
-    redirect: de trace-ID op de pagina is die van de poging zelf)."""
+    """Geslaagd → ``"gekoppeld"`` (303 naar ``/?poging=<sleutel>``: de melding hoort bij deze poging van deze browser,
+    §3.7); anders de vaste code uit de foutpagina (geen redirect: de trace-ID op de pagina is die van de poging zelf)."""
     resp = post_form(client, **kwargs)
     if resp.status_code == 303:
-        assert resp.headers["location"] == "/?melding=gekoppeld", resp.headers["location"]
+        assert POGING_URL.match(resp.headers["location"]), resp.headers["location"]
+        client.last_location = resp.headers["location"]  # type: ignore[attr-defined]
         return "gekoppeld"
     assert resp.status_code in (400, 403, 409, 422, 429, 502), (resp.status_code, resp.text[:500])
     assert resp.headers["content-type"].startswith("text/html")

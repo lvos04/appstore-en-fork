@@ -1,4 +1,4 @@
-"""Gezondheid, foutformaat en de statuspagina met koppelen via een koppelcode (contract 1.2 §3.7)."""
+"""Gezondheid, foutformaat en de statuspagina met koppelen via een koppelcode (contract 1.3 §3.7)."""
 
 from __future__ import annotations
 
@@ -206,9 +206,23 @@ def test_wrong_fingerprint_stores_nothing(client: TestClient, hub: FakeHub, sett
 def test_csrf_and_origin_are_required(client: TestClient, hub: FakeHub) -> None:
     code, fp = hub.add_code(), hub.fingerprint()
     assert pair_form(client, code=code, fingerprint=fp, csrf="fout") == "sessie_verlopen"
-    assert pair_form(client, code=code, fingerprint=fp, origin={}) == "sessie_verlopen"
-    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "http://aanvaller.test"}) == "sessie_verlopen"
-    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "null"}) == "sessie_verlopen"
+    assert pair_form(client, code=code, fingerprint=fp, origin={}) == "herkomst_onjuist"
+    assert (
+        pair_form(client, code=code, fingerprint=fp, origin={"Origin": "http://aanvaller.test"}) == "herkomst_onjuist"
+    )
+    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "null"}) == "herkomst_onjuist"
+    assert pair_form(client, code=code, fingerprint=fp, origin={"Origin": "https://testserver"}) == "herkomst_onjuist"
+    assert (
+        pair_form(client, code=code, fingerprint=fp, origin={"Origin": "http://testserver/pad"}) == "herkomst_onjuist"
+    )
+    client.cookies.clear()  # geen cookie (en dus geen formuliertoken): geweigerd
+    resp = client.post(
+        "/koppelen",
+        data={"hub_adres": HUB_URL, "koppelcode": code, "hub_vingerafdruk": fp, "csrf": "x" * 32},
+        headers=ORIGIN,
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403 and "Het formulier is verlopen" in resp.text
     assert hub.enroll_requests == []
     assert pair_form(client, code=code, fingerprint=fp, origin=ORIGIN) == "gekoppeld"
 

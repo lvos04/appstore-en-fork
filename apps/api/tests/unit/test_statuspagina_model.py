@@ -1,5 +1,6 @@
-"""Inhoud van de statuspagina (ONTWERPTAAL §13.2, contract 1.2 §3.5/§3.7) zonder database: totaalstatus, gereedheid,
-koppeltoestand, catalogusregels en de velden voor het sjabloon."""
+"""Inhoud van de statuspagina (ONTWERPTAAL §13.2 / Peil 1.1.1, contract 1.3 §3.5/§3.7) zonder database: totaalstatus
+(E10), gereedheid, koppeltoestand (incl. ``koppelstatus_onleesbaar`` en de vlag ``koppelen_bezig``), tonen, meldingsrol
+en -code, catalogusregels en de velden voor het sjabloon."""
 
 from __future__ import annotations
 
@@ -73,13 +74,31 @@ def test_first_signal_is_never_green_when_not_ready(_naam: str, s: sp.Stand, waa
     assert d["totaal_toon"] in ("onbekend", "beperkt", "storing")
 
 
-def test_corrupt_link_file_is_not_ready_and_a_fault() -> None:
-    lnk = LinkState(first_linked_at="2026-11-09T00:00:00Z")
+def corrupt() -> LinkState:
+    lnk = LinkState()
     lnk._corrupt = True
+    return lnk
+
+
+def test_corrupt_link_file_is_not_ready_and_a_fault() -> None:
+    lnk = corrupt()
     d = data(stand(lnk))
     assert d["gereed"] == "Nee — de koppelstatus is onleesbaar" and d["totaal_toon"] == "storing"
+    assert d["koppelstatus_onleesbaar"] and not d["koppelen_bezig"]
     assert not any(d[k] for k in ("koppelformulier", "gekoppeld", "ontkoppeld", "ingetrokken"))
-    assert sp.koppel_melding(lnk) is not None and sp.koppel_melding(lnk).code == "koppelstatus_onleesbaar"  # type: ignore[union-attr]
+    rij = next(c for c in d["checks"] if c["naam"] == "Koppeling met de Hub")
+    assert (rij["toon"], rij["label"], rij["reden_code"]) == ("storing", "Onleesbaar", "koppelstatus_onleesbaar")
+    assert sp.koppel_melding(lnk) is None  # het koppelblok zegt het al (geen dubbele melding)
+
+
+def test_replaced_unreadable_file_stays_unreadable_until_a_first_link() -> None:
+    """§3.5: na vervangen en zolang first_linked_at leeg is: geen formulier, geen vertrouwen ("onleesbaar")."""
+    lnk = link(unreadable_replaced_at="2026-11-10T09:00:00Z", last_error=LastError(code="hub_weigerde", at="x"))
+    d = data(stand(lnk))
+    assert d["koppelstatus_onleesbaar"] and not d["koppelformulier"]
+    assert d["gereed"] == "Nee — de koppelstatus is onleesbaar"
+    linked = link("gekoppeld", unreadable_replaced_at="2026-11-10T09:00:00Z")
+    assert data(stand(linked))["gekoppeld"] and not data(stand(linked))["koppelstatus_onleesbaar"]
 
 
 def test_all_healthy_only_when_ready_and_every_check_healthy() -> None:
@@ -89,10 +108,24 @@ def test_all_healthy_only_when_ready_and_every_check_healthy() -> None:
     failed = [sp.BronStand("ingebouwd", "bundled", True, "failed", NU)]
     d = data(stand(link("gekoppeld"), bronnen=failed))
     assert (d["totaal_toon"], d["totaal_label"]) == ("beperkt", "Beperkt")
-    assert d["totaal_toelichting"] == "Gereed; 1 onderdeel is beperkt."
+    assert d["totaal_toelichting"] == "Gereed, maar beperkt: 1 catalogusonderdeel niet in orde."
     never = [sp.BronStand("git-bron", "git", True, "never", None)]
     d = data(stand(link("gekoppeld"), bronnen=never))
     assert (d["totaal_toon"], d["totaal_label"]) == ("onbekend", "Deels onbekend")
+
+
+def test_total_rule_e10_service_block_is_at_most_limited() -> None:
+    """E10: een verse Storing in het dienstblok maakt het totaal hooguit Beperkt; feit, gate, nog-niet, beleid en
+    verouderd tellen niet mee; niet-beschikbaar telt als Onbekend; nooit groen zonder Gereed."""
+    eigen = sp.controles(stand(link("gekoppeld")))
+    rij = lambda toon: sp.Controle("x", toon, "x")  # noqa: E731
+    assert sp.totaal(eigen, [rij("storing")], True, "")[0] == "beperkt"
+    for toon in ("feit", "gate", "nog-niet", "beleid", "verouderd"):
+        assert sp.totaal(eigen, [rij(toon)], True, "")[:2] == ("gezond", "Alles gezond"), toon
+    assert sp.totaal(eigen, [rij("niet-beschikbaar")], True, "")[0] == "onbekend"
+    assert sp.totaal(eigen, [rij("gezond")], False, "wacht op koppeling met de Hub")[0] == "onbekend"
+    storing_eigen = [*eigen, sp.Controle("Eigen database", "storing", "Storing")]
+    assert sp.totaal(storing_eigen, [rij("gezond")], True, "")[0] == "storing"  # eigen controles: geen plafond
 
 
 def test_gate_does_not_worsen_but_unknown_does() -> None:
@@ -124,13 +157,41 @@ def test_public_whitelist_only_never_the_service_token() -> None:
     assert "Ontkoppelen of opnieuw koppelen gaat via de Hub" in html
 
 
-def test_trace_id_only_with_a_code_and_never_for_plain_info() -> None:
-    info = data(stand(link("gekoppeld")), sp.Melding("info", "Gekoppeld met de Hub", "Bevestigd."))
-    assert info["melding"] and info["trace_id"] is None
-    fout = data(stand(), sp.Melding("fout", "Koppelen is mislukt", "x", "hub_weigerde", "koppelcode"))
+def test_message_role_code_and_trace_id_follow_peil_1_1_1() -> None:
+    """E05/E06: ``alert`` alleen voor de fout van dít verzoek (met trace-ID), ``status`` voor info na dít verzoek,
+    leeg voor een toestand die bij het laden al bestond (code zonder trace-ID)."""
+    info = data(stand(link("gekoppeld")), sp.Melding("info", "Gekoppeld met de Hub", "Bevestigd.", rol="status"))
+    assert info["melding"] and info["trace_id"] is None and info["melding_rol"] == "status"
+    fout = data(
+        stand(), sp.Melding("fout", "Koppelen is mislukt", "x", "hub_weigerde", "koppelcode", rol="alert", trace=True)
+    )
     assert fout["trace_id"] == "3d8a1f4e-6b2c-4e95-a7d0-91c5b8e2f364" and fout["melding_code"] == "hub_weigerde"
     assert fout["melding_link_doel"] == "koppelcode" and fout["melding_icoon"] == "storing"
+    assert fout["melding_rol"] == "alert"
     assert fout["titel_toestand"].startswith("koppelen is mislukt · niet gereed")
+    bestaand = sp.koppel_melding(link(last_error=LastError(code="hub_onbereikbaar", at="2026-11-09T10:00:00Z")))
+    assert bestaand is not None
+    d = data(stand(), bestaand)
+    assert d["melding_rol"] == "" and d["melding_code"] == "hub_onbereikbaar" and d["trace_id"] is None
+    html = sp.pagina(stand(), csrf="c" * 32, trace_id="t-1", melding=bestaand)
+    assert 'role="alert"' not in html and 'role="status"' not in html and "hub_onbereikbaar" in html
+    html = sp.pagina(
+        stand(), csrf="c" * 32, trace_id="t-1", melding=sp.Melding("fout", "F", "x", "c", rol="alert", trace=True)
+    )
+    assert 'role="alert"' in html and "t-1" in html
+
+
+def test_pairing_in_progress_hides_the_form_and_keeps_the_stable_state() -> None:
+    """E02: ``koppelen_bezig`` (pending ≠ null) verbergt formulier en stappen; de stabiele toestand blijft erboven."""
+    p = Pending(kind="token", secret_sha256="ab" * 32, hub_url="http://h.test", started_at="2026-11-09T11:50:00Z")
+    d = data(stand(link(pending=p)))
+    assert d["koppelformulier"] and d["koppelen_bezig"] and d["koppelen_bezig_sinds"] == "11:50 UTC"
+    html = sp.pagina(stand(link(pending=p)), csrf="c" * 32, trace_id="t", melding=None)
+    assert 'action="/koppelen"' not in html and "Koppelen bezig" in html and "Niet gekoppeld" in html
+    oud = Pending(
+        kind="koppelcode", secret_sha256="ab" * 32, hub_url="http://h.test", started_at="2026-11-09T11:00:00Z"
+    )
+    assert not data(stand(link(pending=oud)))["koppelen_bezig"]  # verweesde koppelcodepoging: niet meer bezig
 
 
 def test_field_errors_set_skip_link_and_fields() -> None:
@@ -149,9 +210,10 @@ def test_stored_last_error_message() -> None:
     assert "De bestaande koppeling blijft gelden." in sp.koppel_melding(linked).tekst  # type: ignore[union-attr]
     revoked = link("ingetrokken", last_error=LastError(code="ingetrokken_door_hub", at="2026-11-09T10:00:00Z"))
     assert sp.koppel_melding(revoked) is None  # het koppelblok zegt het al
-    pending = link(pending=Pending(kind="token", secret_sha256="ab" * 32, hub_url="http://h.test", started_at="x"))
-    m = sp.koppel_melding(pending)
-    assert m is not None and m.toon == "info" and m.code is None and "token" in m.tekst
+    p = Pending(kind="token", secret_sha256="ab" * 32, hub_url="http://h.test", started_at="x")
+    assert sp.koppel_melding(link(pending=p)) is None  # het blok "Koppelen bezig" zegt het al
+    m = sp.koppel_melding(link(pending=p, last_error=LastError(code="hub_onbereikbaar", at="x")))
+    assert m is not None and m.toon == "info" and m.code == "hub_onbereikbaar" and m.rol == ""
 
 
 def test_unknown_tone_is_refused() -> None:
@@ -189,10 +251,11 @@ def test_review_sources_and_counts_in_dutch_and_as_a_measurement() -> None:
         "Bron community (HTTP-adres)",
         "Bron eigen (Git-repository)",
     ]
-    assert rijen[0].reden == (
-        "Gelezen uit de eigen database: 2 apps in de catalogus; 1 manifestversie geweigerd door de validator."
+    assert (rijen[0].label, rijen[0].reden) == (
+        "2 apps",
+        "Gelezen uit de eigen database; 1 manifestversie geweigerd door de validator.",
     )
-    assert [r.toon for r in rijen] == ["gezond", "gezond", "beperkt", "gate"]
+    assert [r.toon for r in rijen] == ["feit", "gezond", "beperkt", "gate"]  # een aantal is een feit (Peil 1.1.1)
     assert not any("bundled" in (r.naam + (r.reden or "")) for r in rijen)
     leeg = sp.catalogus(stand(apps=None, bronnen=None))
     assert (leeg[0].naam, leeg[0].toon) == ("Catalogusgegevens", "onbekend")  # nooit 0 als het onbekend is
@@ -217,12 +280,15 @@ def test_review_form_outcome_speaks_of_the_pairing_code_and_says_what_to_do() ->
     assert m is not None and m.tekst.endswith("Maak in de Hub een nieuwe koppelcode of een nieuw koppeltoken.")
 
 
-def test_review_unreadable_link_file_message_has_no_english_jargon() -> None:
-    lnk = LinkState(first_linked_at="2026-11-09T00:00:00Z")
-    lnk._corrupt = True
-    m = sp.koppel_melding(lnk)
-    assert m is not None and "enrollment" not in m.tekst and "nieuw koppeltoken" in m.tekst
-    # geen lange namen zonder afbreekpunt in meldingstekst (op 320 px buiten de melding met een breder lettertype)
-    assert "hub-link.json" not in m.tekst and "HUB_ENROLLMENT_TOKEN" not in m.tekst
-    loopt = link(pending=Pending(kind="token", secret_sha256="ab" * 32, hub_url="http://h.test", started_at="x"))
-    assert "HUB_ENROLLMENT_TOKEN" not in sp.koppel_melding(loopt).tekst  # type: ignore[union-attr]
+def test_review_unreadable_link_file_text_has_no_english_jargon() -> None:
+    html = sp.pagina(stand(corrupt()), csrf="c" * 32, trace_id="t", melding=None)
+    assert "nieuw koppeltoken" in html and "enrollment" not in html
+    assert 'action="/koppelen"' not in html  # geen formulier
+    assert "Hier staat bewust geen formulier." in html
+
+
+def test_not_linked_rows_use_the_not_linked_tone() -> None:
+    """E04: niet gekoppeld, ontkoppeld en ingetrokken hebben overal de toon ``niet-gekoppeld`` (link-2-off)."""
+    for lnk in (link(), link("ontkoppeld"), link("ingetrokken")):
+        rij = sp.koppelcontrole(lnk)
+        assert rij is not None and rij.toon == "niet-gekoppeld"

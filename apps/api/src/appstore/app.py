@@ -21,6 +21,7 @@ from .db import make_engine, make_sessionmaker
 from .errors import install_error_handlers
 from .hublink import HubLinkClient, ensure_link_file
 from .hublink_store import HubLinkStore
+from .netguard import guarded_transport
 from .secrets_store import Secrets, ensure_secrets
 
 MAX_BODY = 1024 * 1024
@@ -110,11 +111,13 @@ def default_http_factory(settings: Settings) -> Callable[[], httpx.Client]:
     timeout = httpx.Timeout(settings.read_timeout, connect=settings.connect_timeout)
 
     def factory() -> httpx.Client:
-        # nooit redirects volgen en geen proxy-omgevingsvariabelen gebruiken (contract 1.2 §3.2, §5)
+        # nooit redirects volgen en geen proxy-omgevingsvariabelen gebruiken (contract 1.3 §3.2, §5); verboden
+        # adresbereiken ook na DNS-resolutie, bij elke verbinding (netguard)
         return httpx.Client(
             timeout=timeout,
             follow_redirects=False,
             trust_env=False,
+            transport=guarded_transport(allow_loopback=settings.allow_loopback_hub),
             headers={"User-Agent": f"{APP_ID}/{__version__}"},
         )
 
@@ -159,6 +162,7 @@ def create_app(settings: Settings | None = None, *, http_factory: Callable[[], h
     )
     app.state.authenticator = Authenticator(sessions, store, on_unknown_kid=hub.request_key_poll)
     app.state.pairing_attempts = status_page.pairing_limiter()
+    app.state.pairing_outcomes = status_page.uitkomsten()
     app.state.heavy_limiter = catalog.heavy_limiter()
     install_error_handlers(app)
     # vóór de http-middleware toegevoegd = daarbinnen (de trace_id is dan al gezet), maar wel vóór routering en
