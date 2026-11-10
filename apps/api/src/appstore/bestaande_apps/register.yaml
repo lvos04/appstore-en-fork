@@ -9,14 +9,14 @@
 # - catalogus_apps: exacte naam van de TrueNAS-catalogusapp (metadata.name), bronwaarneming in truenas/apps op commit
 #   69dfbda33a5e19eb4cb3441904a44e813b5b3fba (trains stable en community), gelezen 2026-11-09.
 # - image_repositories: (a) de image uit ix_values.yaml van die catalogusapp op dezelfde commit, (b) eigen images uit
-#   platformcontract 1.2 §2.3 en de gepubliceerde images in de release-workflows van die repos
+#   platformcontract 1.3 §2.3 en de gepubliceerde images in de release-workflows van die repos
 #   (media-guard-ultimate@da1bebe, media-source-optimizer@2d04321, my_house@c3297e2; oudere installaties met
 #   meerdere containers), (c) upstream-images waarvan het bestaan op 2026-11-09 met
 #   `docker buildx imagetools inspect` is gecontroleerd. Een niet-bestaande kandidaat (lscr.io/linuxserver/readarr,
 #   sabnzbd/sabnzbd) staat er bewust niet in.
 # - Op appnaam alleen wordt nooit herkend. Snapotter, Teeltboek en Uren hebben géén herkenning (A06: "geen afleiding
 #   uit appnaam"): alleen een beheerder kan ze handmatig koppelen.
-register_versie: "2026-11-09.1"
+register_versie: "2026-11-10.1"
 bron: docs/platform-v2/04_BESTAANDE_APPS (APP_REGISTER.md + A01…A20), pakket 2026-11-09
 herkenning_bron:
   truenas_catalogus: truenas/apps@69dfbda33a5e19eb4cb3441904a44e813b5b3fba (2026-11-09)
@@ -62,6 +62,9 @@ apps:
       catalogus_apps: [emby]
       image_repositories: [emby/embyserver, lscr.io/linuxserver/emby]
     afhankelijk_van: []
+    # contract 1.3 §2.3 regels 3, 7, 8: bestaande mediaserver van de gebruiker (kijkgeschiedenis, HARDE EIS); alleen
+    # lezen; het platform stopt, updatet of verwijdert Emby nooit; blijft de terugval
+    platform_wijzigt_nooit: true
 
   - app_id: jellyplex-watched
     excel_id: APP-03

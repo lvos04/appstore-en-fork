@@ -1,13 +1,16 @@
 """Beslisregister per bekende app (APP-01…APP-20, APP_REGISTER): voorgenomen besluit, afvinkbare controlelijst met
 bewijs, schriftelijk besluit en een decommission-**plan** volgens I26.
 
-Grenzen (03_RISICO_AUTONOMIE, contract 1.2 §8):
+Grenzen (03_RISICO_AUTONOMIE, contract 1.3 §8 en §2.3):
 
 * De appstore **voert niets uit**. Een plan noemt de ``action_id``'s van de executor (``zfs.snapshot.create``,
   ``app.stop``, ``app.start``, ``app.uninstall`` met ``remove_ix_volumes=false``) met hun minimale risicoklasse;
   uitvoeren gaat alleen via voorstel → policy → menselijke goedkeuring → executor (R1/R2).
 * **Data verwijderen wordt nooit aangeboden** (``app.uninstall_data`` is R3 en wordt bewust niet aangeboden; I26: "data
   alleen na eigen, afzonderlijke bevestiging verwijderen").
+* Een app met ``platform_wijzigt_nooit`` (Emby, contract 1.3 §2.3 regels 3, 7, 8) krijgt een plan zonder enige
+  ``action_id``: de gebruiker doet alles zelf, na de HARDE EIS (kijkgeschiedenis), het exportarchief en de
+  controlelijst van de eigenaar.
 * Een check afvinken vraagt bewijs; een definitief besluit vraagt een volledige controlelijst (behalve "gereed", dat
   pas na acceptatie op de echte NAS kan) en, voor uitschakelen of de container verwijderen, een plan.
 """
@@ -49,8 +52,14 @@ NOT_EXECUTED_NL = (
 )
 NO_DATA_REMOVAL_NL = (
     "Data verwijderen staat los van het stoppen of verwijderen van de app en wordt door het platform nooit aangeboden "
-    "(app.uninstall_data is R3 en wordt bewust niet aangeboden, contract 1.2 §8). Data alleen na een eigen, "
+    "(app.uninstall_data is R3 en wordt bewust niet aangeboden, contract 1.3 §8). Data alleen na een eigen, "
     "afzonderlijke bevestiging buiten dit plan verwijderen (I26 §4 punt 6)."
+)
+#: contract 1.3 §2.3 regels 3, 7 en 8: apps die het platform nooit stopt, updatet of verwijdert (Emby)
+READ_ONLY_NL = (
+    "Het platform stopt, updatet of verwijdert deze app nooit en schrijft er nooit in (contract 1.3 §2.3 regel 3). "
+    "Elke stap hieronder doet de gebruiker zelf, in de eigen UI van de app of in de TrueNAS-web-UI; er is geen "
+    "action_id voor de executor. De app blijft de terugval tot de gebruiker hem zelf verwijdert."
 )
 ROLLBACK_I26 = (
     "Schakel nieuwe automation/ingest uit.",
@@ -476,6 +485,8 @@ def build_plan(
             "status": "niet_gepland_zonder_besluit",
         },
     ]
+    if app.platform_wijzigt_nooit:
+        gates, steps = _read_only_plan(app, gates, steps)
     plan: dict[str, Any] = {
         "soort": "decommission_plan",
         "app_id": app.app_id,
@@ -504,7 +515,8 @@ def build_plan(
         "terugdraaien_i26": list(ROLLBACK_I26),
         "data_verwijderen": {"aangeboden": False, "reden_nl": NO_DATA_REMOVAL_NL},
         "uitgevoerd": False,
-        "uitvoering_nl": NOT_EXECUTED_NL,
+        "uitvoering_nl": READ_ONLY_NL if app.platform_wijzigt_nooit else NOT_EXECUTED_NL,
+        "platform_wijzigt_nooit": app.platform_wijzigt_nooit,
         "voorbereiding_compleet": all(
             g["status"] == "ok" for g in gates if g["id"] not in ("backup_gate", "geen_gebruik")
         ),
@@ -512,3 +524,44 @@ def build_plan(
     plan["plan_hash"] = "sha256:" + hashlib.sha256(canonical_json(plan)).hexdigest()
     plan["gemaakt_op"] = iso(now)
     return plan
+
+
+def _read_only_plan(
+    app: KnownApp, gates: list[dict[str, Any]], steps: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Contract 1.3 §2.3 (Emby): geen stap voor de executor; extra gates voor de HARDE EIS en het exportarchief."""
+    extra = [
+        _gate(
+            "kijkgeschiedenis_rapport",
+            "unknown",
+            "HARDE EIS (contract 1.3 §2.3 regel 7): kijkgeschiedenis en MediaGuard-voortgang blijven altijd "
+            "beschikbaar. Vóór uitschakelen een vóór/na-rapport per gebruiker en een uitdrukkelijk akkoord op elk "
+            "verschil. De appstore meet dit niet; onbekend is nooit groen.",
+        ),
+        _gate(
+            "exportarchief_b12",
+            "unknown",
+            "Het blijvende JSON-exportarchief van de kijkgegevens (met sha256) is gedekt in de back-up (B12, contract "
+            "1.3 §2.3 regel 8). Zonder bevestigde dekking geen 'Emby verwijderen'.",
+        ),
+        _gate(
+            "controlelijst_eigenaar",
+            "unknown",
+            "De controlelijst 'Emby verwijderen' van de eigenaar (B03 §10.9.2) is volledig doorlopen. Stoppen en data "
+            "verwijderen blijven aparte stappen (APP-02/A4).",
+        ),
+    ]
+    manual: list[dict[str, Any]] = []
+    for original in steps:
+        step = original
+        if original.get("action_id"):
+            step = {
+                **original,
+                "action_id": None,
+                "uitvoerder": "gebruiker (zelf, in de eigen UI van de app of de TrueNAS-web-UI)",
+                "risico_min": "R0 voor het platform (het platform voert dit nooit uit)",
+                "toelichting_nl": READ_ONLY_NL,
+                "status": "handmatig" if step["status"] == "gepland" else step["status"],
+            }
+        manual.append(step)
+    return [*gates, *extra], manual

@@ -75,6 +75,9 @@ class KnownApp(_Strict):
     zonder_gebruik_dagen: Annotated[int, Field(ge=1, le=365)] | None = None
     herkenning: Recognition
     afhankelijk_van: list[Dependency]
+    #: contract 1.3 §2.3 regels 3, 7 en 8 (Emby): het platform stopt, updatet of verwijdert deze app nooit en schrijft er
+    #: nooit in; alleen lezen. Uitschakelen of verwijderen doet de gebruiker zelf, na de controlelijst van de eigenaar.
+    platform_wijzigt_nooit: bool = False
 
     @property
     def decommission_candidate(self) -> bool:

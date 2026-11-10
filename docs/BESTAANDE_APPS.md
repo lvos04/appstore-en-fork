@@ -15,8 +15,14 @@ een container) loopt alleen via voorstel → policy → goedkeuring → executor
    - `unknown` — storing, verouderde of onvolledige meting: **niets** gewijzigd. Dat geldt ook als de pagina's van de
      lijst niet uit één meting komen (`inventaris_gewijzigd_tijdens_lezen`) of als het aantal gelezen apps afwijkt van
      het `totaal` van de Hub (`inventaris_onvolledig`): zo wordt een app nooit ten onrechte "verdwenen";
-   - `capability_unavailable` — niet gekoppeld, of de Hub geeft zijn inventaris niet aan diensten
-     (`hub_inventaris_niet_voor_diensten`, zo is het nu bij de Hub) of kent de route niet.
+   - `capability_unavailable` — niet gekoppeld, de Hub geeft deze dienst de leesscope `inventaris.lezen` niet
+     (403 `scope_ontbreekt` → `scope_inventaris_ontbreekt`; contract 1.3 §4.4, nooit een intrekking), geeft zijn
+     inventaris niet aan diensten (`hub_inventaris_niet_voor_diensten`) of kent de route niet.
+
+   Contract 1.3: de lijst wordt gelezen over één **momentopname** (`snapshot_id` op elke pagina; 409
+   `snapshot_changed` → opnieuw beginnen, hooguit twee keer), `max_age` volgt de Hub (`inventaris.max_age_s`) maar is
+   nooit soepeler dan 900 s, en bij 429/503 wacht de import nooit korter dan `Retry-After` (langer dan 30 s:
+   `unknown`/`hub_vraagt_wachten`, de volgende ronde probeert het opnieuw).
 2. **Bekijken** — `GET /catalog/v1/existing-apps` (standaard alleen aanwezige apps; `alleen_aanwezig=false` toont ook
    verdwenen apps; filter `status`, `known_app_id`) en `GET /catalog/v1/existing-apps/{id}` (meting, herkenning,
    eigenaar, gedocumenteerde en gemeten afhankelijkheden, historie).
@@ -53,6 +59,20 @@ Letterlijk uit het A-document: `inventaris-1` … `inventaris-5` (verplichte inv
 `a1-integreren`, `a2-verbeteren`, `a3-proefstop` (n.v.t. bij "behouden"), `a4-besluit`, `aandachtspunt` ("Waarom"),
 `acceptatie` (belangrijkste controle uit APP_REGISTER) en `gereed` ("Gereed wanneer": alleen na een proef op de echte
 TrueNAS). Een besluit kan pas als alle checks behalve `gereed` zijn afgehandeld.
+
+## Emby (APP-02): alleen lezen, nooit wijzigen
+
+Emby is de bestaande mediaserver van de gebruiker met de **kijkgeschiedenis** (contract 1.3 §2.3, HARDE EIS van de
+gebruiker). In de appstore is Emby een gewoon adoptie-item met `owner.soort: derde`, herkend alleen op de exacte
+catalogusappnaam `emby` of de exacte image-repository (`emby/embyserver`, `lscr.io/linuxserver/emby`), nooit op de
+appnaam. Het register markeert Emby met `platform_wijzigt_nooit: true`:
+
+- het decommission-plan heeft **geen enkele** stap voor de executor (`action_id` overal `null`, status `handmatig`):
+  het platform stopt, updatet of verwijdert Emby nooit en schrijft er nooit in (§2.3 regel 3);
+- extra gates, allemaal `unknown` (de appstore meet ze niet): `kijkgeschiedenis_rapport` (vóór/na-rapport per
+  gebruiker en akkoord op elk verschil, §2.3 regel 7), `exportarchief_b12` (blijvend JSON-exportarchief gedekt in de
+  back-up, §2.3 regel 8) en `controlelijst_eigenaar` ("Emby verwijderen", B03 §10.9.2);
+- Emby blijft de terugval tot de gebruiker hem zelf verwijdert; stoppen en data verwijderen blijven aparte stappen.
 
 ## Wat nooit gebeurt
 

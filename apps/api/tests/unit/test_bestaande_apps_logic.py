@@ -404,3 +404,22 @@ def test_plan_for_kept_app_is_flagged_as_deviation() -> None:
     gates = {g["id"]: g["status"] for g in plan["gates"]}
     assert gates["voorgenomen_besluit"] == "afwijking" and gates["eigenaar_bevestigd"] == "open"
     assert plan["instanties"] == [] and "geen_gebruik" not in gates
+
+
+def test_plan_for_emby_has_no_executor_step_and_extra_gates() -> None:
+    """Contract 1.3 §2.3 regels 3, 7, 8: het platform stopt, updatet of verwijdert Emby nooit; de gebruiker doet het
+    zelf, na de HARDE EIS (kijkgeschiedenis), het exportarchief (B12) en de controlelijst van de eigenaar."""
+    app = REG.get("emby")
+    assert app is not None
+    plan = build_plan(_record("emby"), app, [], [], LOADED, now=NOW)
+    assert plan["platform_wijzigt_nooit"] is True and plan["uitgevoerd"] is False
+    assert all(s["action_id"] is None for s in plan["stappen"]), [s["action_id"] for s in plan["stappen"]]
+    assert {s["id"] for s in plan["stappen"] if s["status"] == "handmatig"} >= {"snapshot", "proefstop", "terugdraaien"}
+    gates = {g["id"]: g["status"] for g in plan["gates"]}
+    assert (
+        gates["kijkgeschiedenis_rapport"] == gates["exportarchief_b12"] == gates["controlelijst_eigenaar"] == "unknown"
+    )
+    assert "nooit" in plan["uitvoering_nl"] and plan["data_verwijderen"]["aangeboden"] is False
+    other = REG.get("plex")
+    assert other is not None and not other.platform_wijzigt_nooit
+    assert any(s["action_id"] for s in build_plan(_record("plex"), other, [], [], LOADED, now=NOW)["stappen"])

@@ -17,7 +17,9 @@ from appstore.bestaande_apps import (
     REGISTER_PATH,
     checks_for,
     load_register,
+    match_app,
     normalize_repository,
+    register_entries,
 )
 from tests.conftest import REPO_ROOT
 
@@ -122,6 +124,7 @@ def test_register_contains_no_nas_values() -> None:
             "zonder_gebruik_dagen",
             "herkenning",
             "afhankelijk_van",
+            "platform_wijzigt_nooit",
         }
         for repo in app["herkenning"]["image_repositories"]:
             assert ":" not in repo.rsplit("/", 1)[-1], f"{repo}: geen tag in een herkenningsregel"
@@ -191,3 +194,22 @@ def test_unknown_dependency_is_rejected(tmp_path: Path) -> None:
             load_register(bad)
     finally:
         load_register.cache_clear()
+
+
+def test_emby_is_a_third_party_adoption_item_the_platform_never_changes() -> None:
+    """Contract 1.3 §2.3 regels 3, 7, 8 en §9 (C1.3-ASF-12): Emby is een adoptie-item met ``owner.soort: derde``,
+    alleen herkend op de exacte catalogusappnaam of image-repository, en het platform wijzigt hem nooit."""
+    emby = REG.get("emby")
+    assert emby is not None and emby.excel_id == "APP-02" and emby.eigenaar.soort == "derde"
+    assert emby.platform_wijzigt_nooit is True
+    assert [a.app_id for a in REG.apps if a.platform_wijzigt_nooit] == ["emby"]
+    assert emby.herkenning.catalogus_apps == ["emby"]
+    entries = register_entries(REG)
+    by_name = match_app(
+        install_method="custom_app", catalog_app=None, repositories=["ghcr.io/iemand/emby"], entries=entries
+    )
+    assert by_name.status == "onbekend"  # 'emby' in de naam van een andere image telt nooit
+    exact = match_app(install_method="custom_app", catalog_app=None, repositories=["emby/embyserver"], entries=entries)
+    assert (exact.status, exact.app_id) == ("kandidaat", "emby")
+    cat = match_app(install_method="catalog_app", catalog_app="emby", repositories=[], entries=entries)
+    assert (cat.status, cat.app_id) == ("kandidaat", "emby")
