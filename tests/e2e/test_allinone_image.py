@@ -144,6 +144,11 @@ def test_first_start_healthy_status_page_and_hardening(container: Container) -> 
     assert hc["wissel"] is True and hc["Uid"] == "568" and hc["NoNewPrivs"] == "1", hc
     assert hc["CapEff"] == hc["CapPrm"] == hc["CapAmb"] == hc["CapBnd"] == ZERO, hc
     assert docker("exec", container.name, *HEALTHCHECK, check=False).returncode == 0  # gezond na de wissel
+    # een proxy in de omgeving (HTTP_PROXY in het formulier) mag de healthcheck niet omleiden (§5: geen proxy-env)
+    proxy_env = ("HTTP_PROXY=http://192.0.2.1:9", "http_proxy=http://192.0.2.1:9", "NO_PROXY=", "no_proxy=")
+    proxy = [arg for env in proxy_env for arg in ("-e", env)]
+    proxied = docker("exec", *proxy, container.name, *HEALTHCHECK, check=False)
+    assert proxied.returncode == 0, proxied.stdout + proxied.stderr
     secrets = container.exec("sh", "-c", "stat -c '%a %u %n' /appdata/secrets/*").split("\n")
     assert all(line.startswith("600 568 ") for line in secrets if line), secrets
     assert any(line.endswith("/hub-link.json") for line in secrets), secrets  # koppelstatus in een bestand (§3.5)

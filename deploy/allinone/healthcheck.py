@@ -64,8 +64,11 @@ def main() -> int:
     port = os.environ.get("APPSTORE_PORT", "30430")
     if not port.isdigit():
         return 1
+    # nooit via een proxy uit de omgeving (HTTP_PROXY in het formulier van de Custom App, contract §5): urlopen volgt
+    # die anders ook voor 127.0.0.1 en de container wordt onterecht 'unhealthy' (review contract 1.3)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/readyz", timeout=6) as resp:
+        with opener.open(f"http://127.0.0.1:{port}/readyz", timeout=6) as resp:
             return 0 if resp.status == 200 else 1
     except Exception:
         return 1
