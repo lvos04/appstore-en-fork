@@ -1,9 +1,14 @@
-"""Koppelen met de Hub volgens platformcontract 1.2 §3 (enrollment, bevestigen, intrekken, rotatie) en §4.5 (pins).
+"""Koppelen met de Hub volgens platformcontract 1.3 §3 (enrollment, bevestigen, intrekken, rotatie) en §4.5 (pins).
 
 * ``POST {HUB_URL}/api/v1/services/enroll`` met precies ``{app_id, enrollment_token | pairing_code, version, base_url,
   public_key_jwk}`` (§3.3); het antwoord wordt volledig gecontroleerd, de sleutelset-vingerafdruk zelf berekend en
   vergeleken (met ``HUB_KEY_FINGERPRINT`` of de op de statuspagina ingevoerde vingerafdruk); pas daarna wordt in één
-  atomaire stap ``hub-link.json`` geschreven en met ``GET /api/v1/services/self`` bevestigd.
+  atomaire stap ``hub-link.json`` geschreven (met ``rotation_sequence`` uit het antwoord; een Hub 1.2 stuurt het niet:
+  dan 0) en met ``GET /api/v1/services/self`` bevestigd. ``base_url`` gaat alleen mee als hij aan §3.2/§3.3 voldoet.
+* Een onleesbaar ``hub-link.json`` (§3.5) wordt alleen door een poging met een nieuw env-token vervangen, bij haar
+  eerste schrijfactie en vóór het verzoek aan de Hub; een koppelcode krijgt ``koppelstatus_onleesbaar``.
+* ``HUB_URL`` of ``HUB_KEY_FINGERPRINT`` ongeldig → ``last_error`` ``hub_adres_ongeldig``/``vingerafdruk_ongeldig``: de
+  Hub wordt niet aangesproken en het token blijft onafgehandeld (de beheerder kan het formulier verbeteren).
 * Alle Hub-aanroepen volgen **nooit** een redirect en negeren proxy-omgevingsvariabelen (de HTTP-factory).
 * 401 van de Hub op een aanroep met het service-token → eerst ``GET /api/v1/services/self``; pas bij opnieuw 401
   ``ingetrokken``. Netwerkfouten, 5xx en 429 zijn nooit een intrekking (§3.8).
@@ -34,7 +39,7 @@ import jwt
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import APP_ID, __version__
-from .config import Settings
+from .config import Settings, normalize_base_url
 from .events import audit, emit
 from .hubkeys import (
     ENROLLMENT_TOKEN,
@@ -44,6 +49,7 @@ from .hubkeys import (
     fingerprints_equal,
     jwk_thumbprint,
     keyset_fingerprint,
+    normalize_fingerprint,
     public_key_from_jwk,
     sha256_hex,
     validate_hub_jwk,
@@ -184,6 +190,9 @@ def validate_enroll_response(data: Any, expected_fingerprint: str | None) -> dic
         )
     if data["app_id"] != APP_ID:
         raise InvalidResponseError("hub_antwoord_ongeldig", "app_id in het antwoord is niet die van deze dienst")
+    sequence = data.get("rotation_sequence", 0)  # nieuw in 1.3; een Hub 1.2 stuurt het niet → 0
+    if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
+        raise InvalidResponseError("hub_antwoord_ongeldig", "rotation_sequence is geen geheel getal ≥ 0")
     try:
         uuid.UUID(data["service_id"])
     except ValueError as exc:
@@ -209,7 +218,7 @@ def validate_enroll_response(data: Any, expected_fingerprint: str | None) -> dic
         )
     if expected_fingerprint is not None and not fingerprints_equal(expected_fingerprint, computed):
         raise InvalidResponseError("hub_vingerafdruk_onjuist", "de sleutelset-vingerafdruk wijkt af van de verwachte")
-    return {**data, "_jwks": jwks, "_policy": policy, "_fingerprint": computed}
+    return {**data, "_jwks": jwks, "_policy": policy, "_fingerprint": computed, "_sequence": sequence}
 
 
 class HubLinkClient:
@@ -237,14 +246,22 @@ class HubLinkClient:
         self._poll_lock = threading.Lock()
 
     # ------------------------------------------------------------------ hulp
-    def _record(self, action: str, event_type: str, details: dict[str, Any], trace_id: str) -> None:
-        """Audit + outbox-event (best effort: de koppelstatus zelf staat in het bestand, niet in de database)."""
+    def _record(
+        self,
+        action: str,
+        event_type: str,
+        details: dict[str, Any],
+        trace_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Audit + outbox-event (best effort: de koppelstatus zelf staat in het bestand, niet in de database).
+        ``payload`` = de eventinhoud als die smaller is dan de auditdetails (bv. ``service.hub_link.linked``: ``{via}``)."""
         if self.sessions is None:
             return
         try:
             with self.sessions() as db:
                 audit(db, None, action, "hub_link", "1", details, trace_id)
-                emit(db, event_type, "service", APP_ID, details, trace_id)
+                emit(db, event_type, "service", APP_ID, details if payload is None else payload, trace_id)
                 db.commit()
         except Exception:
             log.exception("audit/event van %s kon niet worden vastgelegd", action)
@@ -255,7 +272,8 @@ class HubLinkClient:
             "app_id": APP_ID,
             credential_field: credential,
             "version": __version__,
-            "base_url": self.settings.public_url,
+            # §3.3: alleen een geldige base_url (http(s)://host[:poort][/pad], ≤ 512, adresregels §3.2), anders null
+            "base_url": normalize_base_url(self.settings.public_url, allow_loopback=self.settings.allow_loopback_hub),
             "public_key_jwk": enroll_jwk(self.secrets.identity.public_key()),
         }
 
@@ -271,7 +289,10 @@ class HubLinkClient:
             if p is not None and kind == "token" and p.kind == "koppelcode" and stale_koppelcode(p):
                 p = None  # verweesde koppelcodepoging (bv. een afgebroken verzoek): telt als onderbroken
             if kind == "koppelcode":
-                if st.corrupt or st.first_linked_at is not None:
+                if st.unreadable:
+                    result["p"] = "koppelstatus_onleesbaar"
+                    return None
+                if st.first_linked_at is not None:
                     result["p"] = "al_gekoppeld"
                     return None
                 if p is not None and not stale_koppelcode(p):
@@ -295,8 +316,8 @@ class HubLinkClient:
             result["p"] = st.pending
             return st
 
-        self.store.update(change)
-        return result["p"]
+        self.store.update(change, replace_unreadable=kind == "token")
+        return result.get("p", "koppelstatus_onleesbaar")
 
     def _fail(self, code: str, *, kind: str, secret_digest: str, definitive: bool) -> None:
         """Mislukt (§3.6 stap 4): ``pending`` weg, ``last_error``; bestaande koppeling blijft zoals hij was."""
@@ -309,7 +330,19 @@ class HubLinkClient:
                 st.remember_token(secret_digest)
             return st
 
-        self.store.update(change)
+        self.store.update(change, replace_unreadable=kind == "token")
+
+    def _config_error(self, code: str) -> None:
+        """``hub_adres_ongeldig``/``vingerafdruk_ongeldig`` (§3.5): alleen ``last_error`` (één keer), het token blijft
+        onafgehandeld en de Hub wordt niet aangesproken."""
+
+        def change(st: LinkState) -> LinkState | None:
+            if st.last_error is not None and st.last_error.code == code:
+                return None
+            st.last_error = LastError(code=code, at=now_iso())
+            return st
+
+        self.store.update(change, replace_unreadable=True)
 
     def _transient(self, code: str) -> None:
         """Tijdelijke storing tijdens een env-tokenpoging: ``pending`` blijft, alleen ``last_error`` bijwerken."""
@@ -325,9 +358,13 @@ class HubLinkClient:
     ) -> EnrollOutcome:
         """Eén enroll-poging (§3.6 stap 2–4). ``kind``: ``token`` (env) of ``koppelcode`` (statuspagina)."""
         digest = sha256_hex(credential)
+        # de statuspagina schrijft per koppelcodepoging zelf één logregel (§3.7); hier dan alleen debug
+        level = logging.DEBUG if kind == "koppelcode" else logging.WARNING
         claim = self._begin(kind, digest, hub_url)
         if isinstance(claim, str):
-            log.info("koppelen (%s) niet gestart: %s", kind, claim)
+            log.log(
+                logging.DEBUG if kind == "koppelcode" else logging.INFO, "koppelen (%s) niet gestart: %s", kind, claim
+            )
             return EnrollOutcome("refused", claim)
         field = "enrollment_token" if kind == "token" else "pairing_code"
         body = self.enroll_body(field, credential)
@@ -336,7 +373,7 @@ class HubLinkClient:
             with self.http_factory() as client:
                 resp = client.post(f"{hub_url}{ENROLL_PATH}", json=body)
         except httpx.HTTPError as exc:
-            log.warning("koppelen: Hub niet bereikbaar (%s)", type(exc).__name__)
+            log.log(level, "koppelen: Hub niet bereikbaar (%s)", type(exc).__name__)
             return self._transient_or_fail("hub_onbereikbaar", koppelcode, digest)
         status = resp.status_code
         if status == 200:
@@ -344,7 +381,7 @@ class HubLinkClient:
                 data = validate_enroll_response(resp.json(), expected_fingerprint)
             except (InvalidResponseError, ValueError) as exc:
                 code = exc.code if isinstance(exc, InvalidResponseError) else "hub_antwoord_ongeldig"
-                log.warning("koppelen geweigerd door deze dienst: %s (%s)", code, exc)
+                log.log(level, "koppelen geweigerd door deze dienst: %s (%s)", code, exc)
                 self._fail(code, kind=kind, secret_digest=digest, definitive=True)
                 return EnrollOutcome("definitive", code)
             self._succeed(data, hub_url=hub_url, kind=kind, digest=digest, trace_id=trace_id)
@@ -362,7 +399,7 @@ class HubLinkClient:
             422: "hub_incompatibel",
         }
         last = codes.get(status, "hub_weigerde")  # overige 4xx (400/403/409/410): definitief
-        log.warning("koppelen: Hub antwoordde HTTP %s (%s)", status, last)
+        log.log(level, "koppelen: Hub antwoordde HTTP %s (%s)", status, last)
         self._fail(last, kind=kind, secret_digest=digest, definitive=True)
         return EnrollOutcome("definitive", last)
 
@@ -378,6 +415,8 @@ class HubLinkClient:
     def _succeed(self, data: dict[str, Any], *, hub_url: str, kind: str, digest: str, trace_id: str) -> None:
         now = now_iso()
         token = str(data["service_token"])
+        pins = _pins_from(data["_jwks"], [data["_policy"]], "enroll", now)
+        pins.rotation_sequence = int(data["_sequence"])  # §3.3/§4.5: begin bij de reeks van de Hub
 
         def change(st: LinkState) -> LinkState:
             new = LinkState(
@@ -390,29 +429,38 @@ class HubLinkClient:
                 confirmed_at=None,
                 service_token=token,
                 service_token_last4=token[-4:],
-                pins=_pins_from(data["_jwks"], [data["_policy"]], "enroll", now),
+                pins=pins,
                 previous_pins=st.pins or st.previous_pins,
                 pending=None,
                 used_enrollment_token_sha256=list(st.used_enrollment_token_sha256),
                 last_error=None,
+                unreadable_replaced_at=st.unreadable_replaced_at,
             )
             if kind == "token":
                 new.remember_token(digest)
             return new
 
-        self.store.update(change)
-        log.info("gekoppeld met de Hub via %s (vingerafdruk %s)", kind, data["_fingerprint"])
+        self.store.update(change, replace_unreadable=kind == "token")
+        log.log(
+            logging.DEBUG if kind == "koppelcode" else logging.INFO,
+            "gekoppeld met de Hub via %s (vingerafdruk %s)",
+            kind,
+            data["_fingerprint"],
+        )
+        # contract 1.3 §7: vaste naam service.hub_link.linked met payload {via} (service.enrollment.completed vervalt)
         self._record(
             "hub.linked",
-            "service.enrollment.completed",
+            "service.hub_link.linked",
             {
                 "hub_url": hub_url,
                 "via": kind,
                 "service_id": str(data["service_id"]),
                 "keyset_fingerprint": data["_fingerprint"],
+                "rotation_sequence": int(data["_sequence"]),
                 "enrollment_replayed": bool(data["enrollment_replayed"]),
             },
             trace_id,
+            payload={"via": kind},
         )
 
     def pair_with_code(self, *, hub_url: str, pairing_code: str, fingerprint: str, trace_id: str) -> EnrollOutcome:
@@ -431,13 +479,23 @@ class HubLinkClient:
         token = self.settings.enrollment_token
         hub_url = self.settings.hub_url
         st = self.store.read()
+        if token and not hub_url and self.settings.hub_url_invalid:
+            digest = sha256_hex(token)
+            if st.corrupt or digest not in st.used_enrollment_token_sha256:
+                self._config_error("hub_adres_ongeldig")
+                return EnrollOutcome("definitive", "hub_adres_ongeldig")
+            return None
         if not token or not hub_url:
             if st.pending is not None and st.pending.kind == "token":
                 self._interrupted(st.pending.secret_sha256)
             return None
         digest = sha256_hex(token)
-        if digest in st.used_enrollment_token_sha256:
+        if not st.corrupt and digest in st.used_enrollment_token_sha256:
             return None
+        expected = self.settings.hub_key_fingerprint
+        if expected is not None and normalize_fingerprint(expected) is None:
+            self._config_error("vingerafdruk_ongeldig")
+            return EnrollOutcome("definitive", "vingerafdruk_ongeldig")
         if st.pending is not None and st.pending.kind == "koppelcode":
             if not stale_koppelcode(st.pending):
                 return None  # een koppelpoging via de statuspagina loopt; nooit twee enrollments tegelijk

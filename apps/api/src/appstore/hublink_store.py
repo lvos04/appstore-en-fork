@@ -1,4 +1,4 @@
-"""Koppelstatus met de Hub in ``/appdata/secrets/hub-link.json`` (platformcontract 1.2 §3.5).
+"""Koppelstatus met de Hub in ``/appdata/secrets/hub-link.json`` (platformcontract 1.3 §3.5).
 
 * Eén bestand, 0600, in ``/appdata/secrets`` (0700); eigenaar is de procesgebruiker (568 in de image).
 * Schrijven: nieuw bestand in dezelfde map (``O_CREAT|O_EXCL``, 0600) → ``fsync`` → ``rename`` → ``fsync`` van de map,
@@ -7,9 +7,14 @@
 * Lezen: elk proces leest het bestand opnieuw zodra inode, mtime of grootte verandert, zodat ontkoppelen, intrekken of
   rotatie door het ene proces direct voor het andere geldt.
 * Niet in de database: een database-herstel brengt geen oude koppeling, pins of ingetrokken token terug.
-* Onleesbaar bestand → fail-closed: niets wordt vertrouwd (``not_linked``) en de statuspagina biedt géén
-  koppelformulier (het is onbekend of de dienst al eens gekoppeld was, dus geldt hij als "al eens gekoppeld");
-  herstel via een nieuw token in het formulier.
+* **Onleesbaar** (geen geldige JSON, een andere major van ``schema_version``, ontbrekende verplichte velden, een andere
+  ``app_id``, verkeerde eigenaar of rechten) → fail-closed: niets wordt vertrouwd (``not_linked``), de statuspagina
+  biedt géén koppelformulier en meldt ``koppelstatus_onleesbaar``; ``/readyz`` blijft 200. Een gewone schrijfactie
+  laat zo'n bestand ongemoeid (nooit stil terug naar ``nooit_gekoppeld``). Alleen een poging met een **nieuw env-token**
+  vervangt het, bij haar eerste schrijfactie en vóór het verzoek aan de Hub: eerst wordt het origineel bewaard als
+  ``hub-link.json.onleesbaar-<UTC-tijd>`` (0600) en ``unreadable_replaced_at`` gezet. Zolang ``first_linked_at`` daarna
+  leeg is, blijft de toestand voor de statuspagina "onleesbaar" (geen formulier, geen vertrouwen).
+* De dienst schrijft ``schema_version: "1.3"``; een lezer accepteert elke ``1.x`` en bewaart onbekende extra velden.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import fcntl
 import json
 import logging
 import os
+import stat
 import threading
 import uuid
 from collections.abc import Callable, Iterator
@@ -35,6 +41,10 @@ log = logging.getLogger("appstore.hublink")
 LINK_FILE = "hub-link.json"
 LOCK_FILE = "hub-link.lock"
 MAX_USED_TOKENS = 20
+SCHEMA_VERSION = "1.3"
+#: verplichte velden van een leesbaar bestand; bij ``gekoppeld`` ook de koppeling zelf (§3.5)
+REQUIRED = ("schema_version", "state", "app_id")
+REQUIRED_LINKED = ("hub_url", "service_id", "service_token", "pins", "first_linked_at", "linked_at")
 
 State = Literal["nooit_gekoppeld", "gekoppeld", "ontkoppeld", "ingetrokken"]
 
@@ -54,6 +64,22 @@ ERROR_MESSAGES: dict[str, str] = {
     "ingetrokken_door_hub": "De Hub heeft deze koppeling ingetrokken; opnieuw koppelen gaat via de Hub.",
     "overzetten_onvolledig": "De koppeling uit een oudere versie kon niet volledig worden overgezet; opnieuw koppelen "
     "gaat via de Hub.",
+    "vingerafdruk_ongeldig": "HUB_KEY_FINGERPRINT heeft niet de vorm XXXX-XXXX-XXXX-XXXX; er is niets naar de Hub "
+    "gestuurd. Verbeter de waarde in de instellingen van de Custom App.",
+    "hub_adres_ongeldig": "HUB_URL is geen geldig Hub-adres (http(s)://<NAS-adres>:<poort>, geen localhost); er is niets "
+    "naar de Hub gestuurd. Verbeter de waarde in de instellingen van de Custom App.",
+    "koppelstatus_onleesbaar": "De koppelstatus van deze dienst is onleesbaar; de dienst vertrouwt niets van de Hub. "
+    "Herstel gaat alleen met een nieuw koppeltoken uit de Hub.",
+}
+#: HTTP-uitkomst van de Hub per vaste ``last_error``-code (§3.3/§3.5, RV6): wat de dienst zag
+HTTP_OUTCOME: dict[str, str] = {
+    "hub_onbereikbaar": "netwerkfout, time-out, 3xx of 5xx",
+    "hub_weigerde": "401 (en overige 4xx)",
+    "hub_incompatibel": "413 of 422",
+    "enroll_endpoint_ontbreekt": "404",
+    "rate_limited": "429",
+    "hub_antwoord_ongeldig": "200 met een ongeldig antwoord",
+    "hub_vingerafdruk_onjuist": "200 met een andere sleutelset-vingerafdruk",
 }
 
 
@@ -65,6 +91,10 @@ def error_message(code: str | None) -> str | None:
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="ignore")
+
+
+class UnreadableError(ValueError):
+    """``hub-link.json`` is onleesbaar in de zin van §3.5."""
 
 
 class PublicJwk(_Model):
@@ -102,7 +132,10 @@ class LastError(_Model):
 
 
 class LinkState(_Model):
-    schema_version: str = "1.2"
+    #: extra velden mogen (§3.5) en blijven bij herschrijven behouden
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str = SCHEMA_VERSION
     state: State = "nooit_gekoppeld"
     app_id: str = APP_ID
     hub_url: str | None = None
@@ -118,15 +151,24 @@ class LinkState(_Model):
     pending: Pending | None = None
     used_enrollment_token_sha256: list[str] = Field(default_factory=list)
     last_error: LastError | None = None
-    # aanvullend (ADR-0008): rotatieverzoek van de Hub en een geweigerde sleutelrotatie overleven een herstart
+    # vastgelegde extra velden (§3.5): rotatieverzoek van de Hub en een geweigerde sleutelrotatie overleven een
+    # herstart; een vervangen onleesbaar bestand blijft zichtbaar
     token_rotation_requested_at: str | None = None
     key_rotation_blocked_sequence: int | None = None
+    unreadable_replaced_at: str | None = None
 
     _corrupt: bool = PrivateAttr(default=False)
 
     @property
     def corrupt(self) -> bool:
+        """Het bestand zelf is nu onleesbaar (§3.5)."""
         return self._corrupt
+
+    @property
+    def unreadable(self) -> bool:
+        """Toestand "koppelstatus onleesbaar" voor §3.7: het bestand is onleesbaar, of het is vervangen en sindsdien is
+        er nog nooit gekoppeld (geen formulier, geen vertrouwen)."""
+        return self._corrupt or (self.unreadable_replaced_at is not None and self.first_linked_at is None)
 
     @property
     def linked(self) -> bool:
@@ -140,6 +182,22 @@ class LinkState(_Model):
 
     def public(self) -> dict[str, Any]:
         """Witte lijst voor statuspagina en ``GET /connector/v1/hub-link`` (§3.5): nooit token of geheim-hash."""
+        if self._corrupt:  # de stabiele toestand is onbekend: niet tonen (de witte lijst is een maximum)
+            return {
+                "state": None,
+                "koppelen_bezig": False,
+                "hub_url": None,
+                "service_id": None,
+                "via": None,
+                "linked_at": None,
+                "first_linked_at": None,
+                "keyset_fingerprint": None,
+                "service_token_last4": None,
+                "last_error": {
+                    "code": "koppelstatus_onleesbaar",
+                    "message": error_message("koppelstatus_onleesbaar"),
+                },
+            }
         return {
             "state": self.state,
             "koppelen_bezig": self.pending is not None,
@@ -165,33 +223,48 @@ class HubLinkStore:
         self.dir = secrets_dir
         self.path = secrets_dir / LINK_FILE
         self.lock_path = secrets_dir / LOCK_FILE
-        self._cache: tuple[tuple[int, int, int], LinkState] | None = None
+        self._cache: tuple[tuple[int, ...], LinkState] | None = None
         self._mutex = threading.Lock()
 
     # -------------------------------------------------------------- lezen
-    def _load(self) -> tuple[tuple[int, int, int] | None, LinkState]:
+    def _load(self) -> tuple[tuple[int, ...] | None, LinkState]:
         try:
             st = os.stat(self.path)
         except FileNotFoundError:
             return None, LinkState()
-        key = (st.st_ino, st.st_mtime_ns, st.st_size)
+        key = (st.st_ino, st.st_mtime_ns, st.st_size, st.st_mode, st.st_uid)
         with self._mutex:
             if self._cache is not None and self._cache[0] == key:
                 return key, self._cache[1].model_copy(deep=True)
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError("geen object")
-            state = LinkState.model_validate(data)
+            state = self._parse(st)
         except (OSError, ValueError, ValidationError) as exc:
-            log.error("hub-link.json is onleesbaar (%s); niets wordt vertrouwd", type(exc).__name__)
-            # onbekend of de dienst al eens gekoppeld was: voorzichtig aannemen van wel, zodat ook na het overschrijven
-            # (bv. door een nieuw env-token) het koppelformulier van de statuspagina dicht blijft (§3.7)
-            state = LinkState(first_linked_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"))
+            log.error("hub-link.json is onleesbaar (%s); niets wordt vertrouwd", _reason(exc))
+            state = LinkState()
             state._corrupt = True
         with self._mutex:
             self._cache = (key, state)
         return key, state.model_copy(deep=True)
+
+    def _parse(self, st: os.stat_result) -> LinkState:
+        if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o077:
+            raise UnreadableError("verkeerde eigenaar of rechten (eigenaar = dit proces, 0600)")
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise UnreadableError("geen object")
+        missing = [f for f in REQUIRED if data.get(f) in (None, "")]
+        if missing:
+            raise UnreadableError(f"verplichte velden ontbreken: {', '.join(missing)}")
+        version = data["schema_version"]
+        if not isinstance(version, str) or version.split(".", 1)[0] != "1":
+            raise UnreadableError("andere major van schema_version")
+        if data["app_id"] != APP_ID:
+            raise UnreadableError("app_id is niet die van deze dienst")
+        if data.get("state") == "gekoppeld":
+            missing = [f for f in REQUIRED_LINKED if data.get(f) in (None, "")]
+            if missing:
+                raise UnreadableError(f"gekoppeld zonder {', '.join(missing)}")
+        return LinkState.model_validate(data)
 
     def read(self) -> LinkState:
         """Actuele status (leest opnieuw zodra het bestand veranderd is). Ontbreekt het bestand: ``nooit_gekoppeld``."""
@@ -237,23 +310,71 @@ class HubLinkStore:
         with self._mutex:
             self._cache = None
 
-    def update(self, change: Callable[[LinkState], LinkState | None]) -> LinkState:
-        """Lezen-wijzigen-schrijven onder de vergrendeling. ``change`` geeft de nieuwe status, of ``None`` = niets."""
+    def update(self, change: Callable[[LinkState], LinkState | None], *, replace_unreadable: bool = False) -> LinkState:
+        """Lezen-wijzigen-schrijven onder de vergrendeling. ``change`` geeft de nieuwe status, of ``None`` = niets.
+
+        Een onleesbaar bestand wordt nooit stil overschreven (§3.5): ``change`` wordt dan niet aangeroepen en de
+        onleesbare status komt terug. Alleen met ``replace_unreadable=True`` (eerste schrijfactie van een poging met
+        een nieuw env-token) wordt het origineel eerst bewaard (:meth:`_preserve_unreadable`) en krijgt ``change`` een
+        nieuwe status met ``unreadable_replaced_at``.
+        """
         with self.locked():
             with self._mutex:
                 self._cache = None  # binnen de vergrendeling altijd vers lezen
             current = self._load()[1]
-            new = change(current.model_copy(deep=True))
+            base = current
+            if current.corrupt:
+                if not replace_unreadable:
+                    return current
+                saved = self._preserve_unreadable()
+                base = LinkState(unreadable_replaced_at=_now())
+                log.warning("onleesbaar hub-link.json vervangen voor een nieuwe koppelpoging; origineel: %s", saved)
+            new = change(base.model_copy(deep=True))
             if new is None:
+                if base is not current:  # het origineel is al bewaard: de vervanging toch vastleggen
+                    self._write(base)
+                    return base
                 return current
+            new.schema_version = SCHEMA_VERSION
             self._write(new)
             new._corrupt = False  # het bestand is nu weer leesbaar
             return new
+
+    def _preserve_unreadable(self) -> str:
+        """Bewaar het onleesbare origineel als ``hub-link.json.onleesbaar-<UTC-tijd>`` (0600). Een harde link houdt de
+        exacte bytes, ook als dit proces het bestand niet mag lezen; het origineel blijft tot het atomair vervangen is."""
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        target = self.dir / f"{LINK_FILE}.onleesbaar-{stamp}"
+        try:
+            os.link(self.path, target)
+        except OSError:
+            data = self.path.read_bytes()
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+        with contextlib.suppress(OSError):
+            os.chmod(target, 0o600)
+        return target.name
 
     def write_initial(self, state: LinkState) -> bool:
         """Schrijf alleen als het bestand nog niet bestaat (onder de vergrendeling). Geeft ``True`` als geschreven."""
         with self.locked():
             if self.path.exists():
                 return False
+            state.schema_version = SCHEMA_VERSION
             self._write(state)
             return True
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _reason(exc: Exception) -> str:
+    if isinstance(exc, UnreadableError):
+        return str(exc)
+    if isinstance(exc, ValidationError):
+        return f"schemafout ({exc.error_count()})"
+    return type(exc).__name__

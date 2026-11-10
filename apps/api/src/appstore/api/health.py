@@ -56,11 +56,27 @@ def measure(c: AppContext) -> Readiness:
     return Readiness(database=True, schema="ok" if current == head else "verouderd", current=current, head=head)
 
 
-@router.get("/readyz", summary="Afhankelijkheden in orde")
+@router.get(
+    "/readyz",
+    summary="Afhankelijkheden in orde",
+    description=(
+        "200 als database en schema in orde zijn. De koppeling met de Hub telt **niet** mee (contract 1.3 §5): een "
+        "niet-gekoppelde, ontkoppelde of ingetrokken dienst, of een onleesbare koppelstatus, is ready. `hub_link` geeft "
+        "alleen ter informatie de toestand en `last_error` uit de witte lijst (§3.5)."
+    ),
+)
 def readyz(request: Request) -> JSONResponse:
-    m = measure(ctx(request))
+    c = ctx(request)
+    m = measure(c)
     checks, ready = m.checks(), m.ready
+    public = c.store.read().public()
+    hub_link = {k: public[k] for k in ("state", "koppelen_bezig", "last_error")}
     return JSONResponse(
-        {"status": "ready" if ready else "not_ready", "checks": checks, "observed_at": iso(utcnow())},
+        {
+            "status": "ready" if ready else "not_ready",
+            "checks": checks,
+            "hub_link": hub_link,
+            "observed_at": iso(utcnow()),
+        },
         status_code=200 if ready else 503,
     )

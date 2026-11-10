@@ -1,11 +1,15 @@
 """Koppelen met het env-token, herstart halverwege, intrekking, token- en sleutelrotatie en de eenmalige overzetting
-uit de database (contract 1.2 §3.2–§3.8, §4.5). Tegen echte PostgreSQL met de Hub-simulator (Sim-getest)."""
+uit de database (contract 1.3 §3.2–§3.8, §4.5), plus de 1.3-regels: onleesbaar koppelbestand alleen vervangen door een
+nieuw env-token (origineel bewaard), ``hub_adres_ongeldig``/``vingerafdruk_ongeldig`` zonder Hub-verzoek,
+``rotation_sequence`` uit het enroll-antwoord en ``service.hub_link.linked`` met ``{via}``. Tegen echte PostgreSQL met
+de Hub-simulator (Sim-getest)."""
 
 from __future__ import annotations
 
 import dataclasses
 import json
 import stat
+import uuid
 from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any
@@ -696,3 +700,143 @@ def test_transferred_link_is_confirmed_or_revoked(worker_ctx: AppContext, hub: F
     ensure_link_file(worker_ctx.store, worker_ctx.sessions, worker_ctx.secrets)
     run_once(worker_ctx)  # de Hub kent dit token niet (meer): services/self 401 → ingetrokken
     assert worker_ctx.store.read().state == "ingetrokken"
+
+
+# ---------------------------------------------------------------------------------------------- contract 1.3
+def _corrupt(c: AppContext, content: str = "{kapot") -> None:
+    path = c.settings.secrets_dir / "hub-link.json"
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o600)
+
+
+def test_new_env_token_replaces_an_unreadable_file_after_keeping_the_original(settings: Settings, hub: FakeHub) -> None:
+    """§3.5 (RV6): eerste schrijfactie van de poging vervangt het bestand, vóór het verzoek aan de Hub."""
+    c = build_context(settings, hub.client_factory())
+    startup(c)
+    _corrupt(c)
+    assert c.store.read().corrupt
+    run_once(c)  # geen env-token: niets gewijzigd, niets naar de Hub
+    assert c.store.read().corrupt and hub.enroll_requests == []
+    c = _restart(c, hub, hub_url=HUB_URL, enrollment_token=hub.add_token())
+    run_once(c)
+    backups = [p for p in c.settings.secrets_dir.iterdir() if p.name.startswith("hub-link.json.onleesbaar-")]
+    assert len(backups) == 1 and backups[0].read_text() == "{kapot"
+    st = c.store.read()
+    assert st.state == "gekoppeld" and st.confirmed_at and st.unreadable_replaced_at and not st.unreadable
+    c.engine.dispose()
+
+
+def test_refused_env_token_after_replacement_stays_unreadable_and_is_not_retried(
+    settings: Settings, hub: FakeHub
+) -> None:
+    """Een al gebruikt of onbekend token: één poging (hash daarna afgehandeld), toestand blijft "onleesbaar"."""
+    token = "enr_" + "Q" * 43  # onbekend bij de Hub → 401
+    c = build_context(dataclasses.replace(settings, hub_url=HUB_URL, enrollment_token=token), hub.client_factory())
+    startup(c)
+    _corrupt(c)
+    run_once(c)
+    st = c.store.read()
+    assert st.last_error is not None and st.last_error.code == "hub_weigerde"
+    assert st.unreadable and not st.corrupt and st.first_linked_at is None
+    n = len(hub.enroll_requests)
+    c = _restart(c, hub)
+    run_once(c)
+    assert len(hub.enroll_requests) == n == 1  # na een herstart niet opnieuw geprobeerd
+    with TestClient(create_app(c.settings, http_factory=hub.client_factory())) as web:
+        assert 'action="/koppelen"' not in web.get("/").text  # geen formulier zolang first_linked_at leeg is
+    c.engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("changes", "code"),
+    [
+        ({"hub_url": None, "hub_url_invalid": True}, "hub_adres_ongeldig"),
+        ({"hub_key_fingerprint": "geen-vingerafdruk"}, "vingerafdruk_ongeldig"),
+    ],
+)
+def test_invalid_env_configuration_never_contacts_the_hub(
+    env_settings: Settings, hub: FakeHub, changes: dict[str, Any], code: str
+) -> None:
+    """§3.5: de Hub wordt niet aangesproken en het token blijft onafgehandeld (de beheerder kan het verbeteren)."""
+    c = build_context(dataclasses.replace(env_settings, **changes), hub.client_factory())
+    startup(c)
+    run_once(c)
+    run_once(c)
+    st = c.store.read()
+    assert hub.enroll_requests == [] and st.last_error is not None and st.last_error.code == code
+    assert st.used_enrollment_token_sha256 == []
+    c = _restart(c, hub, hub_url=HUB_URL, hub_url_invalid=False, hub_key_fingerprint=None)
+    run_once(c)  # verbeterd: hetzelfde token werkt nu
+    assert c.store.read().state == "gekoppeld"
+    c.engine.dispose()
+
+
+def test_rotation_sequence_from_the_enroll_answer(env_settings: Settings, hub: FakeHub) -> None:
+    hub.rotation_sequence = 4
+    c = build_context(env_settings, hub.client_factory())
+    startup(c)
+    run_once(c)
+    st = c.store.read()
+    assert st.pins is not None and st.pins.rotation_sequence == 4
+    assert json.loads((c.settings.secrets_dir / "hub-link.json").read_text())["schema_version"] == "1.3"
+    hub.key_rotation_calls = 0
+    c.hub.poll_key_rotations(trace_id="t")
+    assert hub.key_rotation_calls == 1
+    c.engine.dispose()
+
+
+def test_hub_1_2_without_rotation_sequence_is_accepted_with_zero(env_settings: Settings, hub: FakeHub) -> None:
+    hub.hub_version = "1.2"
+    c = build_context(env_settings, hub.client_factory())
+    startup(c)
+    run_once(c)
+    st = c.store.read()
+    assert st.state == "gekoppeld" and st.pins is not None and st.pins.rotation_sequence == 0
+    c.engine.dispose()
+
+
+def test_linked_event_has_the_fixed_name_and_only_via(ctx: AppContext, hub: FakeHub) -> None:
+    run_once(ctx)
+    run_once(ctx)  # ook de outbox naar de inbox van de (strikte) simulator
+    linked = [e for e in hub.inbox if e["event_type"] == "service.hub_link.linked"]
+    assert len(linked) == 1 and linked[0]["payload"] == {"via": "token"}
+    assert linked[0]["entity"] == {"type": "service", "id": "appstore-en-fork"}
+    assert hub.inbox_rejected == [] and not any(e["event_type"] == "service.enrollment.completed" for e in hub.inbox)
+
+
+def test_invalid_base_url_is_sent_as_null(env_settings: Settings, hub: FakeHub) -> None:
+    for public_url, sent in (("http://127.1:30430", None), ("http://192.0.2.10:30430/", "http://192.0.2.10:30430")):
+        hub.enroll_requests.clear()
+        c = build_context(
+            dataclasses.replace(env_settings, public_url=public_url, enrollment_token=hub.add_token()),
+            hub.client_factory(),
+        )
+        startup(c)
+        run_once(c)
+        assert hub.enroll_requests[0]["base_url"] == sent
+        c.engine.dispose()
+
+
+def test_invalid_event_is_dead_lettered_before_sending(ctx: AppContext, hub: FakeHub) -> None:
+    """§7: een event dat de grenzen van de inbox breekt, gaat niet naar de Hub maar meteen naar dead-letter."""
+    run_once(ctx)
+    with ctx.sessions() as db:
+        db.add(
+            OutboxEvent(
+                event_id=uuid.uuid4(),
+                event_type="catalog.Fout.x",
+                entity_type="catalog_source",
+                entity_id="x",
+                classification="internal",
+                actor={"type": "system", "id": "appstore-en-fork"},
+                payload={},
+                trace_id="t",
+            )
+        )
+        db.commit()
+    hub.inbox.clear()
+    push_outbox(ctx)
+    with ctx.sessions() as db:
+        ev = db.query(OutboxEvent).filter(OutboxEvent.event_type == "catalog.Fout.x").one()
+        assert ev.dead_letter and (ev.last_error or "").startswith("envelope_ongeldig")
+    assert not any(e["event_type"] == "catalog.Fout.x" for e in hub.inbox)

@@ -1,4 +1,11 @@
-"""Simulator van de Hub (alleen voor tests) volgens platformcontract 1.2 §3.3–§3.8, §4.3–§4.6.
+"""Simulator van de Hub (alleen voor tests) volgens platformcontract 1.3 §3.3–§3.8, §4.3–§4.6, §5 en §7.
+
+1.3: het enroll-antwoord zegt ``schema_version: "1.3"`` en geeft ``rotation_sequence``; ``hub_version="1.2"`` simuleert
+een oudere Hub (``"1.2"``, zonder ``rotation_sequence``). Bij een bestaande registratie trekt de Hub de oude tokens pas
+in bij het eerste gebruik van het nieuwe (``GET /api/v1/services/self``). De inbox controleert de grenzen van §7
+(onbekende velden en vorm → 422, ``source_app`` ≠ token → 403 ``source_mismatch``). De inventaris pagineert over een
+momentopname (``snapshot_id``; een verdwenen momentopname → 409 ``snapshot_changed``) en kent de scope
+``inventaris.lezen`` (``apps_mode="geen_scope"`` → 403 ``scope_ontbreekt``).
 
 Strikt zoals het contract: onbekende velden of een JWK met ``use``/``alg`` → 422 ``validation_error``; onbekend,
 verlopen of al gebruikt token → 401 ``invalid_enrollment`` (één code, geen orakel); na 10 mislukte pogingen binnen
@@ -165,6 +172,51 @@ SUMMARY_FIELDS = [
 ]
 
 
+EVENT_FIELDS = {
+    "schema_version",
+    "event_id",
+    "source_app",
+    "source_event_id",
+    "event_type",
+    "entity",
+    "timestamp_utc",
+    "trace_id",
+    "correlation_id",
+    "actor",
+    "classification",
+    "payload",
+    "payload_ref",
+}
+_EVENT_TYPE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+$")
+_ENTITY_TYPE = re.compile(r"^[a-z0-9_.-]{1,64}$")
+
+
+def event_problem(ev: Any) -> tuple[int, str]:
+    """Grenzen van de Hub-inbox (contract 1.3 §7); ``(0, "")`` = in orde."""
+    if (
+        not isinstance(ev, dict)
+        or set(ev) - EVENT_FIELDS
+        or not {"schema_version", "event_id", "event_type"} <= set(ev)
+    ):
+        return 422, "validation_error"
+    if ev.get("source_app") != APP_ID:
+        return 403, "source_mismatch"
+    entity, actor, payload = ev.get("entity"), ev.get("actor"), ev.get("payload")
+    checks = [
+        ev["schema_version"] == "1.0",
+        isinstance(ev["event_type"], str)
+        and len(ev["event_type"]) <= 128
+        and bool(_EVENT_TYPE.match(ev["event_type"])),
+        isinstance(ev.get("source_event_id"), str) and 1 <= len(ev["source_event_id"]) <= 200,
+        isinstance(entity, dict) and bool(_ENTITY_TYPE.match(str(entity.get("type", "")))),
+        isinstance(entity, dict) and isinstance(entity.get("id"), str) and 1 <= len(entity["id"]) <= 200,
+        isinstance(actor, dict) and isinstance(actor.get("id"), str) and 1 <= len(actor["id"]) <= 128,
+        isinstance(payload, dict) and len(json.dumps(payload, ensure_ascii=False).encode()) <= 16 * 1024,
+        isinstance(ev.get("timestamp_utc"), str) and ev["timestamp_utc"].endswith(("Z", "+00:00")),
+    ]
+    return (0, "") if all(checks) else (422, "validation_error")
+
+
 def new_pairing_code() -> str:
     raw = "".join(secrets.choice(CROCKFORD) for _ in range(12))
     return f"{raw[0:4]}-{raw[4:8]}-{raw[8:12]}"
@@ -184,6 +236,8 @@ class ServiceToken:
     service_id: str
     revoked: bool = False
     last_used_at: float | None = None
+    #: oude tokens van dezelfde registratie die pas bij het eerste gebruik van dit token vervallen (§3.6, 1.3)
+    supersedes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -227,6 +281,14 @@ class FakeHub:
     apps_page_size: int = 200
     apps_body_patch: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     apps_auth: list[str] = field(default_factory=list)
+    # contract 1.3
+    hub_version: str = "1.3"  # "1.2" = oudere Hub: schema_version 1.2 en geen rotation_sequence
+    rotation_sequence: int = 0
+    inbox_rejected: list[tuple[int, str]] = field(default_factory=list)
+    snapshot_seq: int = 0
+    snapshot_drop_after_first_page: int = 0  # zoveel keer: na pagina 1 is de momentopname weg (409)
+    apps_retry_after: str | None = None  # Retry-After bij een geforceerde 429/503
+    inventory_max_age_s: int | None = None
 
     # -------------------------------------------------------------- grants
     def add_token(self, app_id: str = APP_ID, *, age: float = 0.0) -> str:
@@ -254,7 +316,7 @@ class FakeHub:
         self,
         sub: str = "gebruiker-1",
         roles: list[str] | None = None,
-        aud: str = APP_ID,
+        aud: str | list[str] = APP_ID,
         ttl: int = 60,
         iat: int | None = None,
         key: Ed25519PrivateKey | None = None,
@@ -263,6 +325,7 @@ class FakeHub:
         jti: str | None = "auto",
         extra: dict[str, Any] | None = None,
         kid: str | None = None,
+        no_kid: bool = False,
     ) -> str:
         now = int(time.time()) if iat is None else iat
         signer = key or self.key
@@ -280,7 +343,8 @@ class FakeHub:
         if jti is not None:
             claims["jti"] = str(uuid.uuid4()) if jti == "auto" else jti
         claims.update(extra or {})
-        return jwt.encode(claims, signer, algorithm="EdDSA", headers={"kid": kid or key_id(signer.public_key())})
+        headers = {} if no_kid else {"kid": kid or key_id(signer.public_key())}
+        return jwt.encode(claims, signer, algorithm="EdDSA", headers=headers)
 
     def service_jwt(self, service_id: str | None = None, **kw: Any) -> str:
         """Dienst-JWT van §4.3 (``token_use: hub_service``)."""
@@ -415,15 +479,14 @@ class FakeHub:
             self.failed_attempts.append(now)
             return self._error(401, "invalid_enrollment")
         self.failed_attempts.clear()
-        if not replay:
-            for reg in self.tokens.values():  # bestaande registratie: oude tokens intrekken, service_id blijft
-                reg.revoked = True
+        old = [tok for tok, reg in self.tokens.items() if not reg.revoked] if not replay else []
         token = "svc_" + secrets.token_urlsafe(32)
-        self.tokens[token] = ServiceToken(self.service_id)
+        # bestaande registratie: service_id blijft; oude tokens vervallen pas bij het eerste gebruik van het nieuwe
+        self.tokens[token] = ServiceToken(self.service_id, supersedes=old)
         self.last_service_token = token
         grant.used_with_thumbprint, grant.issued_token = thumb, token
         out: dict[str, Any] = {
-            "schema_version": "1.2",
+            "schema_version": "1.3" if self.hub_version == "1.3" else "1.2",
             "service_id": self.service_id,
             "app_id": body["app_id"],
             "service_token": token,
@@ -437,6 +500,8 @@ class FakeHub:
             "key_rotation_url": "/api/v1/auth/key-rotations",
             "enrollment_replayed": replay,
         }
+        if self.hub_version == "1.3":
+            out["rotation_sequence"] = self.rotation_sequence
         if self.response_patch is not None:
             out = self.response_patch(out)
         self.enroll_responses.append((200, out))
@@ -475,6 +540,10 @@ class FakeHub:
             reg = self._bearer(request)
             if reg is None:
                 return self._error(401, "unauthorized")
+            for old in reg.supersedes:  # eerste gebruik van het nieuwe token: nu pas de oude intrekken (§3.6)
+                if old in self.tokens:
+                    self.tokens[old].revoked = True
+            reg.supersedes = []
             body = {
                 "service_id": reg.service_id,
                 "app_id": APP_ID,
@@ -512,8 +581,13 @@ class FakeHub:
             self.inbox_auth.append(request.headers.get("authorization", ""))
             if self._bearer(request) is None:
                 return self._error(401, "unauthorized")
+            event = json.loads(request.content)
+            status, code = event_problem(event)
+            if status:
+                self.inbox_rejected.append((status, code))
+                return self._error(status, code)
             if self.inbox_status < 300:
-                self.inbox.append(json.loads(request.content))
+                self.inbox.append(event)
             return httpx.Response(self.inbox_status, json={}, headers=self._headers())
         return self._error(404, "not_found")
 
