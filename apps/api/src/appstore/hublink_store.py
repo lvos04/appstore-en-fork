@@ -323,32 +323,51 @@ class HubLinkStore:
                 self._cache = None  # binnen de vergrendeling altijd vers lezen
             current = self._load()[1]
             base = current
+            moved: Path | None = None
             if current.corrupt:
                 if not replace_unreadable:
                     return current
-                saved = self._preserve_unreadable()
+                saved, was_moved = self._preserve_unreadable()
+                moved = self.dir / saved if was_moved else None
                 base = LinkState(unreadable_replaced_at=_now())
                 log.warning("onleesbaar hub-link.json vervangen voor een nieuwe koppelpoging; origineel: %s", saved)
             new = change(base.model_copy(deep=True))
-            if new is None:
-                if base is not current:  # het origineel is al bewaard: de vervanging toch vastleggen
-                    self._write(base)
-                    return base
+            if new is None and base is current:
                 return current
-            new.schema_version = SCHEMA_VERSION
-            self._write(new)
-            new._corrupt = False  # het bestand is nu weer leesbaar
-            return new
+            result = base if new is None else new  # is het origineel al bewaard, dan de vervanging toch vastleggen
+            result.schema_version = SCHEMA_VERSION
+            try:
+                self._write(result)
+            except BaseException:
+                if moved is not None:  # nooit een ontbrekend bestand achterlaten (dat zou "nooit gekoppeld" lijken)
+                    with contextlib.suppress(OSError):
+                        os.rename(moved, self.path)
+                raise
+            result._corrupt = False  # het bestand is nu weer leesbaar
+            return result
 
-    def _preserve_unreadable(self) -> str:
-        """Bewaar het onleesbare origineel als ``hub-link.json.onleesbaar-<UTC-tijd>`` (0600). Een harde link houdt de
-        exacte bytes, ook als dit proces het bestand niet mag lezen; het origineel blijft tot het atomair vervangen is."""
+    def _preserve_unreadable(self) -> tuple[str, bool]:
+        """Bewaar het onleesbare origineel als ``hub-link.json.onleesbaar-<UTC-tijd>`` (0600). Geeft (naam, verplaatst).
+
+        1. Een harde link houdt de exacte bytes; het origineel blijft staan tot het atomair vervangen is.
+        2. Mag dat niet (bv. ``fs.protected_hardlinks`` bij een bestand van een andere eigenaar), dan een kopie.
+        3. Is het bestand ook niet leesbaar (bv. van root met 0600 na een herstel als root), dan wordt het origineel
+           verplaatst: zelfde inode, exacte bytes en eigenaar; alleen de map hoeft schrijfbaar te zijn. Zonder deze stap
+           zou herstel met een nieuw env-token (§3.5/§3.8) nooit lukken. :meth:`update` schrijft de vervanging direct
+           daarna binnen dezelfde vergrendeling (en zet het origineel terug als dat schrijven mislukt).
+        """
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         target = self.dir / f"{LINK_FILE}.onleesbaar-{stamp}"
         try:
             os.link(self.path, target)
         except OSError:
-            data = self.path.read_bytes()
+            try:
+                data = self.path.read_bytes()
+            except OSError:
+                os.rename(self.path, target)
+                with contextlib.suppress(OSError):
+                    os.chmod(target, 0o600)
+                return target.name, True
             fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
@@ -356,7 +375,7 @@ class HubLinkStore:
                 os.fsync(fh.fileno())
         with contextlib.suppress(OSError):
             os.chmod(target, 0o600)
-        return target.name
+        return target.name, False
 
     def write_initial(self, state: LinkState) -> bool:
         """Schrijf alleen als het bestand nog niet bestaat (onder de vergrendeling). Geeft ``True`` als geschreven."""

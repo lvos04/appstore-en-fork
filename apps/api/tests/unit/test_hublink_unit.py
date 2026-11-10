@@ -127,6 +127,48 @@ def test_replacing_an_unreadable_file_keeps_the_original_first(tmp_path: Path) -
     assert st.state == "nooit_gekoppeld" and not st.linked
 
 
+@pytest.mark.parametrize("schrijven_mislukt", [False, True])
+def test_unreadable_file_of_another_owner_is_moved_aside_not_stuck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schrijven_mislukt: bool
+) -> None:
+    """Review contract 1.3: een onleesbaar bestand dat dit proces niet mag linken of lezen (bv. van root, 0600, na een
+    herstel als root) moet bij een nieuw env-token toch vervangen kunnen worden — anders lukt herstel (§3.5/§3.8)
+    nooit en faalt elke worker-ronde. Het origineel wordt dan verplaatst (exacte bytes). Mislukt het schrijven van de
+    vervanging, dan komt het origineel terug: nooit een ontbrekend bestand (dat zou "nooit gekoppeld" lijken)."""
+    store = HubLinkStore(tmp_path)
+    _write_raw(store, "{ kapot")
+
+    def no_link(*_: object, **__: object) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    real_read_bytes = Path.read_bytes
+
+    def no_read(self: Path) -> bytes:
+        if self == store.path:
+            raise PermissionError(13, "Permission denied")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(os, "link", no_link)
+    monkeypatch.setattr(Path, "read_bytes", no_read)
+    if schrijven_mislukt:
+        monkeypatch.setattr(store, "_write", lambda _state: (_ for _ in ()).throw(OSError(28, "No space left")))
+        with pytest.raises(OSError):
+            store.update(lambda s: s, replace_unreadable=True)
+        assert store.path.read_text() == "{ kapot"  # origineel terug op zijn plek: nog steeds fail-closed
+        assert not [p for p in tmp_path.iterdir() if ".onleesbaar-" in p.name]
+        assert store.read().corrupt
+        return
+    after = store.update(
+        lambda s: s.model_copy(update={"last_error": LastError(code="hub_weigerde", at="x")}), replace_unreadable=True
+    )
+    backups = [p for p in tmp_path.iterdir() if p.name.startswith("hub-link.json.onleesbaar-")]
+    assert len(backups) == 1 and backups[0].read_text() == "{ kapot"
+    assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
+    st = HubLinkStore(tmp_path).read()
+    assert not st.corrupt and st.unreadable and st.unreadable_replaced_at and not st.linked
+    assert after.last_error is not None and after.last_error.code == "hub_weigerde"
+
+
 def test_outgoing_http_ignores_proxies_and_redirects(client: HubLinkClient) -> None:
     """§3.2/§5: nooit een redirect volgen en geen proxy-omgevingsvariabelen gebruiken."""
     from appstore.app import default_http_factory
