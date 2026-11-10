@@ -1,4 +1,4 @@
-# Ontwerpreview statuspagina appstore-en-fork — Peil 1.1.0
+# Ontwerpreview statuspagina appstore-en-fork — Peil 1.1.0, bijgewerkt naar Peil 1.1.1
 
 - **Wat:** onafhankelijke ontwerpreview achteraf (contract 1.2 §13) van `GET /` van appstore-en-fork, in alle
   toestanden, tegen de ontwerptaal Peil 1.1.0 (`ai-server-manager` `docs/platform-v2/ONTWERPTAAL.md`,
@@ -15,6 +15,26 @@
   werkwijzen: design-critique, accessibility-review, ux-copy, design-system, design-handoff en dataviz (vormkeuze).
 - **Uitkomst:** **Sim-getest.** NIET GEVALIDEERD: echte schermlezer (NVDA/TalkBack), echte Android-telefoon in fel
   licht, een echte Hub en een echte NAS (TrueNAS Custom App).
+
+## 0. Bijgewerkt: Peil 1.1.1 en contract 1.3 (10 november 2026)
+
+De statuspagina gebruikt nu het sjabloon **Peil 1.1.1** (`lvos04/ai-server-manager@0a7143b`, gepinde kopie) en volgt
+contract **1.3** §3.7 (ADR-0013). De punten die deze review in 1.1.0 aan de eigenaar van het sjabloon overdroeg (§7)
+zijn in 1.1.1 opgelost en hier overgenomen: een eigen blok voor een onleesbare koppelstatus (E01), "Koppelen bezig"
+(E02), `link-2-off` per controlerij (E03/E04), een neutrale pil voor feiten (toon `feit`, het aantal apps), de
+meldingsrol (`alert` alleen bij de fout van dít verzoek, E05) en een code los van de trace-ID (E06). Functioneel: het
+formulier verdwijnt nu terwijl een tokenpoging loopt (was bevinding "formulier zichtbaar terwijl een tokenpoging loopt").
+
+**Opnieuw gemeten** tegen de draaiende dienst (`tests/ui/review_live.py`, dezelfde opzet als hieronder): 18 toestanden ×
+320/360/390/768/1024/1440 px × licht/donker = 216 metingen: **axe 0 overtredingen**, geen overloop (ook niet met DejaVu
+Sans op 320 px), laagste tekstcontrast **8,34:1** (licht) en **9,32:1** (donker), laagste rand/icoon 4,86:1 en 5,69:1,
+laagste focusring 7,79:1 en 8,04:1; 180 schermafdrukken (pngquant). De CI-variant (`statuspagina.spec.ts`) meet 14
+toestanden uit de echte app, waaronder de nieuwe `koppelen-bezig`, `host-niet-toegestaan` en
+`herkomst-host-geweigerd`. Nieuw in de live review: `herkomst-geweigerd` met de negatieve gevallen van contract 1.3
+§3.7 punt 6 (allemaal 403, niets gewijzigd). `gekoppeld-melding` wordt nu gemeten in de browser die zelf koppelde (een
+melding hoort bij een echte poging van die browser; `/?melding=gekoppeld` bestaat niet meer).
+
+Nog steeds **NIET GEVALIDEERD:** echte schermlezer (NVDA/TalkBack), echte telefoon in fel licht, echte Hub en NAS.
 
 ## 1. Samenvatting
 

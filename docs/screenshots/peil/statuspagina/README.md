@@ -1,4 +1,4 @@
-# Schermafdrukken — statuspagina in Peil 1.1.0
+# Schermafdrukken — statuspagina in Peil 1.1.1 (contract 1.3)
 
 Gemaakt tijdens de ontwerpreview ([`docs/ontwerp/PEIL_REVIEW.md`](../../../ontwerp/PEIL_REVIEW.md)) met
 `tests/ui/review_live.py`: de **draaiende** dienst (`python -m appstore serve` + `worker`, eigen `/appdata`, PostgreSQL
@@ -18,17 +18,22 @@ Bestandsnaam: `<toestand>-<licht|donker>-<320|360|390|768|1440>.png` (volledige 
 | `koppelen-mislukt` | onbekende koppelcode | HTTP 400, `hub_weigerde`, veldfout bij de koppelcode |
 | `laatste-poging-mislukt` | pagina opnieuw laden na de mislukte poging | opgeslagen fout met tijdstip, vervolgstap en trace-ID van dit paginaverzoek |
 | `te-veel-pogingen` | zesde poging binnen 15 minuten | HTTP 429 met `Retry-After: 900` |
-| `sessie-verlopen` | formulier zonder cookie verstuurd (langer dan een uur open) | HTTP 403 "Het formulier is verlopen" |
-| `al-gekoppeld` | tab 1 staat open, in tab 2 wordt gekoppeld, daarna verstuurt tab 1 | HTTP 409 "Koppelen kan hier niet meer", geen formulier meer |
+| `sessie-verlopen` | formulier zonder cookie verstuurd (langer dan een uur open), na het legen van de pogingenteller (contract 1.3: een POST met geldige herkomst telt eerst als poging) | HTTP 403 "Het formulier is verlopen" |
+| `al-gekoppeld` | tab 1 staat open, in tab 2 wordt gekoppeld, daarna verstuurt tab 1 | HTTP 409 "Koppelen kan hier niet meer", melding als fout van dít verzoek (`role="alert"`), geen formulier meer |
 | `gekoppeld-niet-bevestigd` | gekoppeld terwijl de Hub `services/self` nog niet bevestigt | **Niet gereed**, controle "Niet bevestigd" |
-| `gekoppeld-melding` | `/?melding=gekoppeld` na bevestiging | info-melding "Gekoppeld met de Hub", **Alles gezond** |
+| `gekoppeld-melding` | tab 2 van `al-gekoppeld` direct na de geslaagde koppeling (`/?poging=<sleutel>` van die browser; een losse query-parameter geeft geen melding meer, contract 1.3 §3.7) | info-melding "Gekoppeld met de Hub" met `role="status"`; de Hub bevestigt nog niet, dus **Niet gereed** |
 | `gekoppeld` | gekoppeld en bevestigd | **Alles gezond**, neutrale pil **Gekoppeld**, geen formulier |
 | `catalogus-bronnen` | drie bronnen via de catalogus-API: onbereikbaar, uitgezet, nog nooit | **Beperkt** (gereed; één bron mislukt), gate "Uit", Onbekend "Nog nooit gesynchroniseerd" |
 | `niet-gereed` | `serve` herstart met een onbereikbare database | **Storing** — "Niet gereed — de database is niet bereikbaar"; aantallen onbekend, niet 0 |
 | `ingetrokken` | de Hub trekt de koppeling in; de worker krijgt 401 op `services/self` | **Niet gereed**, pil **Ingetrokken**, "De dienst weigert elke opdracht" |
-| `koppelstatus-onleesbaar` | foutinjectie: `hub-link.json` kapot | **Storing**, melding `koppelstatus_onleesbaar` met herstel (koppeltoken) |
-| `koppelen-loopt` | tweede installatie met `HUB_URL` + koppeltoken terwijl de Hub onbereikbaar is; lege ingebouwde catalogus | info-melding "Koppelen loopt" met de laatste fout, gate "Nog leeg" |
+| `koppelstatus-onleesbaar` | foutinjectie: `hub-link.json` kapot | **Storing**, koppelblok **Onleesbaar** (Peil 1.1.1) met de herstelweg via een nieuw koppeltoken, geen formulier, reden-code `koppelstatus_onleesbaar` in de controle; geen dubbele melding |
+| `koppelen-loopt` | tweede installatie met `HUB_URL` + koppeltoken terwijl de Hub onbereikbaar is; lege ingebouwde catalogus | blok **Koppelen bezig** (Peil 1.1.1, formulier en stappen weg), melding zonder live-rol met de laatste fout, gate "Nog leeg" |
 | `ontkoppeld` | de Hub ontkoppelt via `POST /connector/v1/hub-link/unlink` | **Niet gereed**, pil **Ontkoppeld**, "opnieuw koppelen gaat via de Hub" |
+
+Daarnaast (zonder afdrukken) `herkomst-geweigerd`: het echte formulier vanuit een verkeerde herkomst in Chromium —
+`Origin: null` (data:-document), een vreemde site (`Sec-Fetch-Site: cross-site`), dezelfde host op een andere poort
+(`same-site`), een publieke naam die naar de dienst wijst (DNS-rebinding, `host_niet_toegestaan`) en zonder cookie —
+telkens HTTP 403 met de vaste code; de dienst blijft ongekoppeld (contract 1.3 §3.7 punt 6).
 
 Elke toestand is gemeten op 320, 360, 390, 768, 1024 en 1440 px in licht en donker (axe-core, contrast, randen,
 focusring, overloop, doelen, statusvorm, woordenlijst); afdrukken alleen op 320/360/390/768/1440. Geen
