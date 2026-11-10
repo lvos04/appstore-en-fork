@@ -327,6 +327,8 @@ def events(db: DB, _: Reader, cursor: str | None = None, limit: int = 100) -> di
 
 
 def hub_link_view(link: LinkState) -> dict[str, Any]:
+    """§6 + §3.5: de witte lijst (een maximum) plus ``pinned_kids`` en ``rotation_sequence``, en ``observed_at`` (§6.2).
+    Geen ``confirmed_at`` of andere velden van het koppelbestand: die staan niet in de witte lijst."""
     out = link.public()
     pins = link.pins
     out["pinned_kids"] = {
@@ -334,7 +336,6 @@ def hub_link_view(link: LinkState) -> dict[str, Any]:
         "policy": [p.kid for p in pins.policy] if pins else [],
     }
     out["rotation_sequence"] = pins.rotation_sequence if pins else None
-    out["confirmed_at"] = link.confirmed_at
     out["observed_at"] = iso(utcnow())
     return out
 

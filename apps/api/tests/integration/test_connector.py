@@ -282,11 +282,28 @@ def test_inbox_401_without_revocation_keeps_link(client: TestClient, linked: Fak
     assert ("GET", "/api/v1/services/self") in linked.requests
 
 
+#: witte lijst van de publieke koppelstatus (contract 1.3 §3.5)
+WHITELIST = {
+    "state",
+    "koppelen_bezig",
+    "hub_url",
+    "service_id",
+    "via",
+    "linked_at",
+    "first_linked_at",
+    "keyset_fingerprint",
+    "service_token_last4",
+    "last_error",
+}
+
+
 def test_hub_link_whitelist(client: TestClient, linked: FakeHub, worker_ctx: AppContext) -> None:
     for headers in (linked.service_auth(), linked.auth(roles=["viewer"])):
         resp = client.get("/connector/v1/hub-link", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
+        # §3.5: de witte lijst is een maximum; §6 voegt alleen pinned_kids en rotation_sequence toe, §6.2 observed_at
+        assert set(body) == WHITELIST | {"pinned_kids", "rotation_sequence", "observed_at"}, sorted(body)
         assert body["state"] == "gekoppeld" and body["koppelen_bezig"] is False
         assert body["keyset_fingerprint"] == linked.fingerprint()
         assert body["pinned_kids"] == {
