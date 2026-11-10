@@ -1,4 +1,4 @@
-"""Contract 1.2 §4.5-testvectoren (A5), normalisatie van vingerafdruk en koppelcode, en het exacte enroll-verzoek."""
+"""Contract 1.3 §4.5-testvectoren (A5, A17), normalisatie van vingerafdruk en koppelcode, en het exacte enroll-verzoek."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from appstore.hubkeys import (
     validate_hub_jwk,
 )
 
-# Testvectoren uit PLATFORM_CONTRACTEN.md 1.2 §4.5 (publieke sleutels; RFC 8037 A.1 voor de eerste)
+# Testvectoren uit PLATFORM_CONTRACTEN.md 1.3 §4.5 (publieke sleutels; RFC 8037 A.1 voor de eerste)
 JWT_1 = {"kty": "OKP", "crv": "Ed25519", "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}
 POLICY = {"kty": "OKP", "crv": "Ed25519", "x": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"}
 JWT_2 = {"kty": "OKP", "crv": "Ed25519", "x": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc"}
@@ -34,6 +34,15 @@ def test_keyset_fingerprint_vectors_from_contract() -> None:
     assert keyset_fingerprint([JWT_1], [POLICY]) == "MEGG-8GFG-2E4Y-K2RQ"
     assert keyset_fingerprint([JWT_1, JWT_2], [POLICY]) == "CYRC-JS8C-14AN-JR17"
     assert keyset_fingerprint([JWT_2, JWT_1], [POLICY]) == "CYRC-JS8C-14AN-JR17"  # volgorde maakt niet uit
+
+
+def test_keyset_fingerprint_counts_every_policy_key() -> None:
+    """Nieuw in 1.3 (A17): tijdens een policy-rotatie telt elke gepinde policy-sleutel mee, in elke volgorde."""
+    assert keyset_fingerprint([JWT_1], [POLICY, JWT_2]) == "HN69-2PHK-XV2D-X85W"
+    assert keyset_fingerprint([JWT_1], [JWT_2, POLICY]) == "HN69-2PHK-XV2D-X85W"
+    # nooit alleen de laatst gepinde policy-sleutel
+    assert keyset_fingerprint([JWT_1], [JWT_2]) != "HN69-2PHK-XV2D-X85W"
+    assert keyset_fingerprint([JWT_1], [POLICY]) == "MEGG-8GFG-2E4Y-K2RQ"  # één policy-sleutel = 1.2
 
 
 @pytest.mark.parametrize(

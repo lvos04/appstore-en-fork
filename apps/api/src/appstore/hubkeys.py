@@ -1,10 +1,10 @@
-"""Sleutels, thumbprints en vingerafdrukken voor het koppelen met de Hub (platformcontract 1.2 §3.3, §3.4, §4.5).
+"""Sleutels, thumbprints en vingerafdrukken voor het koppelen met de Hub (platformcontract 1.3 §3.3, §3.4, §4.5).
 
 * **Thumbprint** = RFC 7638: ``base64url(SHA-256('{"crv":"Ed25519","kty":"OKP","x":"<x>"}'))``.
 * **Sleutelset-vingerafdruk** (voor mensen): SHA-256 over ``"jl-hub-keyset-v1\\njwt:" + <gesorteerde thumbprints van
-  jwks.keys, met komma's> + "\\npolicy:" + <thumbprint policy-sleutel>``; de eerste 80 bit als Crockford-base32,
-  ``XXXX-XXXX-XXXX-XXXX``. Invoer wordt vergeleken na normalisatie (hoofdletters, ``O→0``, ``I/L→1``, zonder
-  streepjes/spaties).
+  jwks.keys, met komma's> + "\\npolicy:" + <gesorteerde thumbprints van álle policy-sleutels, met komma's>``; de
+  eerste 80 bit als Crockford-base32, ``XXXX-XXXX-XXXX-XXXX``. Invoer wordt vergeleken na normalisatie (hoofdletters,
+  ``O→0``, ``I/L→1``, zonder streepjes/spaties).
 * **Koppelcode**: 12 Crockford-tekens (``XXXX-XXXX-XXXX``) na dezelfde normalisatie.
 
 De testvectoren uit het contract staan in ``tests/unit/test_hubkeys.py``.
@@ -101,9 +101,8 @@ def _crockford(data: bytes) -> str:
 def keyset_fingerprint(jwt_keys: Iterable[Mapping[str, Any]], policy_keys: Iterable[Mapping[str, Any]]) -> str:
     """Sleutelset-vingerafdruk ``XXXX-XXXX-XXXX-XXXX`` (§4.5).
 
-    Contract 1.2 kent precies één policy-sleutel; tijdens een policy-rotatie kunnen er tijdelijk twee gepind zijn. Dan
-    worden hun thumbprints net als bij ``jwt`` gesorteerd en met komma's verbonden (ADR-0008). Met één sleutel is de
-    uitkomst gelijk aan het contract.
+    Contract 1.3 (A17): beide lijsten gesorteerd op bytewaarde; tijdens een policy-rotatie telt elke gepinde
+    policy-sleutel mee (testvector ``HN69-2PHK-XV2D-X85W``). Met één policy-sleutel is de uitkomst gelijk aan 1.2.
     """
     jwt_tp = sorted(jwk_thumbprint(k) for k in jwt_keys)
     policy_tp = sorted(jwk_thumbprint(k) for k in policy_keys)
