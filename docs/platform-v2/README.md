@@ -8,6 +8,15 @@ Hier staan alleen de eigen B-, I-, A- en promptdocumenten plus de gedeelde archi
 
 Onbekende NAS-gegevens (D01–D18) worden nooit met voorbeeldwaarden ingevuld; ze worden via de onboarding-wizard in de web-UI vastgelegd.
 
+## Contract en bewijs
+
+- `PLATFORM_CONTRACTEN.md` — byte-gelijke kopie van platformcontract **1.3** (bron: `lvos04/ai-server-manager`,
+  commit gepind in `CONTRACT_HERKOMST.json`; nooit lokaal aanpassen, controle: `tools/contract_kopie.py`).
+- `CONTRACT_1.3_CONFORMITEIT.md` — byte-gelijke kopie van de conformiteitslijst 1.3 (hoofdstuk 3: deze repo).
+- `CONTRACT_1.2_CONFORMITEIT.md` — historie (1.2).
+- `DELTA_MATRIX.md` — wat er per contractversie in deze repo veranderde.
+- `EVIDENCE.json` — bewijs per Excel-ID en contractpunt (contract §11).
+
 ## Bestanden
 
 - `00_START/BESLUITEN_EN_ONBEKENDEN.md`

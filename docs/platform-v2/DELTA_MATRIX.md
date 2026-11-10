@@ -37,3 +37,28 @@ aanzet van het manifestmodel uit een afgebroken poging; beoordeeld, aangepast en
 | AS6 `/connector/v1/hub-link` + `/unlink`; env-token opnieuw; `Hub-Token-Rotation` | `/catalog/v1/hub-link` | gebouwd | Sim-getest |
 | AS7 statuspagina in de ontwerptaal | eigen CSS en opmaak | Peil 1.1.0-sjabloon als versie-gepinde kopie (`design/ontwerptaal/`, O-14) met driftcontrole in CI; formulier alleen vóór de eerste koppeling, verplichte vingerafdruk, fout met code + trace-ID; nooit groen als niet gereed (ADR-0009); ontwerpreview achteraf (ADR-0011, `docs/ontwerp/PEIL_REVIEW.md`): Referrer-Policy `same-origin` (een echte formulier-POST gaf `Origin: null` → 403), teksten volgens de Peil-woordenlijst | Unit-getest; Sim-getest (draaiende dienst + Hub-simulator, Chromium, 18 toestanden: axe 0, contrast/randen/ring gemeten, geen overloop 320 px); NIET GEVALIDEERD (echte schermlezer, telefoon, NAS) |
 | AS8 geen root-PID 1 | `dumb-init` als root | bewaker is PID 1 als 568; image-E2E per proces incl. PID 1 | Docker-E2E; NIET GEVALIDEERD (echte NAS) |
+
+## Contract 1.3 (2026-11-10, `CONTRACT_1.3_CONFORMITEIT.md` §3, ADR-0013)
+
+Gemeten stand vóór deze ronde: `fc682e5` (zoals de conformiteitslijst). Alleen de punten met moment **NU**; C1.3-ASF-14
+(P2) staat open.
+
+| Punt | Vóór (stand `fc682e5`) | Nu | Validatie |
+|---|---|---|---|
+| ALG-01 kopieën + drifttest | kopie 1.2 | byte-gelijke kopie 1.3 + conformiteitslijst 1.3 op bron-commit `02b119c`, pin in `CONTRACT_HERKOMST.json`, controle offline (unit-test) en online (CI, `tools/contract_kopie.py`) | Unit-getest |
+| ALG-02 EVIDENCE §11 (1.3) | 1.2-regels | `Niet getest`, geen lege `validatie`, NIET GEVALIDEERD uit `blokkade` ook in `validatie`, ID's `C1.3-ASF-…`/`REVIEW-…`; negatieve tests | Unit-getest |
+| ALG-05 Peil 1.1.1 | kopie 1.1.0 | kopie 1.1.1 (pinregel E08), renderer in één doorgang, nieuwe toestanden en tonen | Unit-getest; Sim-getest (Chromium) |
+| ASF-01 healthcheck | als root, zonder wissel | exec-vorm `python -I -S`, eerst bounding set leeg + 568 + no_new_privs, `--controle`; bewaker stopt als de bounding set niet leeg is; image-E2E per proces in de boom van PID 1 en de healthcheck apart | Docker-E2E; NIET GEVALIDEERD (echte NAS) |
+| ASF-02 herkomst | `Origin` exact, `null` geweigerd | + `Sec-Fetch-Site`, `Host`-beperking (`host_niet_toegestaan`); negatieve browsertests (Origin null, vreemde site, same-site, publieke naam, geen cookie) | Sim-getest (Chromium) |
+| ASF-03 formulier en Gereed | `al_gekoppeld` telde niet; melding via `?melding=gekoppeld` | elke POST na de herkomstcontrole telt; 409 voor onleesbaar/al gekoppeld/bezig; melding alleen na een echte poging van deze browser; één logregel per poging | Sim-getest |
+| ASF-04 koppelbestand | onleesbaar = verzonnen `first_linked_at`, overschreven door elke schrijfactie | fail-closed (ook major, velden, `app_id`, eigenaar/rechten); alleen een nieuw env-token vervangt, na bewaren van het origineel; `schema_version` 1.3; extra velden; vaste codes | Unit-getest; Sim-getest |
+| ASF-05 JWT | `aud` als lijst geaccepteerd; onleesbare JSON gaf 422 vóór 401 | `aud` één string; aanmelden vóór body, rol en `Idempotency-Key`; foutcatalogus van §5 | Sim-getest |
+| ASF-06 sleutels en adres | `rotation_sequence` altijd 0; `127.1` als naam geaccepteerd | `rotation_sequence` uit het antwoord; canonieke IP-vormen; verboden bereiken ook na DNS-resolutie; `base_url` alleen als geldig; testvector `HN69-…` | Unit-getest; Sim-getest |
+| ASF-07 events | `service.enrollment.completed`; `sync_failed`, `synced`, `completed`, `unavailable` | `service.hub_link.linked` `{via}`; `catalog.source_sync.*`, `catalog.import.*`; `ernst`; grenzen vóór verzending | Unit-getest; Sim-getest |
+| ASF-08 validator en schema | 1.2 | 1.3: `install.reason`, `reserved_env`, `secret`, `accepted_findings`/`strict_valid`, `stopped_snapshot`, `post_install_checks`, `same_as_host`, `healthcheck.monitor`, `kind: checklist` | Unit-getest |
+| ASF-09 inventaris-import | 403 altijd `hub_inventaris_niet_voor_diensten`; vaste 15 min; eigen backoff bij 429 | `scope_ontbreekt` → `capability_unavailable`; `snapshot_id` + 409 opnieuw; `max_age` volgens de Hub; `Retry-After` | Sim-getest (de echte Hub heeft C1.3-ASM-07/08 nog niet) |
+| ASF-10 connector-health | geen `worker`/`jobs`, `detail` als tekst | vaste checks met `observed_at`, hartslag van de worker, `limits.max_age_s`, `meting_verouderd` | Sim-getest |
+| ASF-11 statische `Idempotency-Key`-test | ontbrak | `tests/unit/test_idempotency_routes.py` met uitzonderingslijst | Unit-getest |
+| ASF-12 Emby | adoptie-item, plan met executor-stappen | `platform_wijzigt_nooit`: plan zonder `action_id`, gates HARDE EIS/exportarchief/controlelijst | Unit-getest |
+| ASF-13 eigen manifest | kop 1.2, geen monitor, licentie leeg | kop 1.3, `healthcheck.monitor`, GPL-3.0, `--strict` geldig | Unit-getest |
+| ASF-14 geheime catalogus-values → vault | — | **open (P2)**; tot dan weigert de vertaling een geheime waarde | — |

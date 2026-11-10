@@ -33,7 +33,7 @@ Catalogusapp (bijv. meerdere containers): `catalog_app`/`train`/`version` uit he
 
 | Formulier (UI) | `values`-sleutel | Uit manifest |
 |---|---|---|
-| Image → Repository / Tag / Pull Policy | `image.repository`, `image.tag`, `image.pull_policy` | `image.repository`; `image.tag` + `@<digest>` (ADR-0004, contract 1.2 §2.2) met digest-readback na installatie; altijd `missing` |
+| Image → Repository / Tag / Pull Policy | `image.repository`, `image.tag`, `image.pull_policy` | `image.repository`; `image.tag` + `@<digest>` (ADR-0004, contract 1.3 §2.2) met digest-readback na installatie; altijd `missing` |
 | Timezone | `TZ` | `custom_app.timezone` (parameter, wizard); zonder: `Etc/UTC` + waarschuwing |
 | Environment Variables | `envs[] {name, value}` | `custom_app.env` (letterlijk of getypte parameter; geheimen verboden) |
 | Restart Policy (+ Maximum Retry Count) | `restart_policy` (`no`/`unless-stopped`/`on-failure`/`always`), `max_retry_count` alleen bij `on-failure` | `custom_app.restart_policy` |
@@ -43,7 +43,7 @@ Catalogusapp (bijv. meerdere containers): `catalog_app`/`train`/`version` uit he
 | Capabilities → Add | `capabilities.add[]` | `privileges.cap_add` (met reden; SYS_ADMIN e.d. verboden) |
 | Custom User + User/Group ID | `run_as_custom_user`, `run_as {user, group}` | `custom_app.run_as` (`custom` → 568:568 e.d.; root kan niet) |
 | Host Network | `host_network` | `network.host_network` (alleen met reden) |
-| Ports | `ports[] {bind_mode: published, port_number, container_port, protocol, host_ips: []}` | `network.ports` (contract 1.2 §9: de enige bron; hostpoort via parameter, standaard het contractvoorstel) |
+| Ports | `ports[] {bind_mode: published, port_number, container_port, protocol, host_ips: []}` | `network.ports` (contract 1.3 §9: de enige bron; hostpoort via parameter, standaard het contractvoorstel) |
 | Networks / Custom DNS | `networks: []`, `dns_config {nameservers, searches, options}` | leeg (geen gedeeld Docker-netwerk, contract §2) |
 | Portals | `portals[] {name, scheme, use_node_ip: true, host: "", port, path}` | `custom_app.portal` |
 | Storage → Host Path | `storage[] {type: host_path, read_only, mount_path, host_path_config {acl_enable: false, path}}` | `custom_app.storage` + `storage[].mount`; pad uit de datasetkiezer |
@@ -66,7 +66,7 @@ SMB/NFS-opslag (`cifs`/`nfs`) wordt bewust niet ondersteund: die vereisen een wa
 
 ## Compatibiliteit
 
-- **Verdwijnende versies (contract 1.2 §2.2, bronwaarneming, NIET GEVALIDEERD):** in de gelezen catalogus-commit houdt
+- **Verdwijnende versies (contract 1.3 §2.2, bronwaarneming, NIET GEVALIDEERD):** in de gelezen catalogus-commit houdt
   een trein alleen de nieuwste versie per app. Zonder gemeten lijst (`target.available_versions`) waarschuwt de
   vertaling (`version_availability_unknown`); met een lijst waarin de vastgezette versie of elke geteste `ix-app`-versie
   ontbreekt, blokkeert ze (`version_unavailable`).

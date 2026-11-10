@@ -1,4 +1,4 @@
-# appstore-en-fork installeren als standaard TrueNAS Custom App (platformcontract 1.2)
+# appstore-en-fork installeren als standaard TrueNAS Custom App (platformcontract 1.3)
 
 **Geen YAML, geen "Install via YAML", geen compose, geen terminal.** De app is één alles-in-één image (ingebouwde
 PostgreSQL 16 op een unix-socket, API en worker) met één poort en één opslagmap.
@@ -17,7 +17,7 @@ PostgreSQL 16 op een unix-socket, API en worker) met één poort en één opslag
 - De image `ghcr.io/lvos04/appstore-en-fork:<versie>` bestaat pas nadat de release-workflow voor tag `v<versie>` is
   gedraaid (`release/digests.json` in de GitHub-release noemt de digest). Zolang die release er niet is, kan deze app
   niet worden geïnstalleerd.
-- **Publieke image (contract 1.2 §2.1, besluit 3):** na de scan van de volledige historie worden repo en GHCR-pakket
+- **Publieke image (contract 1.3 §2.1, besluit 3):** na de scan van de volledige historie worden repo en GHCR-pakket
   publiek; installeren gebruikt dan **geen** registry-login. Tot de zichtbaarheid echt is omgezet, is installeren op
   een echte NAS NIET GEVALIDEERD (en voor een privé-pakket geblokkeerd).
 - *Alleen als terugvaloptie:* een registry-login in TrueNAS (Apps → Configuration → Manage Container Images /
@@ -36,18 +36,18 @@ eigen submappen (`postgres`, `secrets`, `backups`) en verder niets.
 |---|---|---|
 | — | Application Name | `appstore-en-fork` |
 | Image Configuration | Repository | `ghcr.io/lvos04/appstore-en-fork` |
-| | Tag | **`<versie>@sha256:<digest>`** uit `release/digests.json`, bv. `0.1.0@sha256:…` (64 hex) — zo draait precies de geteste image (contract 1.2 §2.2). Weigert het formulier het `@`-teken, vul dan alleen de exacte versie in (bv. `0.1.0`); de Hub controleert de digest na installatie (NIET GEVALIDEERD op een echte NAS). **Nooit `latest`.** |
+| | Tag | **`<versie>@sha256:<digest>`** uit `release/digests.json`, bv. `0.1.0@sha256:…` (64 hex) — zo draait precies de geteste image (contract 1.3 §2.2). Weigert het formulier het `@`-teken, vul dan alleen de exacte versie in (bv. `0.1.0`); de Hub controleert de digest na installatie (NIET GEVALIDEERD op een echte NAS). **Nooit `latest`.** |
 | | Pull Policy | *Pull the image if it is not already present on the host* (`missing`) |
 | Container Configuration | Hostname, Entrypoint, Command | leeg laten |
 | | Timezone | jouw tijdzone (uit de keuzelijst) |
 | | Environment Variables | Geen verplichte variabelen. Alleen om te koppelen (aanbevolen, zie stap 3): `HUB_URL` = `http://<adres-van-de-Hub>:<poort>` (zonder pad), `HUB_ENROLLMENT_TOKEN` = het **eenmalige** token uit de Hub (`enr_…`, 60 min geldig) en `HUB_KEY_FINGERPRINT` = de vingerafdruk die de Hub erbij toont (`XXXX-XXXX-XXXX-XXXX`). Nooit wachtwoorden of andere geheimen. |
 | | Restart Policy | *Unless Stopped* |
-| | Disable Builtin Healthcheck | **uit** (de image heeft een eigen healthcheck op `/readyz`) |
+| | Disable Builtin Healthcheck | **uit** (de image heeft een eigen healthcheck op `/readyz`; die wisselt als eerste handeling naar 568 met no-new-privileges, contract 1.3 §2.2) |
 | | TTY / Stdin | uit |
 | | Devices | geen |
 | Security Context Configuration | Privileged | **uit** |
 | | Capabilities → Add | niets toevoegen |
-| | Custom User | **uit** (de app start als root alléén om `/appdata` aan 568 te geven; daarna draaien alle processen — ook PID 1 — als 568 zonder capabilities). Het formulier zet zelf geen *no-new-privileges* en geen *cap_drop*; de image zet `PR_SET_NO_NEW_PRIVS` zelf (contract 1.2 §2.2). |
+| | Custom User | **uit** (de app start als root alléén om `/appdata` aan 568 te geven; daarna leegt hij de bounding set en draaien alle processen — ook PID 1 — als 568 zonder capabilities). Het formulier zet zelf geen *no-new-privileges* en geen *cap_drop*; de image zet `PR_SET_NO_NEW_PRIVS` zelf (contract 1.3 §2.2). Met *Custom User* 568 werkt de app ook (dan kan de bounding set niet geleegd worden). |
 | Network Configuration | Host Network | **uit** |
 | | Ports → Add | Port Bind Mode *Publish*, Host Port `30430` (voorstel; kies een vrije poort als die bezet is), Container Port `30430`, Protocol *TCP*, Host IPs leeg |
 | | Networks / Custom DNS Setup | leeg laten |
@@ -64,9 +64,12 @@ eigen submappen (`postgres`, `secrets`, `backups`) en verder niets.
 **Install.** De eerste start duurt ongeveer 10–20 seconden (database aanmaken). Daarna *Running* en na de healthcheck
 *Healthy*.
 
-## 3. Openen en koppelen (contract 1.2 §3.2, §3.7)
+## 3. Openen en koppelen (contract 1.3 §3.2, §3.7)
 
-Open `http://<adres-van-je-NAS>:<Host Port>`. De statuspagina (ontwerptaal Peil, zonder JavaScript) toont bovenaan de
+Open `http://<IP-adres-van-je-NAS>:<Host Port>` — **via het IP-adres** (of een naam zonder punt, of onder `.local`,
+`.lan`, `.internal`, `.home.arpa`). Koppelen via een eigen domeinnaam (bv. `nas.fritz.box`) weigert de app met
+`host_niet_toegestaan`: zo kan een website op je LAN de app niet via DNS-rebinding aan een vreemde "Hub" koppelen
+(contract 1.3 §3.7, keuze K1). Met een koppeltoken in het formulier (hieronder, aanbevolen) speelt dat niet. De statuspagina (ontwerptaal Peil, zonder JavaScript) toont bovenaan de
 totaalstatus — **Niet gereed** zolang de app niet gekoppeld is, nooit groen — en daaronder **Niet gekoppeld**.
 
 - **Aanbevolen (geen wedloop):** maak in de Hub (Instellingen → Diensten) een enrollment-token voor
@@ -82,13 +85,18 @@ Hub-UI); het service-token staat nooit op de pagina. **Ontkoppelen of opnieuw ko
 `HUB_ENROLLMENT_TOKEN` in het formulier: wie het formulier kan wijzigen is TrueNAS-beheerder). Er is geen
 "ontkoppelen" op de statuspagina.
 
+Op de statuspagina betekent **Gereed**: `/readyz` in orde én gekoppeld en door de Hub bevestigd. `/readyz` zelf kijkt
+niet naar de koppeling (TrueNAS herstart een niet-gekoppelde app dus niet).
+
 ## Bestaande apps importeren (B08-002)
 
 Na het koppelen leest de app elke 15 minuten de app-inventaris van de Hub (alleen lezen; nooit een actie op de NAS) en
 houdt een register en beslisregister bij voor de bestaande apps (APP-01…APP-20). Er is daarvoor **geen** extra
 formulierveld. De schermen staan in de Hub-UI; zie [`docs/BESTAANDE_APPS.md`](../../docs/BESTAANDE_APPS.md).
 Geeft de Hub zijn inventaris (nog) niet aan diensten, dan meldt de app-log
-`periodieke import: capability_unavailable (hub_inventaris_niet_voor_diensten)` en blijft het register ongewijzigd.
+`periodieke import: capability_unavailable (hub_inventaris_niet_voor_diensten)` of — als de Hub deze dienst de
+leesscope `inventaris.lezen` niet geeft — `capability_unavailable (scope_inventaris_ontbreekt)`, en blijft het register
+ongewijzigd. Dat is nooit een intrekking van de koppeling.
 
 ## Updaten en terugdraaien
 
@@ -113,7 +121,10 @@ Geeft de Hub zijn inventaris (nog) niet aan diensten, dan meldt de app-log
 | Statuspagina: "De sleutelset-vingerafdruk van de Hub klopt niet" | De ingevulde vingerafdruk (of `HUB_KEY_FINGERPRINT`) past niet bij de Hub op dat adres: controleer het adres en neem de vingerafdruk opnieuw over uit de Hub-UI. Er is niets opgeslagen. |
 | Statuspagina: "Het token is na 60 minuten niet gelukt" of "onbekend, verlopen of al gebruikt" | Maak in de Hub een nieuw koppeltoken (enrollment-token) en zet het in `HUB_ENROLLMENT_TOKEN`; een gebruikt of geweigerd token wordt nooit opnieuw geprobeerd. |
 | Statuspagina na het formulier: "De Hub weigerde de koppelcode: verlopen, al gebruikt of onbekend" | Maak in de Hub een nieuwe koppelcode (Instellingen → Diensten) en vul hem opnieuw in, samen met het adres en de vingerafdruk. |
-| Statuspagina: "Het koppelbestand in /appdata/secrets is onleesbaar" (controle "Koppeling met de Hub: Onleesbaar", `/appdata/secrets/hub-link.json`) | De dienst vertrouwt de Hub niet meer (fail-closed). Maak in de Hub een nieuw koppeltoken en zet het in `HUB_ENROLLMENT_TOKEN`. |
+| Statuspagina: koppeling **Onleesbaar** ("De koppelstatus van deze dienst is onleesbaar", code `koppelstatus_onleesbaar`) | `/appdata/secrets/hub-link.json` is kapot, van een andere eigenaar of te ruim leesbaar. De dienst vertrouwt de Hub niet meer (fail-closed) en toont geen formulier; `/readyz` blijft gezond. Maak in de Hub een nieuw koppeltoken en zet het in `HUB_ENROLLMENT_TOKEN`: de app bewaart het oude bestand als `hub-link.json.onleesbaar-<tijd>` en koppelt opnieuw. |
+| Statuspagina na het formulier: "Koppelen kan niet via dit adres" (`host_niet_toegestaan`) | Open de pagina via het IP-adres van de NAS, of koppel met een koppeltoken (`HUB_ENROLLMENT_TOKEN`). |
+| Statuspagina na het formulier: "Het formulier kwam niet van deze pagina" (`herkomst_onjuist`) | Het verzoek kwam niet van de statuspagina zelf (andere site, ander tabblad of een browserinstelling zonder herkomst). Laad de pagina opnieuw en vul de velden opnieuw in. |
+| Statuspagina: "HUB_URL is geen geldig Hub-adres" (`hub_adres_ongeldig`) of "HUB_KEY_FINGERPRINT heeft niet de vorm…" (`vingerafdruk_ongeldig`) | Verbeter de waarde in het formulier van de Custom App (adres als `http://<IP>:<poort>`, geen `localhost`, geen afgekorte IP-vorm zoals `127.1`). Het token is dan nog niet gebruikt en werkt daarna gewoon. |
 | Statuspagina: **Ingetrokken** ("De Hub heeft de koppeling ingetrokken") | De app vertrouwt de Hub niet meer (fail-closed) en houdt zijn eigen data; opnieuw koppelen gaat via de Hub. |
 | Statuspagina: melding met **Code** en **Trace-ID** | Selecteer de trace-ID en zoek hem op in de app-log (TrueNAS → Apps → deze app → Logs): daar staat dezelfde code bij het mislukte verzoek. De ingevulde waarden worden nooit bewaard of teruggetoond; vul ze opnieuw in. |
 | `periodieke import: capability_unavailable (hub_inventaris_niet_voor_diensten)` in de app-log | De Hub-versie geeft `GET /api/v1/apps` nog niet aan diensten. Geen fout van deze app; het register blijft ongewijzigd tot de Hub dat toestaat. |

@@ -2,6 +2,35 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Platformcontract 1.3 en Peil 1.1.1** (ADR-0013, C1.3-ASF-01…13; C1.3-ASF-14 volgt in P2):
+  - Byte-gelijke kopieën van `PLATFORM_CONTRACTEN.md` (1.3) en `CONTRACT_1.3_CONFORMITEIT.md` op een vaste bron-commit
+    (`CONTRACT_HERKOMST.json`, `tools/contract_kopie.py`, ook online in CI); EVIDENCE-test volgens §11 van 1.3.
+  - Statuspagina: `Host`-beperking tegen DNS-rebinding (`host_niet_toegestaan`), `Sec-Fetch-Site`, exacte `Origin`
+    (`herkomst_onjuist`); elke POST na de herkomstcontrole telt als poging (ook `al_gekoppeld`, `koppelen_bezig`,
+    `koppelstatus_onleesbaar`); meldingen alleen na een echte poging van deze browser; Peil 1.1.1 (renderer in één
+    doorgang, toestanden `koppelstatus_onleesbaar` en `koppelen_bezig`, tonen `niet-gekoppeld` en `feit`,
+    `melding_rol`, `melding_code` los van de trace-ID, totaalregel E10). Negatieve browsertests in Chromium.
+  - Koppelbestand: onleesbaar = fail-closed (ook andere major, ontbrekende velden, andere `app_id`, verkeerde eigenaar of
+    rechten); alleen een nieuw env-token vervangt het, na het origineel te bewaren; `schema_version` 1.3; extra velden
+    blijven; vaste codes `hub_adres_ongeldig`, `vingerafdruk_ongeldig`, `koppelstatus_onleesbaar`.
+  - Adressen: alleen canonieke IP-vormen, slotpunt negeren, verboden bereiken ook na DNS-resolutie bij elke verbinding;
+    `base_url` alleen als hij geldig is. `rotation_sequence` uit het enroll-antwoord; testvector `HN69-2PHK-XV2D-X85W`.
+  - JWT: `aud` precies één string; reasons volgens §4.7; aanmelden vóór bodyvalidatie, rol en `Idempotency-Key`.
+  - Foutcatalogus: `validation_error` + `details.fouten[]`, `idempotency_key_reused`, `idempotency_in_progress`,
+    `Idempotent-Replay`; statische `Idempotency-Key`-test met uitzonderingslijst.
+  - Events: `service.hub_link.linked` met `{via}`, vaste werkwoorden in het domein `catalog`, `payload.ernst`, grenzen
+    van de inbox vóór verzending (ongeldig = dead-letter).
+  - Connector-health: vaste checks `database`, `worker` (hartslag), `jobs`, `hub_link`; versheid met
+    `limits.max_age_s` en `meting_verouderd`.
+  - Inventaris-import: scope `inventaris.lezen` (`scope_ontbreekt` → `capability_unavailable`), momentopname met
+    `snapshot_id` en 409 `snapshot_changed`, `max_age` volgens de Hub, `Retry-After` bij 429/503.
+  - Emby: adoptie-item dat het platform nooit wijzigt (plan zonder executor-stappen, gates voor de HARDE EIS).
+  - Validator en schema 1.3: `install.reason`, `reserved_env` voor `HUB_*`, geheimen met `source: generated` +
+    `secret: true`, `accepted_findings` met `--strict`, `stopped_snapshot`, `post_install_checks`, `same_as_host`,
+    `healthcheck.monitor`, documentsoort `kind: checklist` (`jl-manifest checklist`).
+  - Image: healthcheck in exec-vorm (`python -I -S`) wisselt eerst naar 568 met no-new-privileges en een lege
+    bounding set; de bewaker stopt als de bounding set niet leeg is; image-E2E controleert de healthcheck apart.
+
 - B08-001 manifeststandaard v1: JSON Schema, validator met NL-meldingen, CLI `jl-manifest`, vertaling naar TrueNAS
   `app.create` (standaard Custom App via `ix-app`, of catalogusapp), conflictanalyse, ondertekende provenance.
 - Catalogus-API (`/catalog/v1`), connectorcontract (`/connector/v1`), koppelen met de Hub, statuspagina.
