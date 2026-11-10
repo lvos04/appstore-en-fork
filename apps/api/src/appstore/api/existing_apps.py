@@ -135,6 +135,8 @@ def existing_out(row: ExistingApp) -> dict[str, Any]:
         "last_used": LAST_USED,
         "first_seen": iso(row.first_seen),
         "last_seen": iso(row.last_seen),
+        # §6.2: de meting waar deze gegevens uit komen (inventaris van de Hub)
+        "observed_at": iso(row.last_seen),
         "source": "hub GET /api/v1/apps",
         "data_policy": "untouched",
         "planned_actions": [],

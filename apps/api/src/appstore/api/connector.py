@@ -1,19 +1,26 @@
-"""Connectorcontract ``/connector/v1`` (contract 1.2 §6). Niet-gebouwde functies geven eerlijk ``capability_unavailable``.
+"""Connectorcontract ``/connector/v1`` (contract 1.3 §6). Niet-gebouwde functies geven eerlijk ``capability_unavailable``.
 
-Nieuw in 1.2: ``GET /connector/v1/hub-link`` (koppelstatus, witte lijst §3.5 + gepinde kids en ``rotation_sequence``)
-en ``POST /connector/v1/hub-link/unlink`` (ontkoppelen door de Hub met een dienst-JWT of een beheerder, §3.8).
+* ``GET /connector/v1/hub-link`` (koppelstatus, witte lijst §3.5 + gepinde kids en ``rotation_sequence``) en
+  ``POST /connector/v1/hub-link/unlink`` (ontkoppelen door de Hub met een dienst-JWT of een beheerder, §3.8).
+* Health (§6, A22): totaal = de **slechtste** check (``healthy`` < ``unknown`` < ``degraded`` < ``down``); vaste
+  checknamen ``database``, ``worker`` (``observed_at`` = laatste hartslag), ``jobs`` (``detail.wachtrij``,
+  ``detail.bezig``, ``detail.laatste_job_klaar``; een wachtrij die niet afneemt → ``degraded``) en ``hub_link``; eigen
+  namen erbij. Elke check heeft ``name``, ``status``, ``observed_at`` en ``detail`` (object met ``tekst``).
+* Versheid (§6.2, A23): een check zonder verse meting is ``unknown`` met ``reason_code: meting_verouderd``;
+  ``limits.max_age_s`` in ``discover`` geeft per check/itemtype de grens (standaard 900 s).
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import APP_ID, __version__
+from .. import APP_ID, __version__, heartbeat
 from ..auth import Principal, require, require_service_or_admin
 from ..errors import ApiError
 from ..events import envelope, redact
@@ -27,6 +34,7 @@ from ..models import (
     ExistingApp,
     ManifestVersion,
     OutboxEvent,
+    SyncJob,
 )
 from ..timeutil import iso, utcnow
 from .catalog import entry_out, source_out, version_summary
@@ -63,50 +71,102 @@ def discover(_: Reader) -> dict[str, Any]:
             "catalog:import",
             "catalog:decommission_plan",
         ],
-        "limits": {"page_max": 200, "manifest_max_bytes": 262144, "heavy_requests_per_minute": 120},
+        "limits": {
+            "page_max": 200,
+            "manifest_max_bytes": 262144,
+            "heavy_requests_per_minute": 120,
+            "max_age_s": MAX_AGE_S,
+        },
         "item_types": ["catalog_entry", "manifest_version", "catalog_source", "existing_app", "decision_record"],
         "timestamp_utc": iso(utcnow()),
     }
 
 
-#: ernst van een check; het totaal is de slechtste (zoals de statuspagina): onbekend is nooit 'healthy' (contract §1)
+#: ernst van een check; het totaal is de slechtste (zoals de statuspagina): onbekend is nooit 'healthy' (§6 regel 1)
 SEVERITY = {"healthy": 0, "unknown": 1, "degraded": 2, "down": 3}
+DEFAULT_MAX_AGE_S = 900
+#: §6.2: ``limits.max_age_s`` per capability/check/itemtype (alleen strenger dan of gelijk aan 900 s)
+MAX_AGE_S = {
+    "health": DEFAULT_MAX_AGE_S,
+    "worker": heartbeat.MAX_AGE_S,
+    "jobs": DEFAULT_MAX_AGE_S,
+    "existing_app": DEFAULT_MAX_AGE_S,
+}
+#: een wachtende taak die zo lang niet is opgepakt, of een taak die zo lang loopt: de wachtrij neemt niet af
+QUEUE_STALL_S = 15 * 60
+RUNNING_STALL_S = 30 * 60
+
+
+def _check(name: str, status: str, observed: str | None, tekst: str, **extra: Any) -> dict[str, Any]:
+    return {"name": name, "status": status, "observed_at": observed, "detail": {"tekst": tekst, **extra}}
+
+
+def worker_check(data_dir: Any, now: datetime) -> dict[str, Any]:
+    beat = heartbeat.last(data_dir)
+    if beat is None:
+        return _check("worker", "unknown", None, "nog geen hartslag van de worker gemeten", reason_code="niet_gemeten")
+    age = (now - beat).total_seconds()
+    if age > heartbeat.MAX_AGE_S or age < -300:
+        return _check(
+            "worker",
+            "unknown",
+            iso(beat),
+            f"laatste hartslag {int(age)} s geleden (max. {heartbeat.MAX_AGE_S} s)",
+            reason_code="meting_verouderd",
+            laatste_hartslag=iso(beat),
+        )
+    return _check("worker", "healthy", iso(beat), "worker draait", laatste_hartslag=iso(beat))
+
+
+def jobs_check(db: Session, now: datetime) -> dict[str, Any]:
+    queued = db.scalar(select(func.count()).select_from(SyncJob).where(SyncJob.status == "queued")) or 0
+    running = db.scalar(select(func.count()).select_from(SyncJob).where(SyncJob.status == "running")) or 0
+    done = db.scalar(select(func.max(SyncJob.finished_at)))
+    oldest = db.scalar(select(func.min(SyncJob.requested_at)).where(SyncJob.status == "queued"))
+    longest = db.scalar(select(func.min(SyncJob.started_at)).where(SyncJob.status == "running"))
+    stalled = (oldest is not None and (now - oldest).total_seconds() > QUEUE_STALL_S) or (
+        longest is not None and (now - longest).total_seconds() > RUNNING_STALL_S
+    )
+    detail = {"wachtrij": int(queued), "bezig": int(running), "laatste_job_klaar": iso(done)}
+    if stalled:
+        return _check("jobs", "degraded", iso(now), "de wachtrij neemt niet af (taak wacht of loopt te lang)", **detail)
+    return _check("jobs", "healthy", iso(now), f"{queued} wachtend, {running} bezig", **detail)
 
 
 @router.get("/health", summary="Gezondheid (healthy/degraded/down/unknown; totaal = slechtste check)")
 def health(request: Request, db: DB, _: Reader) -> dict[str, Any]:
-    now = iso(utcnow())
+    moment = utcnow()
+    now = iso(moment)
+    c = ctx(request)
     checks: list[dict[str, Any]] = []
-    ready = measure(ctx(request))
+    ready = measure(c)
     db_ok = ready.database
     checks.append(
-        {
-            "name": "database",
-            "status": "healthy" if db_ok else "down",
-            "observed_at": now,
-            "detail": "PostgreSQL bereikbaar" if db_ok else "PostgreSQL niet bereikbaar",
-        }
+        _check(
+            "database",
+            "healthy" if db_ok else "down",
+            now,
+            "PostgreSQL bereikbaar" if db_ok else "PostgreSQL niet bereikbaar",
+        )
     )
     if db_ok:
         schema_status, schema_detail = {
             "ok": ("healthy", "schema up-to-date"),
             "verouderd": ("down", f"migratie niet uitgevoerd ({ready.current or 'leeg'} ≠ {ready.head})"),
         }.get(ready.schema or "", ("unknown", "schemaversie niet leesbaar"))
-        checks.append({"name": "schema", "status": schema_status, "observed_at": now, "detail": schema_detail})
-    link = ctx(request).store.read()
-    checks.append(
-        {
-            "name": "hub_link",
-            "status": "healthy" if link.linked and link.confirmed_at else "unknown",
-            "observed_at": now,
-            "detail": (
-                ("gekoppeld en bevestigd" if link.confirmed_at else "gekoppeld, nog niet bevestigd door de Hub")
-                if link.linked
-                else link.state
-            ),
-        }
-    )
+        checks.append(_check("schema", schema_status, now, schema_detail))
+    checks.append(worker_check(c.settings.data_dir, moment))
+    link = c.store.read()
+    if link.unreadable:
+        link_status, link_text = "unknown", "koppelstatus onleesbaar"
+    elif link.linked:
+        link_status = "healthy" if link.confirmed_at else "unknown"
+        link_text = "gekoppeld en bevestigd" if link.confirmed_at else "gekoppeld, nog niet bevestigd door de Hub"
+    else:
+        link_status, link_text = "unknown", link.state
+    checks.append(_check("hub_link", link_status, now, link_text))
     if db_ok and ready.schema == "ok":
+        checks.append(jobs_check(db, moment))
         failed = (
             db.scalar(
                 select(func.count())
@@ -124,29 +184,37 @@ def health(request: Request, db: DB, _: Reader) -> dict[str, Any]:
             or 0
         )
         checks.append(
-            {
-                "name": "catalog_sources",
-                "status": "degraded" if failed else ("unknown" if never else "healthy"),
-                "observed_at": now,
-                "detail": f"{failed} bron(nen) mislukt, {never} nooit gesynchroniseerd",
-            }
+            _check(
+                "catalog_sources",
+                "degraded" if failed else ("unknown" if never else "healthy"),
+                now,
+                f"{failed} bron(nen) mislukt, {never} nooit gesynchroniseerd",
+                mislukt=int(failed),
+                nooit=int(never),
+            )
         )
         dead = db.scalar(select(func.count()).select_from(OutboxEvent).where(OutboxEvent.dead_letter.is_(True))) or 0
         checks.append(
-            {
-                "name": "outbox",
-                "status": "degraded" if dead else "healthy",
-                "observed_at": now,
-                "detail": f"{dead} event(s) in dead-letter",
-            }
+            _check(
+                "outbox",
+                "degraded" if dead else "healthy",
+                now,
+                f"{dead} event(s) in dead-letter",
+                dead_letter=int(dead),
+            )
         )
-    status = max((c["status"] for c in checks), key=SEVERITY.__getitem__)
+    else:
+        checks.append(_check("jobs", "unknown", None, "niet te meten zonder database", reason_code="niet_gemeten"))
+    status = max((ch["status"] for ch in checks), key=SEVERITY.__getitem__)
+    worst = [ch for ch in checks if ch["status"] == status]
     if not db_ok:
         reason = "database_unreachable"
     elif status == "healthy":
         reason = "ok"
+    elif status == "unknown" and any(ch["detail"].get("reason_code") == "meting_verouderd" for ch in worst):
+        reason = "meting_verouderd"
     else:
-        reason = next(c["name"] for c in checks if c["status"] == status)
+        reason = worst[0]["name"]
     return {"status": status, "observed_at": now, "reason_code": reason, "checks": checks}
 
 

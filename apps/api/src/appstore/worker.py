@@ -18,6 +18,7 @@ import httpx
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from . import heartbeat
 from .api.common import AppContext
 from .auth import purge_replay
 from .bestaande_apps import load_register
@@ -205,6 +206,7 @@ def startup(c: AppContext) -> None:
 def run_once(c: AppContext) -> dict[str, Any]:
     """Eén ronde van alle taken (ook bruikbaar in tests)."""
     jobs = 0
+    heartbeat.beat(c.settings.data_dir, force=True)
     while process_one_job(c):
         jobs += 1
     try_enroll(c)
@@ -244,6 +246,7 @@ def main(settings: Settings | None = None) -> None:
     next_import = time.monotonic() + 60.0  # eerst koppelen en de catalogus synchroniseren
     while not stop.is_set():
         try:
+            heartbeat.beat(c.settings.data_dir)  # check 'worker' van de connector-health (§6)
             while process_one_job(c) and not stop.is_set():
                 pass
             try_enroll(c)  # goedkoop (leest alleen het bestand); de backoff zit in de client

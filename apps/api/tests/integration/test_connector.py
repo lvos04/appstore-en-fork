@@ -1,17 +1,20 @@
-"""Connectorcontract §6 (incl. hub-link en unlink, contract 1.2 §3.8) en outbox/events §7."""
+"""Connectorcontract §6 (incl. hub-link en unlink, §3.8), vaste checknamen en versheid (§6, §6.2) en outbox/events §7
+(contract 1.3)."""
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text, update
 
+from appstore import heartbeat
 from appstore.api.common import AppContext
 from appstore.events import emit
 from appstore.hublink_store import LinkState
-from appstore.models import CatalogSource, OutboxEvent
+from appstore.models import CatalogSource, OutboxEvent, SyncJob
 from appstore.timeutil import utcnow
 from appstore.worker import push_outbox, run_once, startup
 from tests.fakehub import FakeHub
@@ -32,15 +35,61 @@ def test_discover_and_health(client: TestClient, linked: FakeHub) -> None:
     d = client.get("/connector/v1/discover", headers=linked.service_auth()).json()
     assert d["app_id"] == "appstore-en-fork" and d["schema_version"] == "1.0" and d["capabilities"] == ["read"]
     assert {"propose", "apply", "rollback", "stream"} <= set(d["unavailable_capabilities"])
+    assert d["limits"]["max_age_s"] == {"health": 900, "worker": 120, "jobs": 900, "existing_app": 900}
     h = client.get("/connector/v1/health", headers=linked.service_auth()).json()
-    assert {c["name"] for c in h["checks"]} >= {"database", "schema", "hub_link", "catalog_sources", "outbox"}
-    assert all("observed_at" in c for c in h["checks"])
-    assert next(c for c in h["checks"] if c["name"] == "hub_link")["status"] == "healthy"
-    # gekoppeld, bevestigd, ingebouwde catalogus gesynchroniseerd, geen dead-letter → pas dan 'healthy'
-    assert {c["name"]: c["status"] for c in h["checks"]} == dict.fromkeys(
-        ("database", "schema", "hub_link", "catalog_sources", "outbox"), "healthy"
-    )
+    names = ("database", "schema", "worker", "hub_link", "jobs", "catalog_sources", "outbox")
+    assert [c["name"] for c in h["checks"]] == list(names)  # vaste namen database/worker/jobs/hub_link (§6 regel 3)
+    assert all(set(c) == {"name", "status", "observed_at", "detail"} and c["observed_at"] for c in h["checks"])
+    assert all(isinstance(c["detail"], dict) and c["detail"]["tekst"] for c in h["checks"])
+    jobs = next(c for c in h["checks"] if c["name"] == "jobs")["detail"]
+    assert {"wachtrij", "bezig", "laatste_job_klaar"} <= set(jobs) and jobs["wachtrij"] == 0
+    worker = next(c for c in h["checks"] if c["name"] == "worker")
+    assert worker["observed_at"] == worker["detail"]["laatste_hartslag"]  # observed_at = laatste hartslag
+    # gekoppeld, bevestigd, worker leeft, ingebouwde catalogus gesynchroniseerd, geen dead-letter → pas dan 'healthy'
+    assert {c["name"]: c["status"] for c in h["checks"]} == dict.fromkeys(names, "healthy")
     assert (h["status"], h["reason_code"]) == ("healthy", "ok")
+
+
+def test_health_worker_without_fresh_heartbeat_is_unknown_never_healthy(
+    client: TestClient, linked: FakeHub, worker_ctx: AppContext
+) -> None:
+    """§6.2: een check zonder verse meting is unknown met meting_verouderd; geen hartslag = unknown."""
+    svc = linked.service_auth()
+    path = heartbeat.path(worker_ctx.settings.data_dir)
+    old = (utcnow() - timedelta(seconds=heartbeat.MAX_AGE_S + 30)).isoformat().replace("+00:00", "Z")
+    path.write_text(json.dumps({"laatste_hartslag": old}), encoding="utf-8")
+    h = client.get("/connector/v1/health", headers=svc).json()
+    worker = next(c for c in h["checks"] if c["name"] == "worker")
+    assert worker["status"] == "unknown" and worker["detail"]["reason_code"] == "meting_verouderd"
+    assert (h["status"], h["reason_code"]) == ("unknown", "meting_verouderd")
+    path.unlink()
+    h = client.get("/connector/v1/health", headers=svc).json()
+    worker = next(c for c in h["checks"] if c["name"] == "worker")
+    assert worker["status"] == "unknown" and worker["observed_at"] is None and h["status"] == "unknown"
+
+
+def test_health_jobs_queue_that_does_not_shrink_is_degraded(
+    client: TestClient, linked: FakeHub, worker_ctx: AppContext
+) -> None:
+    import uuid
+
+    with worker_ctx.sessions() as db:
+        src = db.scalars(select(CatalogSource)).first()
+        assert src is not None
+        db.add(
+            SyncJob(
+                id=uuid.uuid4(),
+                source_id=src.id,
+                status="queued",
+                requested_by="test",
+                requested_at=utcnow() - timedelta(minutes=20),
+            )
+        )
+        db.commit()
+    h = client.get("/connector/v1/health", headers=linked.service_auth()).json()
+    jobs = next(c for c in h["checks"] if c["name"] == "jobs")
+    assert jobs["status"] == "degraded" and jobs["detail"]["wachtrij"] == 1
+    assert (h["status"], h["reason_code"]) == ("degraded", "jobs")
 
 
 def test_health_total_is_worst_check_and_unknown_is_never_healthy(
@@ -81,7 +130,7 @@ def test_health_schema_behind_is_down(client: TestClient, linked: FakeHub, datab
             conn.execute(text("UPDATE alembic_version SET version_num = '0001'"))
         h = client.get("/connector/v1/health", headers=linked.service_auth()).json()
         schema = next(c for c in h["checks"] if c["name"] == "schema")
-        assert schema["status"] == "down" and "0001" in schema["detail"]
+        assert schema["status"] == "down" and "0001" in schema["detail"]["tekst"]
         assert (h["status"], h["reason_code"]) == ("down", "schema")
         assert client.get("/readyz").status_code == 503
     finally:
