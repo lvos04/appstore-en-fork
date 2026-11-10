@@ -157,7 +157,25 @@ def genereer(uit: Path) -> None:
 
             app.state.ctx.store.update(lopend)
             bewaar(uit, "koppelen-loopt", c.get("/"))
+            # Peil 1.1.1 (E02): lopende poging zonder melding; formulier en stappen verdwijnen
+            app.state.ctx.store.update(lambda st: st.model_copy(update={"last_error": None}))
+            bewaar(uit, "koppelen-bezig", c.get("/"))
             app.state.ctx.store.update(lambda st: st.model_copy(update={"pending": None, "last_error": None}))
+            # contract 1.3 §3.7 (K1): geopend via een publieke naam → vooraf de melding, en de POST wordt geweigerd
+            bewaar(uit, "host-niet-toegestaan", c.get("/", headers={"Host": "nas.fritz.box:30430"}))
+            resp = c.post(
+                "/koppelen",
+                data={
+                    "hub_adres": HUB_URL,
+                    "koppelcode": "ABCD-EFGH-JKMN",
+                    "hub_vingerafdruk": hub.fingerprint(),
+                    "csrf": c.cookies["appstore_csrf"],
+                },
+                headers={"Host": "nas.fritz.box:30430", "Origin": "http://nas.fritz.box:30430"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 403, resp.status_code
+            bewaar(uit, "herkomst-host-geweigerd", resp)
             # koppelen met een geldige code en de juiste vingerafdruk
             resp = formulier(c, HUB_URL, hub.add_code(), hub.fingerprint())
             assert resp.status_code == 303, resp.text[:300]

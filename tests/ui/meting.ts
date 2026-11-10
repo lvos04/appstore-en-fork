@@ -184,12 +184,19 @@ function meetInPagina(verboden: string[]) {
     .filter((el) => getComputedStyle(el).textOverflow === 'ellipsis' && el.scrollWidth > el.clientWidth + 1)
     .map(naam);
   // 5. statusvormen (Peil §4.2/§4.3): icoon + woord + vorm; groen alleen voor Gezond; onbekend/verouderd nooit groen
+  // Peil 1.1.1 (E03/E04): elke toon heeft precies zijn eigen symbool #i-<toon>; Gekoppeld is neutraal (link-2)
   const ICOON: Record<string, string[]> = {
     'pil-gezond': ['i-gezond'],
     'pil-beperkt': ['i-beperkt'],
     'pil-storing': ['i-storing'],
-    'pil-onbekend': ['i-onbekend', 'i-niet-gekoppeld'],
+    'pil-onbekend': ['i-onbekend'],
+    'pil-verouderd': ['i-verouderd'],
+    'pil-niet-beschikbaar': ['i-niet-beschikbaar'],
+    'pil-nog-niet': ['i-nog-niet'],
+    'pil-niet-gekoppeld': ['i-niet-gekoppeld'],
     'pil-gate': ['i-gate'],
+    'pil-beleid': ['i-beleid'],
+    'pil-feit': ['i-feit'],
     'pil-neutraal': ['i-gekoppeld'],
   };
   const pillen: { klasse: string; tekst: string; icoon: string; fout: string[] }[] = [];

@@ -289,6 +289,9 @@ def draai(review: Review) -> None:
                 status=429,
                 velden={"hub_adres": hub_url, "koppelcode": "ABCD-EFGH-JKMN", "hub_vingerafdruk": vinger},
             )
+            a.herstart("serve")  # rate-limit (in het geheugen) weer leeg
+            # contract 1.3 §3.7: een POST met geldige herkomst telt eerst als poging, daarna pas het formuliertoken;
+            # daarom pas na het legen van de teller (anders 429 in plaats van 403)
             review.meet(
                 a,
                 "sessie-verlopen",
@@ -296,7 +299,14 @@ def draai(review: Review) -> None:
                 status=403,
                 velden={"hub_adres": hub_url, "koppelcode": "ABCD-EFGH-JKMN", "hub_vingerafdruk": vinger},
             )
-            a.herstart("serve")  # rate-limit (in het geheugen) weer leeg
+            # §3.7 punt 6: het echte formulier in Chromium vanuit een verkeerde herkomst → 403, niets gewijzigd. Met een
+            # onbekende koppelcode: glipt een geval toch door, dan weigert de Hub en faalt de test (400 ≠ 403).
+            review.meet(
+                a,
+                "herkomst-geweigerd",
+                actie="negatief",
+                velden={"hub_adres": hub_url, "koppelcode": "ABCD-EFGH-JKMN", "hub_vingerafdruk": vinger},
+            )
             hub.self_status = 503  # de Hub bevestigt de koppeling (services/self) nog niet
             review.meet(
                 a,
@@ -311,7 +321,8 @@ def draai(review: Review) -> None:
             hub.self_status = None
             a.herstart("worker")  # de worker bevestigt bij de start (§3.6)
             wacht(lambda: "Alles gezond" in a.pagina(), 60, "bevestigd door de Hub")
-            review.meet(a, "gekoppeld-melding", pad="/?melding=gekoppeld")
+            # "gekoppeld-melding" hoort bij een echte poging van één browser (§3.7): gecontroleerd in de actie
+            # al-gekoppeld (tab 2) en met alle eisen in de offline toestanden (genereer_toestanden.py)
             review.meet(a, "gekoppeld")
             # bronnen via de catalogus-API (beheerder-JWT van de Hub, per wijziging een nieuwe: jti wordt maar één keer
             # geaccepteerd): één onbereikbaar, één uit, één nog nooit gesynchroniseerd
@@ -383,11 +394,11 @@ def draai(review: Review) -> None:
                 )
                 b.start("serve")
                 b.start("worker")
-                wacht(lambda: "Koppelen loopt" in b.pagina() and "Nog leeg" in b.pagina(), 60, "koppelpoging loopt")
+                wacht(lambda: "Koppelen bezig" in b.pagina() and "Nog leeg" in b.pagina(), 60, "koppelpoging loopt")
                 review.meet(b, "koppelen-loopt")
                 hub.down = False
                 wacht(
-                    lambda: "Gekoppeld" in b.pagina() and "Koppelen loopt" not in b.pagina(), 120, "gekoppeld met token"
+                    lambda: "Gekoppeld" in b.pagina() and "Koppelen bezig" not in b.pagina(), 120, "gekoppeld met token"
                 )
                 r = httpx.post(
                     f"{b.url}/connector/v1/hub-link/unlink",
