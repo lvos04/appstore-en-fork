@@ -27,7 +27,7 @@ from .catalog.importrun import run_import
 from .catalog.service import ensure_bundled_source, sync_source
 from .config import Settings
 from .db import make_engine, make_sessionmaker
-from .events import envelope
+from .events import envelope, envelope_problems
 from .hublink import HubLinkClient, ensure_link_file
 from .hublink_store import HubLinkStore
 from .models import CatalogSource, IdempotencyRecord, OutboxEvent, SyncJob
@@ -132,8 +132,14 @@ def push_outbox(c: AppContext, batch: int = 50) -> int:
         delivered = 0
         trace = str(uuid.uuid4())
         for ev in due:
+            body = envelope(ev)
+            if problems := envelope_problems(body):
+                # §7: vóór verzending tegen de grenzen van de inbox; zo'n event zou de Hub altijd weigeren
+                log.error("event %s breekt de grenzen van de Hub-inbox: %s", ev.seq, "; ".join(problems))
+                ev.dead_letter, ev.last_error = True, ("envelope_ongeldig: " + "; ".join(problems))[:500]
+                continue
             try:
-                resp = c.hub.call("POST", "/api/v1/events/inbox", json_body=envelope(ev), trace_id=trace)
+                resp = c.hub.call("POST", "/api/v1/events/inbox", json_body=body, trace_id=trace)
                 if resp is None:  # intussen niet meer gekoppeld (ontkoppeld of ingetrokken)
                     break
                 ok = resp.status_code in (200, 201, 202, 204, 409)  # 409 = al ontvangen (dedupe op event_id)

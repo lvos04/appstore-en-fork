@@ -112,8 +112,8 @@ def test_events_polling_and_push(client: TestClient, linked: FakeHub, worker_ctx
     svc = linked.service_auth()
     page = client.get("/connector/v1/events?limit=200", headers=svc).json()
     types = [e["event_type"] for e in page["items"]]
-    assert "service.enrollment.completed" in types and "catalog.manifest.added" in types
-    assert "catalog.manifest.rejected" in types and "catalog.source.synced" in types
+    assert "service.hub_link.linked" in types and "catalog.manifest.added" in types
+    assert "catalog.manifest.rejected" in types and "catalog.source_sync.succeeded" in types
     assert all(len(t.split(".")) == 3 for t in types)  # §7: precies drie segmenten
     env = page["items"][0]
     assert set(env) == {

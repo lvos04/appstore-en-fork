@@ -55,8 +55,10 @@ def run_import(
     before = None if previous is None else (previous.summary.get("status"), previous.summary.get("reason_code"))
     event_type: str | None = None
     if changed or before != (fetched.status, fetched.reason_code):
-        event_type = "catalog.import.completed" if fetched.status == "ok" else "catalog.import.unavailable"
-        emit(db, event_type, "existing_apps", "inventaris", summary, trace_id, principal)
+        # contract 1.3 §7: vaste werkwoorden (probleem failed, herstel succeeded) op een stabiel onderwerp
+        event_type = "catalog.import.succeeded" if fetched.status == "ok" else "catalog.import.failed"
+        payload = summary if fetched.status == "ok" else {**summary, "ernst": "middel"}
+        emit(db, event_type, "existing_apps", "inventaris", payload, trace_id, principal)
     return {
         **summary,
         "gewijzigd": changed,

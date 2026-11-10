@@ -2325,6 +2325,7 @@
     },
     "/readyz": {
       "get": {
+        "description": "200 als database en schema in orde zijn. De koppeling met de Hub telt **niet** mee (contract 1.3 §5): een niet-gekoppelde, ontkoppelde of ingetrokken dienst, of een onleesbare koppelstatus, is ready. `hub_link` geeft alleen ter informatie de toestand en `last_error` uit de witte lijst (§3.5).",
         "operationId": "readyz_readyz_get",
         "responses": {
           "200": {

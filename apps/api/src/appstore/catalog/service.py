@@ -255,10 +255,10 @@ def sync_source(
         source.last_sync_at, source.last_sync_status, source.last_sync_error = now, "failed", exc.message
         emit(
             db,
-            "catalog.source.sync_failed",
+            "catalog.source_sync.failed",
             "catalog_source",
             str(source.id),
-            {"code": exc.code, "message": exc.message},
+            {"code": exc.code, "message": exc.message, "ernst": "middel"},
             trace_id,
         )
         return SyncOutcome(ok=False, error_code=exc.code, error_nl=exc.message)
@@ -267,10 +267,10 @@ def sync_source(
         source.last_sync_at, source.last_sync_status, source.last_sync_error = now, "failed", msg
         emit(
             db,
-            "catalog.source.sync_failed",
+            "catalog.source_sync.failed",
             "catalog_source",
             str(source.id),
-            {"code": "source_unreachable", "message": msg},
+            {"code": "source_unreachable", "message": msg, "ernst": "middel"},
             trace_id,
         )
         return SyncOutcome(ok=False, error_code="source_unreachable", error_nl=msg)
@@ -294,7 +294,7 @@ def sync_source(
     source.last_sync_revision = fetched.revision
     emit(
         db,
-        "catalog.source.synced",
+        "catalog.source_sync.succeeded",
         "catalog_source",
         str(source.id),
         {

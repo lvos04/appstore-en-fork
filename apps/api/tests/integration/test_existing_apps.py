@@ -189,7 +189,7 @@ def test_import_records_evidence_audit_and_event(linked: TestClient, hub: FakeHu
         assert ev is not None and ev.kind == "hub_import" and ev.summary["status"] == "ok"
         assert db.scalar(select(func.count()).select_from(AuditEvent).where(AuditEvent.action == "catalog.import.run"))
         types = list(db.scalars(select(OutboxEvent.event_type)))
-    assert "catalog.import.completed" in types
+    assert "catalog.import.succeeded" in types
     listed = linked.get("/catalog/v1/existing-apps", headers=hub.auth(roles=["viewer"])).json()
     assert listed["laatste_import"]["status"] == "ok" and listed["laatste_import"]["evidence_id"] == body["evidence_id"]
     # connector: items van het nieuwe type (Hub kan meelezen)
@@ -213,26 +213,26 @@ def test_unchanged_repeat_records_evidence_but_no_new_event(
         return int(ev or 0), int(au or 0), types
 
     seed(hub)
-    assert run_import(linked, hub)["event_type"] == "catalog.import.completed"
+    assert run_import(linked, hub)["event_type"] == "catalog.import.succeeded"
     assert run_import(linked, hub)["event_type"] is None  # zelfde meting, zelfde uitkomst
     assert periodic_import(worker_ctx) is not None
-    assert counts() == (3, 3, ["catalog.import.completed"])
+    assert counts() == (3, 3, ["catalog.import.succeeded"])
     hub.apps_mode = "alleen_gebruikers"  # andere uitkomst → één event, daarna stil
-    assert run_import(linked, hub)["event_type"] == "catalog.import.unavailable"
+    assert run_import(linked, hub)["event_type"] == "catalog.import.failed"
     assert run_import(linked, hub)["event_type"] is None
     hub.apps_mode = "dienst"  # weer ok
-    assert run_import(linked, hub)["event_type"] == "catalog.import.completed"
+    assert run_import(linked, hub)["event_type"] == "catalog.import.succeeded"
     hub.catalog_apps = hub.catalog_apps[1:]  # register verandert (een app verdwijnt) → event, ook bij dezelfde status
     body = run_import(linked, hub)
-    assert body["counts"]["verdwenen"] == 1 and body["event_type"] == "catalog.import.completed"
+    assert body["counts"]["verdwenen"] == 1 and body["event_type"] == "catalog.import.succeeded"
     assert counts() == (
         7,
         7,
         [
-            "catalog.import.completed",
-            "catalog.import.unavailable",
-            "catalog.import.completed",
-            "catalog.import.completed",
+            "catalog.import.succeeded",
+            "catalog.import.failed",
+            "catalog.import.succeeded",
+            "catalog.import.succeeded",
         ],
     )
 
@@ -256,7 +256,7 @@ def test_hub_without_service_access_is_capability_unavailable(
     assert body["gewijzigd"] is False and body["melding_nl"]
     assert {n: r.row_version for n, r in rows(worker_ctx).items()} == before  # niets gewijzigd, niets 'verdwenen'
     with worker_ctx.sessions() as db:
-        assert "catalog.import.unavailable" in list(db.scalars(select(OutboxEvent.event_type)))
+        assert "catalog.import.failed" in list(db.scalars(select(OutboxEvent.event_type)))
 
 
 def test_not_linked_is_capability_unavailable(client: TestClient, hub: FakeHub) -> None:
@@ -464,7 +464,7 @@ def test_import_permissions(linked: TestClient, hub: FakeHub) -> None:
     first = linked.post(IMPORT, headers={**hub.auth(roles=["operator"], sub="op-1"), **key})
     calls = len(hub.apps_auth)
     again = linked.post(IMPORT, headers={**hub.auth(roles=["operator"], sub="op-1"), **key})
-    assert again.headers.get("Idempotent-Replayed") == "true" and again.json() == first.json()
+    assert again.headers.get("Idempotent-Replay") == "true" and again.json() == first.json()
     assert len(hub.apps_auth) == calls
 
 
