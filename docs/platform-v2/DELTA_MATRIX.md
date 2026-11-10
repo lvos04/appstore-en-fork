@@ -56,9 +56,18 @@ Gemeten stand vóór deze ronde: `fc682e5` (zoals de conformiteitslijst). Alleen
 | ASF-06 sleutels en adres | `rotation_sequence` altijd 0; `127.1` als naam geaccepteerd | `rotation_sequence` uit het antwoord; canonieke IP-vormen; verboden bereiken ook na DNS-resolutie; `base_url` alleen als geldig; testvector `HN69-…` | Unit-getest; Sim-getest |
 | ASF-07 events | `service.enrollment.completed`; `sync_failed`, `synced`, `completed`, `unavailable` | `service.hub_link.linked` `{via}`; `catalog.source_sync.*`, `catalog.import.*`; `ernst`; grenzen vóór verzending | Unit-getest; Sim-getest |
 | ASF-08 validator en schema | 1.2 | 1.3: `install.reason`, `reserved_env`, `secret`, `accepted_findings`/`strict_valid`, `stopped_snapshot`, `post_install_checks`, `same_as_host`, `healthcheck.monitor`, `kind: checklist` | Unit-getest |
-| ASF-09 inventaris-import | 403 altijd `hub_inventaris_niet_voor_diensten`; vaste 15 min; eigen backoff bij 429 | `scope_ontbreekt` → `capability_unavailable`; `snapshot_id` + 409 opnieuw; `max_age` volgens de Hub; `Retry-After` | Sim-getest (de echte Hub heeft C1.3-ASM-07/08 nog niet) |
+| ASF-09 inventaris-import | 403 altijd `hub_inventaris_niet_voor_diensten`; vaste 15 min; eigen backoff bij 429 | `scope_ontbreekt` → `capability_unavailable`; `snapshot_id` + 409 opnieuw; `max_age` volgens de Hub; `Retry-After` | Sim-getest; de Hub heeft C1.3-ASM-07/08 inmiddels gebouwd (`0899cd6`, vorm gelezen en gelijk, ADR-0014); NIET GEVALIDEERD tegen een draaiende Hub |
 | ASF-10 connector-health | geen `worker`/`jobs`, `detail` als tekst | vaste checks met `observed_at`, hartslag van de worker, `limits.max_age_s`, `meting_verouderd` | Sim-getest |
 | ASF-11 statische `Idempotency-Key`-test | ontbrak | `tests/unit/test_idempotency_routes.py` met uitzonderingslijst | Unit-getest |
 | ASF-12 Emby | adoptie-item, plan met executor-stappen | `platform_wijzigt_nooit`: plan zonder `action_id`, gates HARDE EIS/exportarchief/controlelijst | Unit-getest |
 | ASF-13 eigen manifest | kop 1.2, geen monitor, licentie leeg | kop 1.3, `healthcheck.monitor`, GPL-3.0, `--strict` geldig | Unit-getest |
 | ASF-14 geheime catalogus-values → vault | — | **open (P2)**; tot dan weigert de vertaling een geheime waarde | — |
+
+**Review (ADR-0014, 2026-11-10):** alle CI-stappen opnieuw gedraaid (groen) en gericht gezocht. Gerepareerd:
+
+| Punt | Vóór de review | Nu | Validatie |
+|---|---|---|---|
+| ASF-01 healthcheck | volgde `HTTP_PROXY` uit de omgeving, ook voor `127.0.0.1` (aangetoond: exit 1) | opener zonder proxy; image-E2E draait de healthcheck ook met een onbereikbare proxy in de omgeving | Docker-E2E; NIET GEVALIDEERD (echte NAS) |
+| ASF-04 koppelbestand van een andere eigenaar | niet te linken en niet te lezen → elke worker-ronde een fout, herstel met een nieuw env-token onmogelijk | origineel verplaatsen (exacte bytes); mislukt de vervanging, dan komt het origineel terug | Unit-getest |
+| ASF-10 `GET /connector/v1/hub-link` | gaf ook `confirmed_at` (buiten de witte lijst van §3.5) | exact de witte lijst + `pinned_kids`, `rotation_sequence`, `observed_at`; test op de exacte set | Sim-getest |
+| EX16 routetest | sloeg de router `existing_apps` over (11 routes) | leest de routes van de echte app; elk pad uit het OpenAPI-schema telt mee | Sim-getest |

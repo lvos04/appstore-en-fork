@@ -2,6 +2,16 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Review contract 1.3** (ADR-0014):
+  - Healthcheck negeert proxy-omgevingsvariabelen (met `HTTP_PROXY` in het formulier werd de container onterecht
+    `unhealthy`); de image-E2E controleert dat.
+  - Een onleesbaar koppelbestand van een andere eigenaar (niet te linken of te lezen) wordt bij een nieuw env-token
+    verplaatst in plaats van dat het herstel vastloopt; mislukt de vervanging, dan komt het origineel terug.
+  - `GET /connector/v1/hub-link` geeft alleen de witte lijst van §3.5 plus `pinned_kids`, `rotation_sequence` en
+    `observed_at` (geen `confirmed_at` meer).
+  - De test "elke route vraagt aanmelding" leest de routes van de echte app en dekt nu ook `existing-apps` en
+    `decisions`.
+
 - **Platformcontract 1.3 en Peil 1.1.1** (ADR-0013, C1.3-ASF-01…13; C1.3-ASF-14 volgt in P2):
   - Byte-gelijke kopieën van `PLATFORM_CONTRACTEN.md` (1.3) en `CONTRACT_1.3_CONFORMITEIT.md` op een vaste bron-commit
     (`CONTRACT_HERKOMST.json`, `tools/contract_kopie.py`, ook online in CI); EVIDENCE-test volgens §11 van 1.3.

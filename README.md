@@ -8,7 +8,8 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 > **Status (eerlijk):** code, unit-, integratie- en E2E-tests met simulators zijn groen in de bouwomgeving
 > (**Sim-getest**). Niets is op een echte TrueNAS getest (**NIET GEVALIDEERD (echte NAS)**). De code volgt
 > platformcontract **1.3** (ADR-0013) en ontwerptaal **Peil 1.1.1**; dat is getest tegen de Hub-simulator, die 1.3
-> volgt — de echte Hub heeft de 1.3-onderdelen voor de inventaris (scope, momentopname) nog niet. Het koppelen volgens
+> volgt — de echte Hub heeft de 1.3-onderdelen voor de inventaris (scope, momentopname) inmiddels gebouwd; de vorm is
+> gelezen en gelijk (ADR-0014), niet tegen een draaiende Hub getest. Het koppelen volgens
 > 1.2 is eerder één keer lokaal tegen de echte Hub-code getest (ADR-0008 §5), niet tegen een op de NAS geïnstalleerde
 > Hub; de GHCR-image bestaat pas na de eerste release-tag. Zie `docs/platform-v2/EVIDENCE.json`.
 
@@ -29,7 +30,7 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 | Installatie als standaard TrueNAS Custom App (formuliervelden, geen YAML) | [`deploy/truenas/CUSTOM_APP.md`](deploy/truenas/CUSTOM_APP.md) |
 | Eigen manifest | `deploy/manifest/appstore-en-fork.manifest.yaml` |
 | OpenAPI | `docs/openapi/appstore-en-fork.openapi.json` |
-| Besluiten | `docs/adr/ADR-0001` … `ADR-0013` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil; ADR-0010: bestaande apps importeren; ADR-0011: ontwerpreview statuspagina; ADR-0012: review fase P1; ADR-0013: platformcontract 1.3 en Peil 1.1.1) |
+| Besluiten | `docs/adr/ADR-0001` … `ADR-0014` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil; ADR-0010: bestaande apps importeren; ADR-0011: ontwerpreview statuspagina; ADR-0012: review fase P1; ADR-0013: platformcontract 1.3 en Peil 1.1.1; ADR-0014: review contract 1.3) |
 | Platformcontract (byte-gelijke kopie, versie 1.3, gepind in `CONTRACT_HERKOMST.json`) en conformiteitslijst | [`docs/platform-v2/PLATFORM_CONTRACTEN.md`](docs/platform-v2/PLATFORM_CONTRACTEN.md), [`CONTRACT_1.3_CONFORMITEIT.md`](docs/platform-v2/CONTRACT_1.3_CONFORMITEIT.md) (historie: [`CONTRACT_1.2_CONFORMITEIT.md`](docs/platform-v2/CONTRACT_1.2_CONFORMITEIT.md)) |
 
 ## Installeren

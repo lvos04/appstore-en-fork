@@ -1,6 +1,8 @@
 # ADR-0013 — Platformcontract 1.3 en Peil 1.1.1 toepassen
 
-- **Status:** aangenomen · 2026-11-10
+- **Status:** aangenomen · 2026-11-10 · aangevuld door ADR-0014 (review: healthcheck zonder proxy, verplaatsen van
+  een onleesbaar koppelbestand van een andere eigenaar, `confirmed_at` buiten de witte lijst, routetest; de Hub heeft
+  C1.3-ASM-07/08 inmiddels gebouwd — gelezen, niet tegen een draaiende Hub getest)
 - **Bron:** `ai-server-manager:docs/platform-v2/PLATFORM_CONTRACTEN.md` (`contracts 1.3`, bron-commit `02b119c`) en
   `ai-server-manager:docs/platform-v2/CONTRACT_1.3_CONFORMITEIT.md` (hoofdstuk 3, C1.3-ASF-01…14); Peil 1.1.1
   (`ai-server-manager:docs/platform-v2/ONTWERPTAAL.md` §13.2/§14/§16, bron-commit `0a7143b`).
