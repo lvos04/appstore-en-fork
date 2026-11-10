@@ -332,17 +332,24 @@ class HubLinkClient:
 
         self.store.update(change, replace_unreadable=kind == "token")
 
-    def _config_error(self, code: str) -> None:
+    def _config_error(self, code: str) -> EnrollOutcome | None:
         """``hub_adres_ongeldig``/``vingerafdruk_ongeldig`` (§3.5): alleen ``last_error`` (één keer), het token blijft
-        onafgehandeld en de Hub wordt niet aangesproken."""
+        onafgehandeld en de Hub wordt niet aangesproken. Geeft alleen een uitkomst als er iets veranderde (geen
+        logregel per worker-ronde)."""
+        changed: list[bool] = []
 
         def change(st: LinkState) -> LinkState | None:
             if st.last_error is not None and st.last_error.code == code:
                 return None
             st.last_error = LastError(code=code, at=now_iso())
+            changed.append(True)
             return st
 
         self.store.update(change, replace_unreadable=True)
+        if changed:
+            log.warning("koppelen met het env-token niet gestart: %s (de Hub is niet aangesproken)", code)
+            return EnrollOutcome("definitive", code)
+        return None
 
     def _transient(self, code: str) -> None:
         """Tijdelijke storing tijdens een env-tokenpoging: ``pending`` blijft, alleen ``last_error`` bijwerken."""
@@ -482,8 +489,7 @@ class HubLinkClient:
         if token and not hub_url and self.settings.hub_url_invalid:
             digest = sha256_hex(token)
             if st.corrupt or digest not in st.used_enrollment_token_sha256:
-                self._config_error("hub_adres_ongeldig")
-                return EnrollOutcome("definitive", "hub_adres_ongeldig")
+                return self._config_error("hub_adres_ongeldig")
             return None
         if not token or not hub_url:
             if st.pending is not None and st.pending.kind == "token":
@@ -494,8 +500,7 @@ class HubLinkClient:
             return None
         expected = self.settings.hub_key_fingerprint
         if expected is not None and normalize_fingerprint(expected) is None:
-            self._config_error("vingerafdruk_ongeldig")
-            return EnrollOutcome("definitive", "vingerafdruk_ongeldig")
+            return self._config_error("vingerafdruk_ongeldig")
         if st.pending is not None and st.pending.kind == "koppelcode":
             if not stale_koppelcode(st.pending):
                 return None  # een koppelpoging via de statuspagina loopt; nooit twee enrollments tegelijk

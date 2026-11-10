@@ -50,9 +50,11 @@ in de code en de tests.
    blijft 200 en meldt dat onder `hub_link`. Extra velden blijven bij herschrijven staan.
 5. **Adressen (C1.3-ASF-06).** Een host die op een getal eindigt (zoals een browser hem als IPv4 leest) moet exact
    `a.b.c.d` zijn. De verboden bereiken gelden ook na DNS-resolutie bij **elke** verbinding: `appstore.netguard` lost de
-   naam zelf op en verbindt met het gecontroleerde IP (TLS houdt de naam). Dat geldt voor alle uitgaande verbindingen,
-   ook catalogusbronnen (strenger dan nodig, maar een bron hoort nooit op loopback of link-local te staan; loopback
-   alleen met de ontwikkelvlag). `base_url` alleen als hij geldig is, anders `null`.
+   naam zelf op en verbindt met het gecontroleerde IP (TLS houdt de naam). Dat geldt voor alle uitgaande
+   HTTP-verbindingen van de dienst (de Hub én HTTP-catalogusbronnen; strenger dan nodig, maar een bron hoort nooit op
+   loopback of link-local te staan; loopback alleen met de ontwikkelvlag). Git-bronnen gaan via dulwich en houden hun
+   bestaande controle vooraf (`check_remote_url`, alleen https); dat is geen Hub-adres en valt buiten §3.2.
+   `base_url` alleen als hij geldig is, anders `null`.
 6. **JWT en foutcatalogus (C1.3-ASF-05, §5).** `aud` als lijst → `invalid_token`. FastAPI leest een JSON-body vóór de
    dependencies; bij onleesbare JSON doet de foutafhandeling daarom eerst de aanmelding van de route (gemarkeerde
    dependency) en geeft zonder geldige aanmelding 401 (RV9). Foutcodes gelijk aan de Hub: `validation_error` +

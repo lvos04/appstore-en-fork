@@ -760,7 +760,9 @@ def test_invalid_env_configuration_never_contacts_the_hub(
     """§3.5: de Hub wordt niet aangesproken en het token blijft onafgehandeld (de beheerder kan het verbeteren)."""
     c = build_context(dataclasses.replace(env_settings, **changes), hub.client_factory())
     startup(c)
-    run_once(c)
+    first = c.hub.env_tick("t")
+    assert first is not None and first.code == code
+    assert c.hub.env_tick("t") is None  # niets veranderd: geen nieuwe uitkomst (en geen logregel) per ronde
     run_once(c)
     st = c.store.read()
     assert hub.enroll_requests == [] and st.last_error is not None and st.last_error.code == code
