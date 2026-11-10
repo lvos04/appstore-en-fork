@@ -635,10 +635,11 @@ class HubLinkClient:
             self.confirm(trace_id=trace_id)  # §3.8: pas bij 401 op services/self is het een intrekking
         return resp
 
-    def get_bounded(self, path: str, *, trace_id: str, max_bytes: int) -> tuple[int, bytes] | None:
+    def get_bounded(self, path: str, *, trace_id: str, max_bytes: int) -> tuple[int, bytes, httpx.Headers] | None:
         """``GET`` naar de Hub met het service-token (§4.4), met een bovengrens op de antwoordgrootte (gestreamd gelezen,
         afgebroken boven ``max_bytes`` → :class:`ResponseTooLargeError`). Geen redirects, geen proxy (de HTTP-factory).
-        ``None`` als niet gekoppeld. Bij 401 eerst ``services/self`` (§3.8) — pas dan eventueel ``ingetrokken``."""
+        ``None`` als niet gekoppeld. Bij 401 eerst ``services/self`` (§3.8) — pas dan eventueel ``ingetrokken``.
+        Geeft ``(status, body, headers)``; de aanroeper volgt ``Retry-After`` bij 429/503 (§5)."""
         st = self.store.read()
         if not st.linked or st.hub_url is None or st.service_token is None:
             return None
@@ -655,10 +656,10 @@ class HubLinkClient:
                 if size > max_bytes:
                     raise ResponseTooLargeError(size)
                 chunks.append(chunk)
-            status = resp.status_code
+            status, answer = resp.status_code, resp.headers
         if status == 401:
             self.confirm(trace_id=trace_id)  # §3.8: pas bij 401 op services/self is het een intrekking
-        return status, b"".join(chunks)
+        return status, b"".join(chunks), answer
 
     def mark_revoked(self, *, trace_id: str, token: str | None = None) -> None:
         def change(st: LinkState) -> LinkState | None:

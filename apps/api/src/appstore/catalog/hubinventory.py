@@ -8,16 +8,22 @@ De appstore heeft **geen** TrueNAS-sleutel. De inventaris komt van de Hub-appcat
 * ``GET /api/v1/apps/{id}`` — detail: catalogus, images met digest-readback (``app.image.query``), poorten, opslag,
   datasets.
 
-Aanroepen met ``Authorization: Bearer <service-token>`` (contract 1.2 §4.4), nooit redirects of proxy, begrensde
-antwoordgrootte, hooguit 3 pogingen bij een storing (§5). Alles wat niet klopt wordt **nooit** als succes behandeld:
+Aanroepen met ``Authorization: Bearer <service-token>`` en de vaste scope ``inventaris.lezen`` (contract 1.3 §4.4),
+nooit redirects of proxy, begrensde antwoordgrootte, hooguit 3 pogingen bij een storing en bij 429/503 nooit eerder dan
+``Retry-After`` (§5). Alles wat niet klopt wordt **nooit** als succes behandeld:
 
-* niet gekoppeld, of de Hub geeft dit niet aan diensten (403) of kent het niet (404) → ``capability_unavailable``;
+* niet gekoppeld, de Hub geeft de scope niet (403 ``scope_ontbreekt``; nooit een intrekking, §3.8), geeft dit niet aan
+  diensten (403) of kent het niet (404) → ``capability_unavailable``;
 * storing, 401, ongeldig antwoord, verouderde of onvolledige inventaris → ``unknown`` (er verandert dan niets).
 
-Alleen een **volledige lijst uit één meting** telt: de Hub pagineert met een offset over zijn laatste meting, dus elke
-pagina moet dezelfde meting (``inventaris``) en hetzelfde ``totaal`` melden, en het aantal gelezen apps moet gelijk zijn
-aan ``totaal``. Anders ``unknown`` (``inventaris_gewijzigd_tijdens_lezen``/``inventaris_onvolledig``): een mengsel van
-twee metingen of een afgekapte lijst zou apps ten onrechte als verdwenen markeren.
+Alleen een **volledige lijst uit één momentopname** telt (§5, paginering over een momentopname): elke pagina noemt
+dezelfde ``snapshot_id`` (of, bij een Hub zonder ``snapshot_id``, dezelfde meting) en hetzelfde ``totaal``, en het
+aantal gelezen apps is gelijk aan ``totaal``. Is de momentopname weg (409 ``snapshot_changed``), dan opnieuw beginnen
+(hooguit twee keer). Anders ``unknown`` (``inventaris_gewijzigd_tijdens_lezen``/``inventaris_onvolledig``): een
+mengsel van twee metingen of een afgekapte lijst zou apps ten onrechte als verdwenen markeren.
+
+Versheid (§6.2): ``max_age`` standaard 900 s; geeft de Hub ``inventaris.max_age_s``, dan geldt de strengste van beide
+(een afnemer is nooit soepeler dan de bron).
 """
 
 from __future__ import annotations
@@ -48,7 +54,9 @@ MAX_LIST_BYTES = 4 * 1024 * 1024
 MAX_DETAIL_BYTES = 1024 * 1024
 ATTEMPTS = 3
 BACKOFF_BASE = 0.5  # s; exponentieel met jitter (contract §5: max 3 pogingen)
-MAX_AGE = timedelta(minutes=15)  # gelijk aan de TTL van de Hub-inventaris en MAX_INVENTORY_AGE van de conflictanalyse
+MAX_AGE = timedelta(minutes=15)  # standaard max_age (§6.2); de Hub mag strenger zijn met inventaris.max_age_s
+MAX_RETRY_AFTER = 30.0  # s: langer wachten doet de import niet in één ronde (eerlijk unknown, volgende ronde opnieuw)
+SNAPSHOT_RESTARTS = 2
 MAX_FUTURE = timedelta(minutes=2)
 
 FetchStatus = Literal["ok", "unknown", "capability_unavailable"]
@@ -56,6 +64,13 @@ FetchStatus = Literal["ok", "unknown", "capability_unavailable"]
 #: Vaste NL-melding per reden (de code is voor machines).
 REASONS_NL: dict[str, str] = {
     "niet_gekoppeld": "De appstore is niet (meer) gekoppeld met de Hub; zonder Hub is de inventaris onbekend.",
+    "scope_inventaris_ontbreekt": (
+        "De Hub geeft deze dienst de leesscope inventaris.lezen niet (403 scope_ontbreekt). Een beheerder legt de "
+        "scopes vast in de Hub; tot dan blijft de inventaris onbekend. Dit is geen intrekking van de koppeling."
+    ),
+    "hub_vraagt_wachten": (
+        "De Hub vraagt langer te wachten (Retry-After); de import probeert het in een volgende ronde opnieuw."
+    ),
     "hub_inventaris_niet_voor_diensten": (
         "De Hub geeft zijn app-inventaris (GET /api/v1/apps) niet aan diensten met een service-token. Deze Hub-versie "
         "moet dat eerst toestaan (alleen lezen); tot dan blijft de inventaris onbekend."
@@ -153,12 +168,14 @@ class HubInventoryState(_Lenient):
     reason_code: str | None = None
     observed_at: datetime | None = None
     verouderd: bool | None = None
+    max_age_s: int | None = Field(default=None, ge=1, le=86400)
 
 
 class HubListPage(_Lenient):
     items: list[HubAppSummary] = Field(max_length=PAGE_LIMIT)
     next_cursor: str | None = Field(default=None, max_length=512)
     totaal: int | None = Field(default=None, ge=0)
+    snapshot_id: str | None = Field(default=None, max_length=128)
     inventaris: HubInventoryState
 
 
@@ -202,10 +219,27 @@ def _aware(value: datetime) -> datetime:
 
 
 def _snapshot(page: HubListPage) -> tuple[Any, ...]:
-    """Kenmerken van de meting waar een pagina uit komt; moeten op elke pagina gelijk zijn."""
+    """Kenmerken van de momentopname waar een pagina uit komt; moeten op elke pagina gelijk zijn."""
     inv = page.inventaris
     observed = _aware(inv.observed_at) if inv.observed_at else None
-    return inv.status, inv.reason_code, observed, inv.verouderd, page.totaal
+    return page.snapshot_id, inv.status, inv.reason_code, observed, inv.verouderd, page.totaal
+
+
+class _SnapshotGoneError(Exception):
+    """409 ``snapshot_changed``: de momentopname bestaat niet meer; opnieuw beginnen (§5)."""
+
+
+def _retry_after(headers: httpx.Headers) -> float | None:
+    raw = headers.get("retry-after", "").strip()
+    return float(raw) if raw.isdigit() else None
+
+
+def _error_code(body: bytes) -> str | None:
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    return str(data.get("code")) if isinstance(data, dict) and isinstance(data.get("code"), str) else None
 
 
 class HubInventoryClient:
@@ -216,28 +250,35 @@ class HubInventoryClient:
 
     def _get(self, path: str, *, trace_id: str, max_bytes: int) -> Any:
         last: _StopError | None = None
+        wait = 0.0
         for attempt in range(ATTEMPTS):
             if attempt:
-                delay = min(4.0, BACKOFF_BASE * 2**attempt)
-                self.sleep(delay + random.uniform(0, BACKOFF_BASE / 2))  # noqa: S311 - jitter, geen crypto
+                delay = min(4.0, BACKOFF_BASE * 2**attempt) + random.uniform(0, BACKOFF_BASE / 2)  # noqa: S311
+                self.sleep(max(delay, wait))  # bij 429/503 nooit eerder dan Retry-After (§5)
             self.calls += 1
             try:
                 res = self.hub.get_bounded(path, trace_id=trace_id, max_bytes=max_bytes)
             except ResponseTooLargeError as exc:
                 raise _StopError("unknown", "hub_antwoord_te_groot", str(exc)) from exc
             except httpx.HTTPError as exc:
-                last = _StopError("unknown", "hub_onbereikbaar", type(exc).__name__)
+                last, wait = _StopError("unknown", "hub_onbereikbaar", type(exc).__name__), 0.0
                 continue
             if res is None:
                 raise _StopError("capability_unavailable", "niet_gekoppeld")
-            status, body = res
+            status, body, headers = res
             if status == 200:
                 try:
                     return json.loads(body)
                 except ValueError as exc:
                     raise _StopError("unknown", "hub_antwoord_ongeldig", "geen JSON") from exc
-            if status in (429,) or status >= 500:
-                last = _StopError("unknown", "hub_onbereikbaar", f"http_{status}")
+            if status in (429, 503):
+                after = _retry_after(headers)
+                if after is not None and after > MAX_RETRY_AFTER:
+                    raise _StopError("unknown", "hub_vraagt_wachten", f"http_{status}; retry_after={int(after)}")
+                last, wait = _StopError("unknown", "hub_onbereikbaar", f"http_{status}"), after or 0.0
+                continue
+            if status >= 500:
+                last, wait = _StopError("unknown", "hub_onbereikbaar", f"http_{status}"), 0.0
                 continue
             if 300 <= status < 400:
                 raise _StopError("unknown", "hub_redirect", f"http_{status}")
@@ -245,10 +286,14 @@ class HubInventoryClient:
                 if not self.hub.store.read().linked:
                     raise _StopError("capability_unavailable", "niet_gekoppeld", "ingetrokken")
                 raise _StopError("unknown", "hub_weigert_token", "http_401")
-            if status == 403:
+            if status == 403:  # §4.4/§3.8: een 403 is nooit een intrekking
+                if _error_code(body) == "scope_ontbreekt":
+                    raise _StopError("capability_unavailable", "scope_inventaris_ontbreekt", "http_403")
                 raise _StopError("capability_unavailable", "hub_inventaris_niet_voor_diensten", "http_403")
             if status == 404:
                 raise _StopError("capability_unavailable", "hub_kent_appcatalogus_niet", "http_404")
+            if status == 409 and _error_code(body) == "snapshot_changed":
+                raise _SnapshotGoneError
             raise _StopError("unknown", "hub_antwoord_onverwacht", f"http_{status}")
         assert last is not None
         raise last
@@ -265,6 +310,14 @@ class HubInventoryClient:
     def _fetch(self, trace_id: str, now: datetime) -> FetchResult:
         if not self.hub.store.read().linked:
             raise _StopError("capability_unavailable", "niet_gekoppeld")
+        for restart in range(SNAPSHOT_RESTARTS + 1):
+            try:
+                return self._fetch_snapshot(trace_id, now)
+            except _SnapshotGoneError:
+                log.info("momentopname van de Hub-inventaris verdween tijdens het lezen; opnieuw (%d)", restart + 1)
+        raise _StopError("unknown", "inventaris_gewijzigd_tijdens_lezen", "409 snapshot_changed")
+
+    def _fetch_snapshot(self, trace_id: str, now: datetime) -> FetchResult:
         summaries: list[HubAppSummary] = []
         cursor: str | None = None
         first: HubListPage | None = None
@@ -328,6 +381,13 @@ class HubInventoryClient:
             raise _StopError("unknown", "inventaris_verouderd", state.reason_code or state.status)
         if observed - now > MAX_FUTURE:
             raise _StopError("unknown", "inventaris_in_toekomst", observed.isoformat())
-        if now - observed > MAX_AGE:
+        if now - observed > max_age(state):
             raise _StopError("unknown", "inventaris_verouderd", observed.isoformat())
         return observed
+
+
+def max_age(state: HubInventoryState) -> timedelta:
+    """§6.2: standaard 900 s; geeft de Hub een eigen ``max_age_s``, dan de strengste (nooit soepeler dan de bron)."""
+    if state.max_age_s is None:
+        return MAX_AGE
+    return min(MAX_AGE, timedelta(seconds=state.max_age_s))

@@ -754,3 +754,76 @@ def test_decision_flow_with_plan_never_executes(
     types = [e["event_type"] for e in hub.inbox]
     assert {"catalog.app.adopted", "catalog.decommission.planned", "catalog.decision.recorded"} <= set(types)
     assert all(len(t.split(".")) == 3 for t in types)
+
+
+# ---------------------------------------------------------------------------------------------- contract 1.3 (ASF-09)
+def test_missing_scope_is_capability_unavailable_and_never_a_revocation(
+    linked: TestClient, hub: FakeHub, worker_ctx: AppContext
+) -> None:
+    """§4.4: zonder ``inventaris.lezen`` → 403 ``scope_ontbreekt`` → eerlijk ``capability_unavailable``; een 403 is
+    nooit een intrekking (§3.8)."""
+    seed(hub)
+    hub.apps_mode = "geen_scope"
+    body = run_import(linked, hub)
+    assert (body["status"], body["reason_code"]) == ("capability_unavailable", "scope_inventaris_ontbreekt")
+    assert "inventaris.lezen" in body["melding_nl"]
+    st = worker_ctx.store.read()
+    assert st.state == "gekoppeld" and st.linked
+
+
+def test_snapshot_gone_restarts_from_the_beginning(linked: TestClient, hub: FakeHub, worker_ctx: AppContext) -> None:
+    """§5: is de momentopname weg (409 ``snapshot_changed``), dan opnieuw beginnen; blijft hij verdwijnen → unknown."""
+    seed(hub)
+    hub.apps_page_size = 3
+    hub.snapshot_drop_after_first_page = 1
+    body = run_import(linked, hub)
+    assert body["status"] == "ok" and body["counts"]["nieuw"] == 8
+    before = {n: (r.row_version, r.present) for n, r in rows(worker_ctx).items()}
+    hub.snapshot_drop_after_first_page = 10  # elke nieuwe poging: na pagina 1 is de momentopname weer weg
+    body = run_import(linked, hub)
+    assert (body["status"], body["reason_code"]) == ("unknown", "inventaris_gewijzigd_tijdens_lezen")
+    assert body["hub_calls"] == 6  # drie keer pagina 1 + 409 op pagina 2 (twee herstarts)
+    assert {n: (r.row_version, r.present) for n, r in rows(worker_ctx).items()} == before
+
+
+def test_snapshot_id_must_be_the_same_on_every_page(linked: TestClient, hub: FakeHub, worker_ctx: AppContext) -> None:
+    seed(hub)
+    hub.apps_page_size = 3
+    calls = {"n": 0}
+
+    def other_snapshot(b: dict[str, Any]) -> dict[str, Any]:
+        calls["n"] += 1
+        return {**b, "snapshot_id": "andere"} if calls["n"] >= 2 else b
+
+    hub.apps_body_patch = other_snapshot
+    body = run_import(linked, hub)
+    assert (body["status"], body["reason_code"]) == ("unknown", "inventaris_gewijzigd_tijdens_lezen")
+
+
+@pytest.mark.parametrize(("max_age_s", "age_min", "ok"), [(60, 2, False), (3600, 20, False), (3600, 10, True)])
+def test_max_age_follows_the_hub_but_is_never_softer(
+    linked: TestClient, hub: FakeHub, max_age_s: int, age_min: int, ok: bool
+) -> None:
+    """§6.2: de Hub mag strenger zijn (max_age_s); de afnemer is nooit soepeler dan 900 s."""
+    seed(hub)
+    hub.inventory_max_age_s = max_age_s
+    hub.inventory_observed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - age_min * 60))
+    body = run_import(linked, hub)
+    assert body["status"] == ("ok" if ok else "unknown"), body
+    if not ok:
+        assert body["reason_code"] == "inventaris_verouderd"
+
+
+def test_429_and_503_follow_retry_after(linked: TestClient, hub: FakeHub, worker_ctx: AppContext) -> None:
+    """§5 (repowerk C06): bij 429/503 nooit eerder dan ``Retry-After``; te lang → eerlijk unknown, één aanroep."""
+    seed(hub)
+    slept: list[float] = []
+    client = hubinventory.HubInventoryClient(worker_ctx.hub, sleep=slept.append)
+    hub.apps_failures, hub.apps_retry_after = 1, "7"
+    result = client.fetch(trace_id="t")
+    assert result.status == "ok" and slept and slept[0] >= 7.0
+    hub.apps_status, hub.apps_retry_after = 429, "120"
+    slept.clear()
+    result = client.fetch(trace_id="t")
+    assert (result.status, result.reason_code, result.calls) == ("unknown", "hub_vraagt_wachten", 1)
+    assert slept == []  # niet in de worker blijven hangen; de volgende ronde probeert het opnieuw

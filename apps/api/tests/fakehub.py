@@ -599,7 +599,9 @@ class FakeHub:
 
     def _inventory(self) -> dict[str, Any]:
         observed = self.inventory_observed_at or self.measure_inventory()
-        base = {"status": "ok", "reason_code": None, "observed_at": observed, "verouderd": False}
+        base: dict[str, Any] = {"status": "ok", "reason_code": None, "observed_at": observed, "verouderd": False}
+        if self.inventory_max_age_s is not None:
+            base["max_age_s"] = self.inventory_max_age_s
         return {**base, **self.inventory_state}
 
     def _apps(self, request: httpx.Request, path: str) -> httpx.Response:
@@ -614,24 +616,40 @@ class FakeHub:
         if self.apps_mode == "alleen_gebruikers":
             # zoals hub.deps.require_user(Role.viewer): een service-principal krijgt 403
             return self._error(403, "forbidden")
+        if self.apps_mode == "geen_scope":
+            # contract 1.3 §4.4: dienst zonder de vaste scope inventaris.lezen
+            return self._error(403, "scope_ontbreekt")
+        retry = {"Retry-After": self.apps_retry_after} if self.apps_retry_after else None
         if self.apps_failures > 0:
             self.apps_failures -= 1
-            return self._error(503, "service_unavailable")
+            return self._error(503, "service_unavailable", retry)
         if self.apps_status is not None:
             if 300 <= self.apps_status < 400:
                 return httpx.Response(self.apps_status, headers={"Location": "http://elders.test/"})
-            return self._error(self.apps_status, "storing")
+            return self._error(self.apps_status, "rate_limited" if self.apps_status == 429 else "storing", retry)
         if path == "/api/v1/apps":
             only_present = request.url.params.get("alleen_aanwezig", "true") == "true"
             items = [a for a in self.catalog_apps if a["aanwezig"] or not only_present]
-            offset = int(request.url.params.get("cursor") or "0")
+            cursor = request.url.params.get("cursor") or ""
+            if cursor:  # cursor = "<snapshot>:<offset>" (paginering over een momentopname, §5)
+                snap, _, off = cursor.partition(":")
+                if self.snapshot_drop_after_first_page > 0:
+                    self.snapshot_drop_after_first_page -= 1
+                    self.snapshot_seq += 1  # nieuwe meting: de oude momentopname bestaat niet meer
+                if snap != f"s{self.snapshot_seq}":
+                    return self._error(409, "snapshot_changed")
+                offset = int(off or "0")
+            else:
+                offset = 0
             limit = min(int(request.url.params.get("limit", "50")), self.apps_page_size)
             page = items[offset : offset + limit]
+            snapshot = f"s{self.snapshot_seq}"
             body: dict[str, Any] = {
                 "items": [{k: a.get(k) for k in SUMMARY_FIELDS} for a in page],
                 "totaal": len(items),
+                "snapshot_id": snapshot,
                 "per_status": {"healthy": 0, "degraded": 0, "down": 0, "unknown": len(items)},
-                "next_cursor": str(offset + limit) if offset + limit < len(items) else None,
+                "next_cursor": f"{snapshot}:{offset + limit}" if offset + limit < len(items) else None,
                 "inventaris": self._inventory(),
                 "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "alleen_lezen": True,
