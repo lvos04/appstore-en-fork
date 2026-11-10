@@ -9,13 +9,14 @@ import json
 import time
 import uuid
 from collections.abc import Iterator
+from typing import Any
 
 import jwt as pyjwt
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from appstore.api import catalog, connector, health, status_page
+from appstore.api import catalog, connector, existing_apps, health, status_page
 from appstore.api.common import AppContext
 from appstore.app import MAX_BODY, create_app
 from appstore.config import Settings
@@ -31,20 +32,35 @@ PUBLIC = {("GET", "/healthz"), ("GET", "/readyz"), ("GET", "/"), ("POST", "/kopp
 
 def _concrete(path: str) -> str:
     out = path
-    for name in ("source_id", "version_id", "job_id", "evidence_id"):
+    for name in ("source_id", "version_id", "job_id", "evidence_id", "app_uuid"):
         out = out.replace("{" + name + "}", str(uuid.uuid4()))
-    return out.replace("{app_id}", "voorbeeld-web")
+    out = out.replace("{app_id}", "voorbeeld-web").replace("{check_id}", "controle-1")
+    assert "{" not in out, f"onbekende padparameter in {path}"
+    return out
 
 
 def _routes(client: TestClient) -> list[tuple[str, str]]:
-    """Alle API-routes van de dienst (dezelfde routers die ``create_app`` insluit)."""
-    out: list[tuple[str, str]] = []
-    for router in (health.router, status_page.router, catalog.router, connector.router):
-        for route in router.routes:
-            if isinstance(route, APIRoute):
-                out.extend((method, route.path) for method in sorted(route.methods))
+    """Alle API-routes van de **echte** app (``create_app``), zodat een nieuwe router vanzelf meetelt (review contract
+    1.3: de router ``existing_apps`` ontbrak eerst in deze lijst). Ook routes buiten het OpenAPI-schema (statuspagina)
+    tellen mee; elk pad uit het schema moet erin staan."""
     assert client.app is not None
-    return out
+    out: set[tuple[str, str]] = set()
+
+    def walk(routes: list[Any]) -> None:
+        for route in routes:
+            if isinstance(route, APIRoute):
+                out.update((method, route.path) for method in route.methods)
+            elif (inner := getattr(route, "original_router", None)) is not None:  # include_router (FastAPI ≥ 0.16x)
+                walk(inner.routes)
+
+    walk(client.app.routes)  # type: ignore[attr-defined]
+    schema = client.app.openapi()  # type: ignore[attr-defined]
+    in_schema = {(method.upper(), path) for path, ops in schema["paths"].items() for method in ops}
+    assert in_schema <= out, sorted(in_schema - out)
+    for router in (health.router, status_page.router, catalog.router, existing_apps.router, connector.router):
+        assert {(m, r.path) for r in router.routes if isinstance(r, APIRoute) for m in r.methods} <= out
+    assert any(path.startswith("/catalog/v1/existing-apps") for _, path in out)
+    return sorted(out)
 
 
 def test_every_non_public_route_requires_auth(client: TestClient, hub: FakeHub) -> None:
