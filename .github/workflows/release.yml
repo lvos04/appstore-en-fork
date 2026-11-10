@@ -55,20 +55,17 @@ jobs:
           python -m pip install --disable-pip-version-check --no-deps -e apps/api
           mkdir -p release
           python - <<'PY'
-          import json, os, datetime, pathlib, yaml
+          import json, os, datetime, pathlib
           version, digest = os.environ["VERSION"], os.environ["DIGEST"]
           pathlib.Path("release/digests.json").write_text(json.dumps({
               "images": [{"repository": "ghcr.io/lvos04/appstore-en-fork", "tag": version, "digest": digest}],
               "commit": os.environ["GITHUB_SHA"],
               "built_at": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
           }, indent=2) + "\n")
-          src = pathlib.Path("deploy/manifest/appstore-en-fork.manifest.yaml").read_text()
-          data = yaml.safe_load(src)
-          assert data["image"]["tag"] == version, "manifest-tag ≠ releaseversie"
-          out = src.replace("  digest: null", f'  digest: "{digest}"', 1)
-          out = out.replace("  source_commit: null", f'  source_commit: "{os.environ["GITHUB_SHA"]}"', 1)
-          pathlib.Path("release/appstore-en-fork.manifest.yaml").write_text(out)
           PY
+          # digest en bron-commit invullen; digest_pending_release is daarna niet meer geaccepteerd (contract 1.3 §9)
+          python tools/release_manifest.py deploy/manifest/appstore-en-fork.manifest.yaml \
+            release/appstore-en-fork.manifest.yaml --version "$VERSION" --digest "$DIGEST" --commit "$GITHUB_SHA"
           jl-manifest validate --strict release/appstore-en-fork.manifest.yaml
       - name: GitHub-release
         env:

@@ -3,7 +3,7 @@ PY ?= .venv/bin/python
 API := apps/api
 IMAGE ?= appstore-en-fork:dev
 
-.PHONY: venv lint typecheck test-unit test-integration test-e2e test test-ui schermafdrukken peil-drift openapi manifest image image-e2e clean
+.PHONY: venv lint typecheck test-unit test-integration test-e2e test test-ui schermafdrukken peil-drift contract-drift openapi manifest image image-e2e clean
 
 venv:
 	python3.12 -m venv .venv && $(PY) -m pip install -q -e "$(API)[dev]"
@@ -39,11 +39,15 @@ schermafdrukken:
 peil-drift:
 	python3 tools/peil_kopie.py vergelijk --online $$( [ -d ../ai-server-manager/design/ontwerptaal ] && echo --bron ../ai-server-manager )
 
+# byte-gelijke kopie van het platformcontract 1.3 tegen de gepinde bron-commit (GitHub en de checkout ernaast)
+contract-drift:
+	python3 tools/contract_kopie.py vergelijk --online $$( [ -d ../ai-server-manager/docs/platform-v2 ] && echo --bron ../ai-server-manager )
+
 openapi:
 	$(PY) -m appstore openapi --out docs/openapi/appstore-en-fork.openapi.json
 
 manifest:
-	$(PY) -m appstore.manifest.cli validate deploy/manifest/appstore-en-fork.manifest.yaml
+	$(PY) -m appstore.manifest.cli validate --strict deploy/manifest/appstore-en-fork.manifest.yaml
 
 image:
 	nice -n 10 docker build -f deploy/allinone/Dockerfile -t $(IMAGE) .
