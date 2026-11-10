@@ -179,7 +179,9 @@ def update_check(
     checks = [dict(c) for c in rec.checks or []]
     check = next((c for c in checks if c["id"] == check_id), None)
     if check is None:
-        raise DecisionError(404, "check_onbekend", f"Check {check_id!r} bestaat niet voor {rec.app_id!r}.")
+        raise DecisionError(
+            404, "not_found", f"Check {check_id!r} bestaat niet voor {rec.app_id!r}.", {"reason": "check_onbekend"}
+        )
     if status == "afgevinkt" and evidence is None:
         raise DecisionError(
             422, "bewijs_vereist", "Afvinken kan alleen met bewijs (omschrijving, eventueel verwijzing)."

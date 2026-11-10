@@ -1,4 +1,7 @@
-"""Idempotency-Key voor mutaties (contract §5): zelfde key + zelfde verzoek → zelfde antwoord, géén tweede uitvoering."""
+"""Idempotency-Key voor mutaties (contract 1.3 §5): zelfde key + zelfde verzoek → zelfde antwoord met
+``Idempotent-Replay: true``, géén tweede uitvoering; zelfde key met een andere body → 422 ``idempotency_key_reused``;
+een gelijktijdig verzoek met dezelfde key dat nog loopt → 409 ``idempotency_in_progress``. De sleutel wordt pas ná de
+authenticatie gecontroleerd (de route-dependency meldt eerst aan, §4.7)."""
 
 from __future__ import annotations
 
@@ -17,6 +20,8 @@ from .auth import Principal
 from .errors import ApiError
 from .manifest.canonical import canonical_json
 from .models import IdempotencyRecord
+
+REPLAY = "Idempotent-Replay"  # contract 1.3 §5
 
 
 def idempotency_key(request: Request) -> uuid.UUID:
@@ -46,12 +51,8 @@ def run_idempotent(
     )
     if existing is not None:
         if existing.request_hash != req_hash:
-            raise ApiError(
-                409, "idempotency_key_conflict", "Deze Idempotency-Key is al gebruikt voor een ander verzoek."
-            )
-        return JSONResponse(
-            existing.response_body, status_code=existing.status_code, headers={"Idempotent-Replayed": "true"}
-        )
+            raise ApiError(422, "idempotency_key_reused", "Deze Idempotency-Key is al gebruikt voor een ander verzoek.")
+        return JSONResponse(existing.response_body, status_code=existing.status_code, headers={REPLAY: "true"})
     status, response, headers = action()
     db.add(IdempotencyRecord(scope=scope, key=key, request_hash=req_hash, status_code=status, response_body=response))
     try:
@@ -61,9 +62,11 @@ def run_idempotent(
         winner = db.scalar(
             select(IdempotencyRecord).where(IdempotencyRecord.scope == scope, IdempotencyRecord.key == key)
         )
-        if winner is None or winner.request_hash != req_hash:
-            raise ApiError(409, "idempotency_key_conflict", "Deze Idempotency-Key is al gebruikt.") from None
-        return JSONResponse(
-            winner.response_body, status_code=winner.status_code, headers={"Idempotent-Replayed": "true"}
-        )
+        if winner is None:
+            raise ApiError(409, "idempotency_in_progress", "Een verzoek met deze Idempotency-Key loopt al.") from None
+        if winner.request_hash != req_hash:
+            raise ApiError(
+                422, "idempotency_key_reused", "Deze Idempotency-Key is al gebruikt voor een ander verzoek."
+            ) from None
+        return JSONResponse(winner.response_body, status_code=winner.status_code, headers={REPLAY: "true"})
     return JSONResponse(response, status_code=status, headers=headers)

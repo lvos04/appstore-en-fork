@@ -113,9 +113,10 @@ def test_manipulated_cursors_give_400_not_500(client: TestClient, hub: FakeHub, 
         f"/catalog/v1/entries?cursor={cursor}",
     ):
         resp = client.get(url, headers=viewer)
-        assert resp.status_code in (200, 400), f"{url}: {resp.status_code} {resp.text}"
-        if resp.status_code == 400:
-            assert resp.json()["code"] == "cursor_invalid"
+        assert resp.status_code in (200, 422), f"{url}: {resp.status_code} {resp.text}"
+        if resp.status_code == 422:  # contract 1.3 §5: één code per situatie (ongeldige invoer)
+            assert resp.json()["code"] == "validation_error"
+            assert resp.json()["details"]["reason"] == "cursor_invalid" and resp.json()["details"]["fouten"]
 
 
 def test_body_limit_without_content_length(client: TestClient, hub: FakeHub) -> None:

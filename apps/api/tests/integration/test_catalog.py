@@ -52,7 +52,9 @@ def test_bundled_sync_entries_and_rejections(linked: TestClient, hub: FakeHub) -
     assert len(page["items"]) == 1 and page["next_cursor"]
     page2 = linked.get(f"/catalog/v1/entries?limit=1&cursor={page['next_cursor']}", headers=hub.auth()).json()
     assert page2["items"][0]["app_id"] == "voorbeeld-catalogus"
-    assert linked.get("/catalog/v1/entries?limit=500", headers=hub.auth()).json()["code"] == "limit_invalid"
+    te_veel = linked.get("/catalog/v1/entries?limit=500", headers=hub.auth())
+    assert te_veel.status_code == 422 and te_veel.json()["code"] == "validation_error"
+    assert te_veel.json()["details"]["reason"] == "limit_invalid"
     assert linked.get("/catalog/v1/entries?q=web", headers=hub.auth()).json()["items"][0]["app_id"] == "voorbeeld-web"
     assert (
         linked.get("/catalog/v1/entries?category=photos", headers=hub.auth()).json()["items"][0]["app_id"]
@@ -102,7 +104,7 @@ def test_validate_endpoint_and_evidence(linked: TestClient, hub: FakeHub) -> Non
     ev = linked.get(f"/connector/v1/evidence/{body['evidence_id']}", headers=hub.auth()).json()
     assert ev["kind"] == "manifest_validation" and ev["summary"]["valid"] is False
     bad = linked.post("/catalog/v1/validate", json={}, headers=hub.auth())
-    assert bad.status_code == 422 and bad.json()["code"] == "validation_failed"
+    assert bad.status_code == 422 and bad.json()["code"] == "validation_error" and bad.json()["details"]["fouten"]
     data = yaml.safe_load((FIXTURES / "manifests" / "valid-catalog.manifest.yaml").read_text())
     ok = linked.post("/catalog/v1/validate", json={"manifest": data}, headers=hub.auth())
     assert ok.json()["valid"] is True
@@ -221,9 +223,9 @@ def test_sources_crud_idempotency_and_etag(linked: TestClient, hub: FakeHub) -> 
     first = linked.post("/catalog/v1/sources", json=body, headers={**hub.auth(), **key})
     assert first.status_code == 201, first.text
     again = linked.post("/catalog/v1/sources", json=body, headers={**hub.auth(), **key})
-    assert again.status_code == 201 and again.json() == first.json() and again.headers["idempotent-replayed"] == "true"
+    assert again.status_code == 201 and again.json() == first.json() and again.headers["idempotent-replay"] == "true"
     conflict = linked.post("/catalog/v1/sources", json={**body, "name": "ander"}, headers={**hub.auth(), **key})
-    assert conflict.status_code == 409 and conflict.json()["code"] == "idempotency_key_conflict"
+    assert conflict.status_code == 422 and conflict.json()["code"] == "idempotency_key_reused"
     missing = linked.post("/catalog/v1/sources", json=body, headers=hub.auth())
     assert missing.status_code == 400 and missing.json()["code"] == "idempotency_key_required"
     dup = linked.post("/catalog/v1/sources", json=body, headers={**hub.auth(), **idem()})

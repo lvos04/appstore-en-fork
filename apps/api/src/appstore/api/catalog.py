@@ -22,7 +22,7 @@ from ..auth import Principal, require, require_user
 from ..catalog.importer import CatalogCandidate, classify_inventory
 from ..catalog.service import requirements, trusted_key_id, verify_stored_provenance
 from ..catalog.sources import SourceError, check_remote_url
-from ..errors import ApiError
+from ..errors import ApiError, validation_error
 from ..events import audit, emit, record_evidence
 from ..idempotency import run_idempotent
 from ..manifest.conflicts import Inventory, analyse
@@ -32,7 +32,7 @@ from ..manifest.translate import Target, translate
 from ..manifest.validator import schema, validate_data, validate_text
 from ..models import CatalogEntry, CatalogSource, ManifestVersion, SyncJob
 from ..timeutil import iso, utcnow
-from .common import check_limit, ctx, decode_cursor, encode_cursor, etag, get_db, require_if_match, tid
+from .common import check_limit, ctx, cursor_invalid, decode_cursor, encode_cursor, etag, get_db, require_if_match, tid
 
 router = APIRouter(prefix="/catalog/v1", tags=["catalogus"])
 DB = Annotated[Session, Depends(get_db)]
@@ -416,7 +416,7 @@ def list_versions(app_id: str, db: DB, _: Viewer, cursor: str | None = None, lim
                 raise TypeError("cursor heeft niet de vorm [tijd, id]")
             at, vid = datetime.fromisoformat(str(after[0])), uuid.UUID(str(after[1]))
         except (TypeError, ValueError) as exc:
-            raise ApiError(400, "cursor_invalid", "De cursor is ongeldig; begin opnieuw zonder cursor.") from exc
+            raise cursor_invalid() from exc
         stmt = stmt.where(
             or_(ManifestVersion.created_at < at, and_(ManifestVersion.created_at == at, ManifestVersion.id < vid))
         )
@@ -455,7 +455,10 @@ def get_schema(_: Viewer) -> dict[str, Any]:
 def validate(body: ValidateRequest, request: Request, db: DB, principal: Viewer) -> dict[str, Any]:
     request.app.state.heavy_limiter.check(principal.label())
     if (body.manifest_yaml is None) == (body.manifest is None):
-        raise ApiError(422, "validation_failed", "Geef precies één van 'manifest_yaml' of 'manifest'.")
+        raise validation_error(
+            "Geef precies één van 'manifest_yaml' of 'manifest'.",
+            [{"veld": "body", "fout": "precies één van manifest_yaml of manifest", "type": "one_of"}],
+        )
     if body.manifest_yaml is not None:
         report, _, _ = validate_text(body.manifest_yaml)
     else:
@@ -487,7 +490,10 @@ def preview(body: PreviewRequest, request: Request, db: DB, principal: Operator)
     request.app.state.heavy_limiter.check(principal.label())
     chosen = [x for x in (body.app_id, body.version_id, body.manifest_yaml) if x is not None]
     if len(chosen) != 1:
-        raise ApiError(422, "validation_failed", "Geef precies één van 'app_id', 'version_id' of 'manifest_yaml'.")
+        raise validation_error(
+            "Geef precies één van 'app_id', 'version_id' of 'manifest_yaml'.",
+            [{"veld": "body", "fout": "precies één van app_id, version_id of manifest_yaml", "type": "one_of"}],
+        )
     version: ManifestVersion | None = None
     if body.app_id is not None:
         entry = _entry(db, body.app_id)

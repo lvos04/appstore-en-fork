@@ -1,4 +1,4 @@
-"""Inkomende authenticatie (platformcontract 1.2 §4): alleen Hub-JWT's, gecontroleerd tegen de **gepinde** sleutels.
+"""Inkomende authenticatie (platformcontract 1.3 §4): alleen Hub-JWT's, gecontroleerd tegen de **gepinde** sleutels.
 
 * Gebruikers: JWT met ``token_use: "user"`` (§4.2). De Hub als dienst: dienst-JWT met ``token_use: "hub_service"``,
   ``sub: "hub"``, ``roles: ["service"]`` en de eigen ``service_id`` (§4.3) → principal ``service:hub``.
@@ -8,8 +8,13 @@
 * ``jti`` verplicht; mutaties (POST/PUT/PATCH/DELETE) met een al gebruikte ``jti`` → 401 ``token_replayed``, behalve een
   exacte herhaling (zelfde ``jti``, methode, pad en ``Idempotency-Key``), die de idempotency-laag beantwoordt.
   Replaycontrole niet mogelijk → 503 ``replay_check_unavailable`` (fail-closed, §4.6).
-* Vaste ``reason``-waarden en controlevolgorde: ``state`` → tokensoort → handtekening/``kid`` → claims →
-  ``token_use`` → ``jti`` (§4.7). Nooit "open access" (EX16).
+* ``aud`` is precies één string, gelijk aan de eigen ``app_id``; een lijst (ook met de eigen ``app_id``) →
+  ``invalid_token`` (§4.2). Geen ``Authorization``, een ander schema of een lege waarde → ``invalid_token``; een JWS
+  zonder ``kid`` → ``unknown_key``; een foute handtekening met een gepinde ``kid`` → ``invalid_token`` (§4.7).
+* Elke POST/PUT/PATCH/DELETE verbruikt de ``jti``, ook zonder ``Idempotency-Key`` (§4.6).
+* Vaste ``reason``-waarden en controlevolgorde: 1 MiB-laag → ``state`` → tokensoort → handtekening/``kid`` → claims →
+  ``token_use`` → ``jti`` → schemavalidatie van de body; rol (403) en ``Idempotency-Key`` pas daarna (§4.7, RV9). Nooit
+  "open access" (EX16).
 """
 
 from __future__ import annotations
@@ -164,6 +169,8 @@ class Authenticator:
             raise unauthorized("token_expired") from exc
         except jwt.PyJWTError as exc:
             raise unauthorized("invalid_token") from exc
+        if not isinstance(claims.get("aud"), str) or claims["aud"] != APP_ID:
+            raise unauthorized("invalid_token")  # §4.2: aud als lijst (ook met de eigen app_id) → invalid_token
         try:
             if int(claims["exp"]) - int(claims["iat"]) > MAX_JWT_LIFETIME:
                 raise unauthorized("invalid_token")
@@ -268,6 +275,7 @@ def require(min_role: str) -> Callable[[Request], Principal]:
             )
         return principal
 
+    dependency._appstore_auth = True  # type: ignore[attr-defined]  # errors._auth_before_body
     return dependency
 
 
@@ -281,6 +289,7 @@ def require_user(min_role: str) -> Callable[[Request], Principal]:
             raise ApiError(403, "forbidden", "Deze actie vereist een gebruiker met een Hub-JWT, geen dienst-JWT.")
         return principal
 
+    dependency._appstore_auth = True  # type: ignore[attr-defined]
     return dependency
 
 
@@ -290,3 +299,6 @@ def require_service_or_admin(request: Request) -> Principal:
     if principal.kind == "service" or principal.rank >= ROLE_RANK["admin"]:
         return principal
     raise ApiError(403, "forbidden", "Ontkoppelen mag alleen de Hub (dienst-JWT) of een beheerder.")
+
+
+require_service_or_admin._appstore_auth = True  # type: ignore[attr-defined]

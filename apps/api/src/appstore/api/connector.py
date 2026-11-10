@@ -30,7 +30,7 @@ from ..models import (
 )
 from ..timeutil import iso, utcnow
 from .catalog import entry_out, source_out, version_summary
-from .common import check_limit, ctx, decode_cursor, encode_cursor, get_db, tid
+from .common import check_limit, ctx, cursor_invalid, decode_cursor, encode_cursor, get_db, tid
 from .existing_apps import decision_summary, existing_out
 from .health import measure
 
@@ -185,7 +185,7 @@ def items(
             try:
                 after_id = uuid.UUID(str(after))
             except ValueError as exc:
-                raise ApiError(400, "cursor_invalid", "De cursor is ongeldig; begin opnieuw zonder cursor.") from exc
+                raise cursor_invalid() from exc
             stmt2 = stmt2.where(ManifestVersion.id > after_id)
         rows2 = db.scalars(stmt2.limit(limit + 1)).all()
         page2 = rows2[:limit]
@@ -249,7 +249,7 @@ def events(db: DB, _: Reader, cursor: str | None = None, limit: int = 100) -> di
     try:
         after = int(cursor) if cursor else 0
     except ValueError as exc:
-        raise ApiError(400, "cursor_invalid", "De cursor moet een volgnummer zijn.") from exc
+        raise cursor_invalid() from exc
     rows = db.scalars(select(OutboxEvent).where(OutboxEvent.seq > after).order_by(OutboxEvent.seq).limit(limit)).all()
     return {
         "items": [envelope(e) for e in rows],

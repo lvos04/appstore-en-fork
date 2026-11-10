@@ -90,7 +90,7 @@ def test_import_preview_requires_operator_and_inventory(linked: TestClient, hub:
     assert linked.post(URL, json=body).status_code == 401
     assert linked.post(URL, json=body, headers=hub.auth(roles=["viewer"])).status_code == 403
     missing = linked.post(URL, json={}, headers=hub.auth(roles=["operator"]))
-    assert missing.status_code == 422 and missing.json()["code"] == "validation_failed"
+    assert missing.status_code == 422 and missing.json()["code"] == "validation_error"
     stale = {"inventory": {**_inventory([{"name": "x"}]), "observed_at": "2020-01-01T00:00:00Z"}}
     out = linked.post(URL, json=stale, headers=hub.auth(roles=["operator"])).json()
     assert out["status"] == "unknown" and out["apps"][0]["status"] == "unknown"

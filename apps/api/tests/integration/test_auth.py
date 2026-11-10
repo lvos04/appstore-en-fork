@@ -1,4 +1,5 @@
-"""Inkomende authenticatie volgens contract 1.2 §4: gepinde sleutels, token_use, jti + replaycache, vaste reasons."""
+"""Inkomende authenticatie volgens contract 1.3 §4: gepinde sleutels, token_use, jti + replaycache, vaste reasons,
+``aud`` als precies één string en authenticatie vóór rol, ``Idempotency-Key`` en bodyvalidatie (RV9)."""
 
 from __future__ import annotations
 
@@ -41,6 +42,9 @@ def test_valid_user_jwt_and_roles(client: TestClient, hub: FakeHub) -> None:
     ("kwargs", "reason"),
     [
         ({"aud": "andere-dienst"}, "invalid_token"),
+        ({"aud": ["appstore-en-fork"]}, "invalid_token"),  # 1.3 §4.2: een lijst, ook met de eigen app_id
+        ({"aud": ["appstore-en-fork", "home-control-hub"]}, "invalid_token"),
+        ({"no_kid": True}, "unknown_key"),  # 1.3 §4.7: JWS-header zonder kid
         ({"iss": "niet-de-hub"}, "invalid_token"),
         ({"ttl": 600}, "invalid_token"),  # exp − iat > 120 s
         ({"iat": int(time.time()) - 400, "ttl": 60}, "token_expired"),
@@ -85,8 +89,47 @@ def test_service_token_is_never_accepted(client: TestClient, hub: FakeHub) -> No
 
 def test_garbage_tokens(client: TestClient, hub: FakeHub) -> None:
     pair(client, hub)
-    for value in ("Bearer", "Bearer a.b.c", "Basic abc", "Bearer " + "x" * 9000, ""):
+    for value in ("Bearer", "Bearer ", "Bearer a.b.c", "Basic abc", "Bearer " + "x" * 9000, ""):
         assert _reason(client.get(URL, headers={"Authorization": value})) == "invalid_token"
+    assert _reason(client.get(URL)) == "invalid_token"  # 1.3 §4.7: geen Authorization-header
+    # een gepinde kid met een foute handtekening: invalid_token (geen unknown_key)
+    good = hub.jwt()
+    head, body, sig = good.split(".")
+    forged = ".".join((head, body, sig[:-4] + ("AAAA" if not sig.endswith("AAAA") else "BBBB")))
+    assert _reason(client.get(URL, headers={"Authorization": f"Bearer {forged}"})) == "invalid_token"
+
+
+@pytest.mark.parametrize("auth", [None, "Bearer onzin", "Basic abc"])
+def test_authentication_comes_before_body_role_and_idempotency_key(
+    client: TestClient, hub: FakeHub, auth: str | None
+) -> None:
+    """1.3 §4.7 (RV9): zonder geldige aanmelding altijd 401 — ook bij onleesbare JSON, een ongeldige body of een
+    ontbrekende Idempotency-Key; pas daarna rol (403), Idempotency-Key (400) en schemavalidatie (422)."""
+    pair(client, hub)
+    headers = {"Content-Type": "application/json", **({"Authorization": auth} if auth else {})}
+    for content in (b"{kapot", b'{"name": 3}', b"[]"):
+        assert _reason(client.post(URL, content=content, headers=headers)) == "invalid_token"
+    assert _reason(client.post(URL, content=b"{kapot", headers={**headers, **idem()})) == "invalid_token"
+    # aangemeld: nu pas de body (422 validation_error met details.fouten), rol en Idempotency-Key
+    ok = {"Authorization": f"Bearer {hub.jwt(roles=['admin'])}", "Content-Type": "application/json"}
+    bad = client.post(URL, content=b"{kapot", headers={**ok, **idem()})
+    assert bad.status_code == 422 and bad.json()["code"] == "validation_error" and bad.json()["details"]["fouten"]
+    viewer = {"Authorization": f"Bearer {hub.jwt(roles=['viewer'])}", "Content-Type": "application/json"}
+    assert client.post(URL, content=b"{kapot", headers=viewer).status_code == 403
+    admin = {"Authorization": f"Bearer {hub.jwt(roles=['admin'])}"}
+    body = {"name": "x-bron", "kind": "http", "url": "https://bron.test/catalogus/index.json"}
+    missing = client.post(URL, json=body, headers=admin)
+    assert missing.status_code == 400 and missing.json()["code"] == "idempotency_key_required"
+
+
+def test_every_mutation_consumes_the_jti_even_without_idempotency_key(client: TestClient, hub: FakeHub) -> None:
+    """1.3 §4.6: elke POST verbruikt de jti, ook zonder Idempotency-Key en ook als de route niets wijzigt."""
+    pair(client, hub)
+    auth = {"Authorization": f"Bearer {hub.jwt(roles=['admin'])}"}
+    first = client.post("/catalog/v1/validate", headers=auth, json={"manifest_yaml": "a: 1"})
+    assert first.status_code == 200, first.text
+    again = client.post("/catalog/v1/validate", headers=auth, json={"manifest_yaml": "a: 1"})
+    assert _reason(again) == "token_replayed"
 
 
 def test_hub_service_jwt(client: TestClient, hub: FakeHub) -> None:
@@ -119,7 +162,7 @@ def test_mutation_replay_is_refused_except_exact_repeat(client: TestClient, hub:
     first = client.post(URL, headers={**auth, **key}, json=body)
     assert first.status_code == 201, first.text
     again = client.post(URL, headers={**auth, **key}, json=body)
-    assert again.status_code == 201 and again.headers.get("Idempotent-Replayed") == "true"
+    assert again.status_code == 201 and again.headers.get("Idempotent-Replay") == "true"
     assert again.json() == first.json()
     other = client.post(URL, headers={**auth, **idem()}, json={**body, "name": "andere-bron"})
     assert _reason(other) == "token_replayed"

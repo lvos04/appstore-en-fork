@@ -14,7 +14,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import Settings
-from ..errors import ApiError, trace_id
+from ..errors import ApiError, trace_id, validation_error
 from ..hublink import HubLinkClient
 from ..hublink_store import HubLinkStore
 from ..secrets_store import Secrets
@@ -61,12 +61,25 @@ def decode_cursor(cursor: str | None) -> Any:
     try:
         return json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
     except (binascii.Error, ValueError) as exc:
-        raise ApiError(400, "cursor_invalid", "De cursor is ongeldig; begin opnieuw zonder cursor.") from exc
+        raise cursor_invalid() from exc
+
+
+def cursor_invalid() -> ApiError:
+    """§5: een ongeldige cursor is ongeldige invoer (422 ``validation_error``, ``details.reason`` ``cursor_invalid``)."""
+    return validation_error(
+        "De cursor is ongeldig; begin opnieuw zonder cursor.",
+        [{"veld": "query.cursor", "fout": "ongeldige cursor", "type": "cursor_invalid"}],
+        reason="cursor_invalid",
+    )
 
 
 def check_limit(limit: int) -> int:
     if not 1 <= limit <= MAX_LIMIT:
-        raise ApiError(400, "limit_invalid", f"limit moet tussen 1 en {MAX_LIMIT} liggen.")
+        raise validation_error(
+            f"limit moet tussen 1 en {MAX_LIMIT} liggen.",
+            [{"veld": "query.limit", "fout": f"1 ≤ limit ≤ {MAX_LIMIT}", "type": "limit_invalid"}],
+            reason="limit_invalid",
+        )
     return limit
 
 
