@@ -204,13 +204,15 @@ def openapi_document(app: FastAPI | None = None) -> dict[str, Any]:
         description=(
             "Catalogus-API (`/catalog/v1`; bestaande apps `existing-apps` en beslisregister `decisions`: alleen een "
             "register, nooit een actie op de NAS), connectorcontract (`/connector/v1`, incl. `hub-link`), gezondheid. "
-            "Fouten: "
-            "`{code, message, details, trace_id}`. Mutaties vereisen `Idempotency-Key`. Auth (platformcontract 1.2 §4): "
-            "alleen Hub-JWT's (EdDSA, gepinde sleutels uit de koppeling) als `Authorization: Bearer` — gebruikers-JWT "
-            "(`token_use: user`) of dienst-JWT van de Hub (`token_use: hub_service`); `jti` verplicht, hergebruik bij "
-            "mutaties geweigerd; een service-token wordt niet geaccepteerd. 401 `details.reason` ∈ not_linked, "
-            "revoked, service_token_not_accepted, unknown_key, token_expired, invalid_token, token_use_invalid, "
-            "jti_missing, token_replayed."
+            "Fouten (foutcatalogus, platformcontract 1.3 §5): `{code, message, details, trace_id}`; 422 "
+            "`validation_error` met `details.fouten[]`, 422 `idempotency_key_reused`, 409 `idempotency_in_progress`, "
+            "herhaling met `Idempotent-Replay: true`. Mutaties vereisen `Idempotency-Key` (uitzonderingen: §5). Auth "
+            "(§4): alleen Hub-JWT's (EdDSA, gepinde sleutels uit de koppeling) als `Authorization: Bearer` — "
+            "gebruikers-JWT (`token_use: user`) of dienst-JWT van de Hub (`token_use: hub_service`); `aud` is precies "
+            "één string; `jti` verplicht en elke POST/PUT/PATCH/DELETE verbruikt hem; een service-token wordt niet "
+            "geaccepteerd; aanmelden gaat vóór rol, `Idempotency-Key` en bodyvalidatie. 401 `details.reason` ∈ "
+            "not_linked, revoked, service_token_not_accepted, unknown_key, token_expired, invalid_token, "
+            "token_use_invalid, jti_missing, token_replayed."
         ),
         routes=probe.routes,
     )

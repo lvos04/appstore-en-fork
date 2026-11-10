@@ -1,7 +1,10 @@
-# Manifest (manifeststandaard v1, platformcontract 1.2 §9) van appstore-en-fork zelf.
+# Manifest (manifeststandaard v1, platformcontract 1.3 §9) van appstore-en-fork zelf.
 # Installatie uitsluitend als standaard TrueNAS Custom App (één image + formulierwaarden); nooit compose/YAML.
-# De digest van de eigen GHCR-image vult de release-CI in (release/digests.json); tot dan is installeren niet gereed.
+# De digest van de eigen GHCR-image vult de release-CI in (release/digests.json); tot dan is installeren niet gereed
+# (digest_pending_release, met reden geaccepteerd tot de eerste release).
 # Poorten staan alleen in network.ports (de vertaling bouwt daar de formulierpoorten uit); geen gedeeld Docker-netwerk.
+# Geen HUB_* in parameters of env: HUB_URL, HUB_ENROLLMENT_TOKEN en HUB_KEY_FINGERPRINT voegt de vertaling zelf toe
+# als de Hub koppelt (contract 1.3 §3.2).
 manifest_version: "1"
 app_id: appstore-en-fork
 name: Appstore en fork
@@ -91,6 +94,8 @@ privileges:
 privilege_reason: null
 healthcheck:
   type: builtin
+  # monitorplan (contract 1.3 §9): de beheerder neemt het over in Uptime Kuma en bevestigt het per monitor
+  monitor: {pad: /readyz, verwachte_status: 200, timeout_s: 10, interval_s: 60}
 backup:
   db_export:
     method: pg_dump
@@ -124,4 +129,9 @@ provenance:
   source_repo: https://github.com/lvos04/appstore-en-fork
   source_commit: null
   upstream_repo: null
-  license: null
+  license: GPL-3.0
+accepted_findings:
+  - code: digest_pending_release
+    reden_nl: >-
+      Eigen image vóór de eerste release: de release-CI vult de digest in (release/digests.json). Tot dan blokkeert
+      de vertaling de installatie met digest_not_pinned.
