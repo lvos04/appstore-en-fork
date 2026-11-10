@@ -1,7 +1,10 @@
 """E2E van de alles-in-één image (Docker; zoals TrueNAS een standaard Custom App start: standaardcapabilities,
 **zonder** ``--security-opt no-new-privileges`` en **zonder** ``--cap-drop``, één hostmap op /appdata, één poort).
-Contract 1.2 §2.2 (A6): voor **elk** proces in de container, ook PID 1, ``Uid 568``, ``CapEff 0`` en ``NoNewPrivs 1``;
-alleen het eigen ``docker exec``-proces van de controle telt niet mee. Alleen als ``APPSTORE_E2E_IMAGE`` gezet is, bv.
+Contract 1.3 §2.2 (A08, C1.3-ASF-01): voor **elk** proces in de procesboom van PID 1 (inclusief PID 1) ``Uid 568``,
+``CapEff``, ``CapPrm`` en ``CapAmb`` 0, ``NoNewPrivs 1`` en — bij een start als root — ``CapBnd`` 0; het eigen
+``docker exec``-proces van de controle en een lopende healthcheck (buiten de boom, PPid 0) tellen niet mee. De
+**healthcheck apart**: hetzelfde commando in exec-vorm met de controlevlag ``--controle`` meldt na de wissel ``Uid 568``,
+``CapEff 0``, ``CapPrm 0`` en ``NoNewPrivs 1``. Alleen als ``APPSTORE_E2E_IMAGE`` gezet is, bv.
 
     APPSTORE_E2E_IMAGE=appstore-en-fork:dev python -m pytest tests/e2e/test_allinone_image.py
 
@@ -34,8 +37,9 @@ PROC_SCRIPT = (
     "    st=dict(l.split(':',1) for l in open(f'/proc/{p}/status').read().splitlines() if ':' in l)\n"
     "    cmd=open(f'/proc/{p}/cmdline','rb').read().replace(b'\\0',b' ').decode()\n"
     "  except Exception: continue\n"
-    "  out.append({'pid':p,'uid':int(st['Uid'].split()[0]),'capeff':st['CapEff'].strip(),'capbnd':st['CapBnd'].strip(),"
-    "'nnp':st.get('NoNewPrivs','?').strip(),'cmd':cmd})\n"
+    "  out.append({'pid':p,'ppid':int(st['PPid'].strip()),'uid':int(st['Uid'].split()[0]),"
+    "'capeff':st['CapEff'].strip(),'capprm':st['CapPrm'].strip(),'capamb':st['CapAmb'].strip(),"
+    "'capbnd':st['CapBnd'].strip(),'nnp':st.get('NoNewPrivs','?').strip(),'cmd':cmd})\n"
     "print(json.dumps(out))\n"
 )
 
@@ -89,36 +93,63 @@ def container(data_dir: Path) -> Iterator[Container]:
         c.remove()
 
 
+ZERO = "0000000000000000"
+HEALTHCHECK = ["python", "-I", "-S", "/usr/local/lib/appstore/healthcheck.py"]
+
+
 def processes(c: Container) -> list[dict[str, object]]:
-    """Alle processen in de container behalve het eigen ``docker exec``-proces van deze controle."""
+    """De procesboom van PID 1 (inclusief PID 1); niet het eigen ``docker exec``-proces en geen healthcheck."""
     out = json.loads(c.exec("python", "-c", PROC_SCRIPT))
     me = out[0]["self"]
-    return [p for p in out[1:] if p["pid"] != me]
+    procs = {int(p["pid"]): p for p in out[1:] if p["pid"] != me}
+    tree: set[int] = {1}
+    changed = True
+    while changed:
+        changed = False
+        for pid, p in procs.items():
+            if pid not in tree and int(p["ppid"]) in tree:
+                tree.add(pid)
+                changed = True
+    return [procs[pid] for pid in sorted(tree) if pid in procs]
+
+
+def healthcheck_control(c: Container) -> dict[str, object]:
+    """De healthcheck apart (§2.2): zoals Docker hem start (als de gebruiker van de image), met de controlevlag."""
+    result: dict[str, object] = json.loads(c.exec(*HEALTHCHECK, "--controle"))
+    return result
 
 
 def test_first_start_healthy_status_page_and_hardening(container: Container) -> None:
     assert httpx.get(f"{container.url}/readyz", timeout=5).json()["status"] == "ready"
     page = httpx.get(f"{container.url}/", timeout=5).text
     assert "Niet gekoppeld" in page and 'action="/koppelen"' in page and 'name="hub_vingerafdruk"' in page
-    assert page.startswith("<!doctype html>") and "Peil statuspagina-sjabloon 1.1.0" in page and "<script" not in page
+    assert page.startswith("<!doctype html>") and "Peil statuspagina-sjabloon 1.1.1" in page and "<script" not in page
     resp = httpx.get(f"{container.url}/catalog/v1/entries", timeout=5)
     assert resp.status_code == 401 and resp.json()["details"]["reason"] == "not_linked"
     # eigen manifest ingebouwd
-    wait_for(lambda: "1 app in de catalogus;" in httpx.get(f"{container.url}/", timeout=5).text, 60)
+    wait_for(lambda: "1 app</span>" in httpx.get(f"{container.url}/", timeout=5).text, 60)
     procs = processes(container)
     assert len(procs) >= 4, procs  # bewaker (PID 1), PostgreSQL, API, worker
     pid1 = next(p for p in procs if p["pid"] == 1)
     assert "supervisor.py" in str(pid1["cmd"]) and not any("dumb-init" in str(p["cmd"]) for p in procs), procs
-    for p in procs:  # ook PID 1: geen enkel proces meer als root (contract 1.2 §2.2, R11)
+    for p in procs:  # ook PID 1: geen enkel proces meer als root (contract 1.3 §2.2, R11)
         assert p["uid"] == 568, p
-        assert p["capeff"] == "0000000000000000" and p["capbnd"] == "0000000000000000", p
+        assert p["capeff"] == p["capprm"] == p["capamb"] == ZERO, p
+        assert p["capbnd"] == ZERO, p  # start als root: bounding set leeg (K3)
         assert p["nnp"] == "1", p
+    # de healthcheck apart: exec-vorm (geen sh -c) en na de wissel 568, zonder capabilities, met no_new_privs
+    test = json.loads(docker("inspect", "-f", "{{json .Config.Healthcheck.Test}}", container.name).stdout)
+    assert test == ["CMD", *HEALTHCHECK], test
+    hc = healthcheck_control(container)
+    assert hc["wissel"] is True and hc["Uid"] == "568" and hc["NoNewPrivs"] == "1", hc
+    assert hc["CapEff"] == hc["CapPrm"] == hc["CapAmb"] == hc["CapBnd"] == ZERO, hc
+    assert docker("exec", container.name, *HEALTHCHECK, check=False).returncode == 0  # gezond na de wissel
     secrets = container.exec("sh", "-c", "stat -c '%a %u %n' /appdata/secrets/*").split("\n")
     assert all(line.startswith("600 568 ") for line in secrets if line), secrets
     assert any(line.endswith("/hub-link.json") for line in secrets), secrets  # koppelstatus in een bestand (§3.5)
     assert container.exec("stat", "-c", "%a %u", "/appdata/secrets").strip() == "700 568"
     link = json.loads(container.exec("cat", "/appdata/secrets/hub-link.json", user="568"))
-    assert link["state"] == "nooit_gekoppeld" and link["schema_version"] == "1.2"
+    assert link["state"] == "nooit_gekoppeld" and link["schema_version"] == "1.3"
     listening = container.exec("sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null; true")
     ports = {
         int(line.split()[1].split(":")[1], 16)
@@ -188,7 +219,7 @@ def _write_marker(c: Container) -> str:
 
 def test_restart_and_kill_keep_database_rows(container: Container) -> None:
     """Herstart en harde kill: zelfde cluster, zelfde manifestversies en de eigen markering blijft (geen dataverlies)."""
-    wait_for(lambda: "1 app in de catalogus;" in httpx.get(f"{container.url}/", timeout=5).text, 60)
+    wait_for(lambda: "1 app</span>" in httpx.get(f"{container.url}/", timeout=5).text, 60)
     marker = _write_marker(container)
     before, evidence = _db_fingerprint(container), _evidence_ids(container)
     assert marker in before and evidence
@@ -208,7 +239,7 @@ def test_new_container_on_same_appdata_keeps_database(data_dir: Path) -> None:
     first = Container(data_dir)
     try:
         first.wait_healthy()
-        wait_for(lambda: "1 app in de catalogus;" in httpx.get(f"{first.url}/", timeout=5).text, 60)
+        wait_for(lambda: "1 app</span>" in httpx.get(f"{first.url}/", timeout=5).text, 60)
         marker = _write_marker(first)
         before, evidence = _db_fingerprint(first), _evidence_ids(first)
         keys = first.exec("sha256sum", "/appdata/secrets/identity.ed25519", "/appdata/secrets/vault.key")
@@ -250,6 +281,11 @@ def test_runs_as_custom_user_568(tmp_path: Path) -> None:
     try:
         c.wait_healthy()
         assert httpx.get(f"{c.url}/healthz", timeout=5).status_code == 200
+        for p in processes(c):  # Custom User 568: CapBnd mag de standaardset zijn; de rest blijft verplicht
+            assert p["uid"] == 568 and p["capeff"] == p["capprm"] == p["capamb"] == ZERO and p["nnp"] == "1", p
+        hc = healthcheck_control(c)
+        assert hc["wissel"] is True and hc["Uid"] == "568" and hc["CapEff"] == hc["CapPrm"] == ZERO, hc
+        assert hc["NoNewPrivs"] == "1", hc
     finally:
         c.remove()
 

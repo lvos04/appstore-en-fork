@@ -7,7 +7,8 @@
 # Eén poort 30430, één opslag /appdata, géén verplichte omgevingsvariabelen en géén wachtwoorden in het formulier.
 # PostgreSQL luistert alleen op een unix-socket. De container start als root uitsluitend om /appdata aan 568:568 te
 # geven; daarna draaien alle processen — ook PID 1, de procesbewaker zelf (geen dumb-init) — als 568 met
-# no_new_privs en zonder capabilities (contract 1.2 §2.2/§10: het formulier zet die vlag niet).
+# no_new_privs en zonder capabilities, met een lege bounding set (contract 1.3 §2.2/§10: het formulier zet die vlag niet).
+# De healthcheck (exec-vorm, python -I -S) wisselt als eerste handeling ook naar 568 met no_new_privs (C1.3-ASF-01).
 #
 # Base-images op exacte versie én digest (contract §1); bijwerken: docker buildx imagetools inspect <image>:<tag>.
 ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
@@ -73,6 +74,6 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
 VOLUME ["/appdata"]
 EXPOSE 30430
 HEALTHCHECK --interval=30s --timeout=8s --start-period=90s --retries=3 \
-  CMD ["python", "/usr/local/lib/appstore/healthcheck.py"]
+  CMD ["python", "-I", "-S", "/usr/local/lib/appstore/healthcheck.py"]
 # PID 1 = de procesbewaker zelf: signalen (SIGTERM/SIGINT) en zombies, en na de eigenaarschapsstap uid 568.
 ENTRYPOINT ["python", "/usr/local/lib/appstore/supervisor.py"]

@@ -8,7 +8,7 @@ Regels:
 - Start als root alléén om de eigen submappen van /appdata aan 568:568 te geven; daarna laat het proces alle
   capabilities uit de bounding set vallen, wordt volledig 568 (``setgroups([])``, ``setgid``, ``setuid``) en zet
   ``PR_SET_NO_NEW_PRIVS`` vóór de eerste ``execve`` van een dienstproces (het standaard Custom App-formulier kan dat
-  niet, contract 1.2 §2.2, ADR-0003). Dit geldt ook voor PID 1: de bewaker ís PID 1 (geen ``dumb-init`` meer), ruimt
+  niet, contract 1.3 §2.2, ADR-0003). Dit geldt ook voor PID 1: de bewaker ís PID 1 (geen ``dumb-init`` meer), ruimt
   zelf verweesde processen (zombies) op en draait na de wissel als 568 zonder capabilities. Start het als 568
   (Custom User in het formulier), dan werkt het ook.
 - Eerste start: geheimen in /appdata/secrets (0600, nooit overschreven) en een nieuwe database.
@@ -64,6 +64,8 @@ def harden_and_demote() -> None:
         for cap in range(64):
             if libc.prctl(PR_CAPBSET_DROP, cap, 0, 0, 0) != 0:
                 break  # einde van de bekende capabilities
+        if cap_field("CapBnd") != "0000000000000000":  # contract 1.3 §2.2: bij een start als root verplicht leeg
+            fail("de bounding set van de capabilities kon niet worden geleegd; de app weigert zo te starten")
         os.setgroups([])
         os.setgid(GID)
         os.setuid(UID)
@@ -71,6 +73,17 @@ def harden_and_demote() -> None:
         fail("no_new_privs kon niet worden gezet; de app weigert zonder te starten")
     if os.getuid() == 0 or os.geteuid() == 0 or os.getgid() == 0 or os.getegid() == 0:
         fail("kon de rechten niet verlagen; de app weigert als root te draaien")
+
+
+def cap_field(name: str) -> str:
+    """Waarde van ``name`` (bv. ``CapBnd``) uit ``/proc/self/status``; ``?`` als onleesbaar."""
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="ascii").splitlines():
+            if line.startswith(f"{name}:"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return "?"
 
 
 def reap_orphans(known: set[int]) -> int:
