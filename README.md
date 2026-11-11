@@ -30,7 +30,7 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 | Installatie als standaard TrueNAS Custom App (formuliervelden, geen YAML) | [`deploy/truenas/CUSTOM_APP.md`](deploy/truenas/CUSTOM_APP.md) |
 | Eigen manifest | `deploy/manifest/appstore-en-fork.manifest.yaml` |
 | OpenAPI | `docs/openapi/appstore-en-fork.openapi.json` |
-| Besluiten | `docs/adr/ADR-0001` … `ADR-0015` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil; ADR-0010: bestaande apps importeren; ADR-0011: ontwerpreview statuspagina; ADR-0012: review fase P1; ADR-0013: platformcontract 1.3 en Peil 1.1.1; ADR-0014: review contract 1.3; ADR-0015: geheimen in de vertaling alleen als vault-verwijzing) |
+| Besluiten | `docs/adr/ADR-0001` … `ADR-0016` (ADR-0007: aanscherping na de review van fase P0; ADR-0008: platformcontract 1.2; ADR-0009: statuspagina in Peil; ADR-0010: bestaande apps importeren; ADR-0011: ontwerpreview statuspagina; ADR-0012: review fase P1; ADR-0013: platformcontract 1.3 en Peil 1.1.1; ADR-0014: review contract 1.3; ADR-0015: geheimen in de vertaling alleen als vault-verwijzing; ADR-0016: ontwerp van een beheerder en dienstaccount zonder geheim in het formulier (besluit C-12), nog niet gebouwd) |
 | Platformcontract (byte-gelijke kopie, versie 1.3, gepind in `CONTRACT_HERKOMST.json`) en conformiteitslijst | [`docs/platform-v2/PLATFORM_CONTRACTEN.md`](docs/platform-v2/PLATFORM_CONTRACTEN.md), [`CONTRACT_1.3_CONFORMITEIT.md`](docs/platform-v2/CONTRACT_1.3_CONFORMITEIT.md) (historie: [`CONTRACT_1.2_CONFORMITEIT.md`](docs/platform-v2/CONTRACT_1.2_CONFORMITEIT.md)) |
 
 ## Installeren
