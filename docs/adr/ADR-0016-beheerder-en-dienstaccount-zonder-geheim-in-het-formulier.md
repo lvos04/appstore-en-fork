@@ -2,7 +2,8 @@
 
 - **Status:** ontwerp (stap S-P2-510) · 2026-11-11 · de punten 1 tot en met 6, 8 en 9 onder "Besluit" volgen uit de
   bronnen; punt 7 (Node-RED op de officiële image) is een besluit van de gebruiker (2026-11-11: optie A, "Wachten").
-  Herzien na de reviews R-VEILIG en R-MANIFEST van deze stap (2026-11-11). Er is niets gebouwd; de bouw volgt in de
+  Herzien na de reviews R-VEILIG en R-MANIFEST van deze stap en na hun herreviews (herstelpoging 2, 2026-11-11). Er
+  is niets gebouwd; de bouw volgt in de
   stappen onder "Gevolgen per repo" (een herstelstap van de validator vóór S-P3-490, daarna S-P3-490, S-P3-445 en
   S-P3-360).
 - **Bron:** `docs/platform-v2/PLATFORM_CONTRACTEN.md` (`contracts 1.3`), koppen "1. Vaste keuzes (van de gebruiker)",
@@ -83,9 +84,18 @@ jelly-leon-platform):
   jelly-leon-platform `tools/nodered_rooktest.py`, controleproef N2). De healthcheck (`GET /auth/login`) slaagt dan nog:
   `login()` antwoordt zonder `adminAuth` met een leeg object. Alleen de monitor (nu 403 op `/diagnostics`; zonder
   `FLOWS` 200, ADR-0023 besluit 3) en de controle na installatie `beveiliging_actief` zien het.
-- `red.js` haalt elke `-D`-waarde door `JSON.parse` (lukt dat niet, dan blijft het tekst), en `users.js` maakt van een
+- `red.js` leest zijn argumenten met `nopt` (versie 5.0.0 in de gepinde image; `knownOpts` `define: [String, Array]`,
+  `shortHands` `D: ["--define"]`), en `nopt` kort een lange optie af tot elk ondubbelzinnig begin. Gemeten op
+  2026-11-11 met de `nopt` en `@node-red/util` uit de image zelf (een naslag van de argumentverwerking van `red.js`,
+  zonder Node-RED te starten): een instelling komt binnen als `-D sleutel=waarde`, `-D=sleutel=waarde`,
+  `--define sleutel=waarde`, `--define=sleutel=waarde`, en met elke afkorting `--d`, `--de`, `--def`, `--defi`,
+  `--defin` (met `=` of met het volgende woord). De vorm `-Dsleutel=waarde` (aaneen) neemt `nopt` niet aan. De eigen
+  hulptekst van Node-RED noemt alleen `-D, --define X=Y`. Begint de waarde met `@`, dan leest `red.js` de instellingen
+  uit een JSON-bestand op dat pad in de container (`fs.readJsonSync`), buiten het zicht van de validator. Elke
+  `sleutel=waarde` gaat door `JSON.parse` (lukt dat niet, dan blijft het tekst), en `users.js` maakt van een
   `users`-object een lijst met één gebruiker. Een gebruiker kan in `FLOWS` dus ook als object of met JSON-escapes
-  (`\u0024` voor `$`) staan.
+  (`\u0024` voor `$`) staan. Deze lijst geldt voor de gepinde digest; een nieuwe digest kan andere opties kennen en
+  wordt opnieuw gemeten ("Gevolgen per repo", punt 4).
 - Een eerste-gebruik-venster (standaardwachtwoord of setup-pagina), gebruikersbeheer in de editor of de Admin-API, of
   aanmelden via OIDC zonder eigen `settings.js` staat in geen gelezen bron. ONBEKEND - eerst vaststellen met een
   rooktest in jelly-leon-platform (`tools/nodered_rooktest.py`) tegen de gepinde digest.
@@ -280,8 +290,11 @@ jelly-leon-platform ADR-0023, kop "Afgewezen" ("Eigen image met `settings.js` in
    weg ook (letterlijk, via een gewone parameter, of als naam/waarde-paar), een geheim onder een naam van een beheerder
    of dienstaccount (ook een geheim dat de Hub maakt), elke wachtwoordhash, elke sleutel die een geheim noemt met een
    niet-lege waarde binnen een tekst, en elke niet-lege gebruikerslijst is een fout, ook als het manifest geen
-   `accounts` heeft. Zo kan `FLOWS` geen bcrypt-hash, gebruiker of `credentialSecret` meer dragen, en komt er geen
-   beginwachtwoord in het formulier. Precieze regels: W2 en W3.
+   `accounts` heeft. Zo kan `FLOWS` geen bcrypt-hash, gebruiker of `credentialSecret` meer dragen in enige vorm die
+   Node-RED op de gepinde digest als instelling aanneemt (elke `-D`/`--define`-vorm en afkorting die `nopt` kent, elk
+   los woord `sleutel=waarde`, JSON met escapes, en een instelling uit een bestand), en komt er geen beginwachtwoord in
+   het formulier. De lijst van vormen is gemeten op de gepinde digest en wordt bij een nieuwe digest opnieuw gemeten
+   (T2). Precieze regels: W2 en W3.
    Wat de validator nu doet (`apps/api/src/appstore/manifest/rules.py`): hij weigert een geheimnaam
    (`_SECRET_ENV`, alleen aan het eind van de naam) alleen met een letterlijke waarde, in `_Rules.custom_app` (een
    `env.value`) en in `catalog_value_findings` (een sleutel in `values`, alleen vóór het invullen: na het invullen slaat
@@ -290,8 +303,9 @@ jelly-leon-platform ADR-0023, kop "Afgewezen" ("Eigen image met `settings.js` in
    (proeven p1 tot en met p7, "Gevolgen per repo", punt 2). Naar een geheim, een hash of een gebruiker binnen een tekst
    zoekt hij niet; alleen `_INTERPOLATION` (`interpolation_forbidden`) weigert daarbij toevallig een bcrypt-hash waarvan
    de salt met een letter begint, en een argon2-hash, maar niet een bcrypt-hash waarvan de salt met `.`, `/` of een
-   cijfer begint (proef n1), en ook geen `-D credentialSecret=…` of `users`-lijst (proeven n2 tot en met n4). Die gaten zijn er nu al, los van
-   `accounts`; ze sluiten in de herstelstap vóór S-P3-490 ("Gevolgen per repo", punt 2), niet in deze stap.
+   cijfer begint (proef n1), en ook geen `-D credentialSecret=…` of `users`-lijst, in welke vorm ook (proeven n2 tot en
+   met n10). Die gaten zijn er nu al, los van `accounts`; ze sluiten in de herstelstap vóór S-P3-490 ("Gevolgen per
+   repo", punt 2), niet in deze stap.
 5. **De vertaling voegt niets toe.** `accounts` komt niet in de payload; de vertaling controleert na het invullen van de
    parameters opnieuw op geheimen en accountgegevens (W3). Geen nieuw veld in de uitvoer van `translate` of `preview`.
 6. **Het profiel van home-control-hub vervalt.** Elke vorm ervan zet hashes, gebruikers of een `credentialSecret` in het
@@ -386,10 +400,16 @@ beheerder ze bevestigt, is de app niet "gezond""), en die controles komen al bij
 (`controle`, W1); een nieuw veld in een antwoord of in de witte lijst van het beleid vraagt een exacte veldtest
 (V-046), een OpenAPI-wijziging en een wijziging van het beleid (P-VEILIG) in een andere repo, zonder dat het iets
 veiliger maakt; en besluit 5 zet al geen nieuw veld in de uitvoer. Daarom moet de gekoppelde controle in haar
-`beschrijving_nl` zelf zeggen wat de beheerder doet (bij een dienst ook de afnemer en de rechten). Het volledige manifest,
-dus ook `accounts` (zonder waarde), blijft leesbaar via `GET /catalog/v1/versions/{version_id}` (veld `manifest`); dat
-is geen nieuw veld. Let op, al bekend: het schema laat voor `post_install_checks[].beschrijving_nl` 1000 tekens toe, het
-beleid van de Hub 500.
+`beschrijving_nl` zelf zeggen wat de beheerder doet; bij een dienst noemt ze de afnemer (`afnemer`) en verwijst ze naar
+de rechten in het manifest (`accounts[].rechten`) in plaats van ze op te sommen. Het volledige manifest, dus ook
+`accounts` (zonder waarde), blijft leesbaar via `GET /catalog/v1/versions/{version_id}` (veld `manifest`); dat is geen
+nieuw veld, en geen dienst leest `accounts` tijdens het draaien (home-control-hub: "Gevolgen per repo", punt 5). Grens
+van de Hub: het schema laat voor `post_install_checks[].beschrijving_nl` 1000 tekens toe, maar het beleid van de Hub
+weigert in `validate_manifest_meta` meer dan 500 (`_text(…, max_len=500)`), en dat is al bekend (R-MANIFEST). Een
+manifest dat hier geldig is, mag daar niet alsnog vallen. Daarom blijft de tekst van een controle die door een
+account wordt genoemd binnen 500 tekens, zolang het contract die grens niet gelijktrekt, en bewaakt W1 dat met de code
+`account_controle_te_lang` (hieronder). De verwijzing naar de rechten in plaats van een opsomming houdt de tekst kort
+(een dienst mag tot 32 rechten van elk 64 tekens hebben).
 
 **W1 — veld `accounts` (optioneel; ontbreekt het, dan verandert er niets).** Een lijst van hooguit 16 objecten
 `$defs/Account` met `additionalProperties: false`:
@@ -401,7 +421,7 @@ beleid van de Hub 500.
 | `aanmaak` | `eerste_gebruik` \| `door_beheerder` | ja | `eerste_gebruik` alleen bij `beheerder`, `door_beheerder` alleen bij `dienst` |
 | `afnemer` | `$defs/AppId` | alleen bij `dienst` | de vaste `app_id` van de app die de aanmelding gebruikt (contract kop 2); niet de eigen `app_id` |
 | `rechten` | lijst van 1 tot 32 unieke teksten, patroon `^[a-z][a-z0-9_.:-]{0,63}$` | alleen bij `dienst` | de rechten in de app; het patroon laat geen `*` toe; de beheerder heeft geen lijst (alle rechten) |
-| `controle` | `$defs/Name` | ja | een `id` uit `post_install_checks`; meerdere accounts mogen dezelfde controle noemen; de `beschrijving_nl` van die controle zegt wat de beheerder doet (dit is wat de Hub toont) |
+| `controle` | `$defs/Name` | ja | een `id` uit `post_install_checks`; meerdere accounts mogen dezelfde controle noemen; de `beschrijving_nl` van die controle zegt wat de beheerder doet (dit is wat de Hub toont), bij een `dienst` met de afnemer en een verwijzing naar `rechten` (geen opsomming), en is hooguit 500 tekens (de grens van het beleid van de Hub; `account_controle_te_lang`) |
 | `beschrijving_nl` | tekst, 10 tot 1000 tekens | ja | wat de beheerder doet, zonder waarde |
 
 Regels in `rules.py` (een nieuwe methode van `_Rules`, aangeroepen vanuit `_Rules.run`):
@@ -410,6 +430,9 @@ Regels in `rules.py` (een nieuwe methode van `_Rules`, aangeroepen vanuit `_Rule
   eigen `app_id`), of een `dienst` zonder een `beheerder` in hetzelfde manifest (er moet iemand zijn die het account
   maakt).
 - `account_controle_ontbreekt` (fout): `controle` noemt geen bestaande `post_install_checks[].id`.
+- `account_controle_te_lang` (fout): de `beschrijving_nl` van een `post_install_checks`-controle die door een account
+  wordt genoemd, is langer dan 500 tekens (de grens van `validate_manifest_meta` in het beleid van de Hub; het schema
+  blijft op 1000 voor controles zonder account). De regel vervalt zodra contract en beleid dezelfde grens hebben.
 - Dubbele `id`: de bestaande code `duplicate_name`.
 - Geen van deze codes is een waarschuwing en geen ervan staat op de lijst van `accepted_findings`.
 
@@ -420,9 +443,11 @@ huidige validator al heeft (besluit 4; proeven in "Gevolgen per repo", punt 2) e
 *Begrippen.*
 - Een **geheimnaam** is een naam waarin een van de woorden van `rules._SECRET_ENV` (`PASS`, `PASSWD`, `PASSWORD`,
   `SECRET`, `TOKEN`, `API_KEY`, `APIKEY`, `PRIVATE_KEY`, `PRIVATEKEY`, `CREDENTIAL`, `AUTH_KEY`, `SALT`) of `WACHTWOORD`
-  staat, gevolgd door het einde van de naam of door `_`, `-` of `.`, zonder verschil tussen hoofd- en kleine letters.
-  Zo telt ook `SECRET_KEY`, dat `_SECRET_ENV` (alleen aan het eind van de naam) nu mist (proef p7). Bij een sleutel met
-  punten of `[n]` telt het laatste deel (`adminAuth.users[0].password` → `password`).
+  staat, gevolgd door het einde van de naam of door `_`, `-` of `.`, zonder verschil tussen hoofd- en kleine letters,
+  of gevolgd door een hoofdletter terwijl de letter ervoor een kleine letter is (camelCase: `secretKey`,
+  `passwordHash`, `apiKeyValue`; niet `SECRETS_DIR`, `TOKENS` of `PASSWORDLESS`). Zo telt ook `SECRET_KEY`, dat
+  `_SECRET_ENV` (alleen aan het eind van de naam) nu mist (proef p7), en `secretKey`, dat ook `_SECRET_ENV` mist. Bij
+  een sleutel met punten of `[n]` telt het laatste deel (`adminAuth.users[0].password` → `password`).
 - Een **accountnaam** is een geheimnaam waarin ook een van deze woorden staat: `BOOTSTRAP`, `DEFAULTUSER`,
   `DEFAULT_USER`, `ADMIN`, `ROOT`, `SUPERUSER`, `OWNER`, `INITIAL`, `SETUP`, `BEHEER`, `SERVICE_ACCOUNT`,
   `SERVICEACCOUNT`, `DIENST` (vaste lijst; een uitbreiding is een wijziging van de standaard). Voorbeelden:
@@ -460,16 +485,34 @@ huidige validator al heeft (besluit 4; proeven in "Gevolgen per repo", punt 2) e
 ook T2:
 - **T1** een wachtwoordhash: bcrypt (`$2a$`, `$2b$`, `$2y$` met kosten en 53 tekens) en hashes in PHC-vorm (`$argon2…`,
   `$scrypt$`, `$pbkdf2…`).
-- **T2** decoderen zoals Node-RED en dan toetsen. De tekst wordt gesplitst op witruimte (zoals `entrypoint.sh` `$FLOWS`
-  ongequoot doorgeeft). Bij `-D sleutel=waarde`, `-D` gevolgd door `sleutel=waarde`, en `--define=sleutel=waarde` wordt de
-  waarde met JSON gedecodeerd (zoals `red.js` met `JSON.parse`; lukt dat niet, dan blijft het tekst); een tekst die met
-  `{` of `[` begint, wordt ook met JSON gedecodeerd. In het resultaat (met de JSON-escapes opgelost, dus ook `\u0024`
-  voor `$`), en ook in de `sleutel` zelf, is een fout:
-  - een sleutel met een geheimnaam en een niet-lege waarde (`"credentialSecret":"…"`, `-D credentialSecret=…`,
-    `--define=adminAuth.users[0].password=…`);
-  - een sleutel `users` of `gebruikers` met een niet-lege lijst of een niet-leeg object (`users.js` maakt van een object
-    een lijst met één gebruiker);
-  - een hash volgens T1 in een gedecodeerde tekst.
+- **T2** decoderen zoals Node-RED en dan toetsen, met een vangnet op de tekst zelf. Drie stappen, elk een fout bij een
+  treffer:
+  1. *Splitsen en decoderen.* De tekst wordt gesplitst op spatie, tab en regeleinde (de standaard-`IFS` van bash, zoals
+     `entrypoint.sh` `$FLOWS` ongequoot doorgeeft); andere witruimte, zoals U+00A0, splitst niet en blijft in het
+     woord. Een woord `sleutel=waarde` dat niet met `-` begint, telt als instelling (los, of als het woord na een
+     optie), en daarnaast elke optievorm die `nopt` op de gepinde digest als `define` aanneemt (zie "Context": `-D`,
+     `-D=`, `--define`, `--define=` en elke afkorting `--d` tot en met `--defin`, met `=` of met het volgende woord);
+     een andere optie met `=` (zoals `--port=…`) is geen instelling. De waarde wordt met JSON gedecodeerd (zoals
+     `red.js` met `JSON.parse`; lukt dat niet, dan blijft het tekst); een los woord dat met `{` of `[` begint, wordt ook
+     met JSON gedecodeerd. Een instellingswaarde die met `@` begint, is altijd een fout: `red.js` leest dan instellingen
+     uit een bestand dat de validator niet kan zien (fail-closed). In het resultaat (met de JSON-escapes opgelost, dus
+     ook `\u0024` voor `$`), en ook in de `sleutel` zelf, is een fout:
+     - een sleutel met een geheimnaam en een niet-lege waarde (`"credentialSecret":"…"`, `-D credentialSecret=…`,
+       `--define credentialSecret=…`, `--def=credentialSecret=…`, `-D=credentialSecret=…`, een los woord
+       `credentialSecret=…`, `--define=adminAuth.users[0].password=…`);
+     - een sleutel `users` of `gebruikers` met een niet-lege lijst of een niet-leeg object (`users.js` maakt van een
+       object een lijst met één gebruiker);
+     - een hash volgens T1 in een gedecodeerde tekst.
+  2. *Vangnet op de ruwe tekst.* Los van stap 1 geldt op de hele tekst, en op dezelfde tekst met de JSON-escapes
+     opgelost (`\uXXXX`), ook als geen woord als instelling is herkend: een JSON-sleutel (`"naam":`) met een geheimnaam
+     en een niet-lege waarde; een JSON-sleutel `users` of `gebruikers` met een niet-lege lijst of een niet-leeg
+     object; en een hash volgens T1, ook als die pas na het oplossen van de escapes zichtbaar is. Zo vangt de
+     validator een vorm die stap 1 niet kent (een nieuwe optie, een ander scheidingsteken) en een gebruiker met een
+     ge-escapete hash (proeven n7 en n9).
+  3. *De lijst van vormen is gemeten, niet aangenomen.* De vormen onder stap 1 zijn op 2026-11-11 gemeten met de
+     `nopt` uit de gepinde Node-RED-digest. Bij elke nieuwe Node-RED-digest meet de rooktest van jelly-leon-platform ze
+     opnieuw ("Gevolgen per repo", punt 4) en wordt een verschil als wijziging van de standaard aan appstore-en-fork
+     gemeld; tot dan geldt het vangnet van stap 2.
 
 *Verhouding tot de bestaande codes.* Een sleutel in de boom van `values` (een YAML-sleutel, geen tekst) valt onder de
 naamregels; de tekstregels gelden alleen binnen een tekst. Zo meldt de validator één oorzaak niet twee keer.
@@ -487,8 +530,11 @@ andere repo afkeurt, is een contractwijziging (POORTEN, P-appstore-en-fork kop 7
 nabootsing van W2 buiten de repo (geen validatorcode) over de 15 manifesten in `deploy/manifest/` van de repos en in
 `jelly-leon-platform:install/manifests/`, plus de 6 fixtures in `apps/api/tests/fixtures/manifests/`: de naamregels
 treffen alleen `db_password` en `secret_key` van Authentik en `db_password` van `valid-catalog-1-3.manifest.yaml`, alle
-drie een `{param}` naar een geheim van de Hub zonder accountnaam (dus geen fout); de tekstregels treffen niets. De
-herstelstap meet het opnieuw met de validator zelf.
+drie een `{param}` naar een geheim van de Hub zonder accountnaam (dus geen fout); de tekstregels treffen niets. In
+herstelpoging 2 (2026-11-11) opnieuw gemeten met een nabootsing van de tekst hierboven (camelCase-geheimnaam, alle
+define-vormen, losse woorden `sleutel=waarde`, `@`, het vangnet): dezelfde drie (geen fout), 0 van 21 geweigerd; de
+proeven p1 tot en met p7, p5b en n1 tot en met n10 worden alle geweigerd. De herstelstap meet het opnieuw met de
+validator zelf.
 
 **W3 — vertaling.** `translate` en `POST /catalog/v1/preview` zetten niets uit `accounts` in de payload. Na het
 invullen van de parameters (waarden uit de wizard) toetst de vertaling de ingevulde omgevingswaarden (`values.envs` van
@@ -498,7 +544,12 @@ vault-verwijzing, geeft `account_gegevens_verboden`; en T1 en T2 gelden op elke 
 `catalog_value_findings` na het invullen de geheimnaam over (`resolved=True`), en zet `_custom_app_values` een
 ingevulde waarde zonder toets in `envs` (proeven p1 tot en met p6: de testwaarde stond in de payload). Bij een treffer
 noemt de melding het pad, zonder waarde, en is er geen payload. De `preview_hash`, `vault_refs` en de antwoordmodellen
-blijven gelijk: geen veld erbij (V-046) en geen OpenAPI-wijziging.
+blijven gelijk: geen veld erbij (V-046) en geen OpenAPI-wijziging. Eén uitzondering, en alleen die: zet de vertaling
+ooit zelf `HUB_URL` en `HUB_ENROLLMENT_TOKEN` in de payload (`docs/MANIFESTSTANDAARD.md`, kop "Gereserveerde namen",
+zegt dat nu al; `translate.py` en `truenas.py` doen het op 2026-11-11 niet), dan laat W3 precies de naam
+`HUB_ENROLLMENT_TOKEN` door: het eenmalige enrollment-token is de enige uitzondering van contract kop 3.1 (eis 1).
+Elke andere `HUB_*`-naam en elke andere geheimnaam blijft onder W3; de herstelstap test dat de uitzondering alleen
+die naam dekt.
 
 **Kopieën.** W1 wijzigt het schema; W2 en W3 wijzigen de regels en de vertaling. De kopie in jelly-leon-platform
 (`apps/api/src/appstore/manifest/manifest-v1.schema.json` en de validator) volgt in S-P3-445 met `tools/validator_kopie.py`.
@@ -557,27 +608,45 @@ Voorgestelde volgorde. De stap-ID's bestaan al in
      `_SECRET_ENV` ziet hem niet);
    - n1 tot en met n4 (`FLOWS` van Node-RED): een `users`-lijst met een bcrypt-hash waarvan de salt met `.` begint,
      `-D credentialSecret=…`, een `users`-object met `\u0024` in plaats van `$`, en
-     `--define=adminAuth.users[0].password=…`.
+     `--define=adminAuth.users[0].password=…`;
+   - n5 tot en met n10 (`FLOWS` van Node-RED; gevonden in de herreview R-VEILIG en in herstelpoging 2, elk met de
+     `nopt` uit de gepinde image nagemeten als een instelling die Node-RED aanneemt): n5 `--define credentialSecret=…`
+     (met een spatie, de vorm uit de hulptekst van Node-RED), n6 `--def=credentialSecret=…`, n6b
+     `--defi credentialSecret=…`, n7 `--define adminAuth=…` met een `users`-lijst waarvan de hash met `\u0024` is
+     ge-escapet, n8 `-D=credentialSecret=…`, n9 `-D adminAuth=…` met een gebruikersnaam met U+00A0 en dezelfde
+     ge-escapete hash, en n10 `-D @/data/extra.json` (instellingen uit een bestand). Daarnaast de afkortingen `--d=`
+     en `--de `, een los woord `credentialSecret=…` zonder optie, en `-D settings={"secretKey":"…"}` (camelCase).
    De tegenproef p5b (dezelfde waarde letterlijk in `env.value`) gaf terecht `secret_literal_forbidden`. De herstelstap
    bouwt W2 en W3 (zij hebben `accounts` niet nodig), met de codes en meldingen in `findings.py` en
    `docs/MANIFESTSTANDAARD.md`. Tests: p1, p3, p4, p5 (de omgevingsvariabele) en p6 geven
    `account_gegevens_verboden` (N3; p6 ook met `accepted_findings`); p2, p5 (de parameter) en p7 geven
-   `secret_literal_forbidden` (N1); dezelfde wegen als p1, p3 en p4 met een geheimnaam zonder accountwoord geven
-   `secret_in_form` (N2); n1 tot en met n4, een hash in een parameter-`default` en in `description_nl`, en een
-   wizardwaarde met een hash (bij `translate`) geven `account_gegevens_verboden` (T1, T2); telkens bij `validate` en
-   bij `translate`/`preview` (zonder payload); de testwaarde staat in geen melding, geen uitvoer van `jl-manifest` en
-   geen antwoord van de API; p5b blijft `secret_literal_forbidden` geven;
+   `secret_literal_forbidden` (N1), net als dezelfde weg als p7 met `APP_SECRET_KEY` vervangen door een
+   camelCase-naam (`secretKey`, `passwordHash`, `apiKeyValue`), terwijl `SECRETS_DIR`, `TOKENS` en `PASSWORDLESS`
+   met een gewone waarde geldig blijven; dezelfde wegen als p1, p3 en p4 met een geheimnaam zonder accountwoord geven
+   `secret_in_form` (N2); n1 tot en met n10, de afkortingen `--d=` en `--de `, het losse woord, de camelCase-sleutel,
+   een hash in een parameter-`default` en in `description_nl`, en een wizardwaarde met een hash (bij `translate`)
+   geven `account_gegevens_verboden` (T1, T2); n7 en n9 ook met alleen het vangnet (T2 stap 2), dus zonder dat een
+   woord als instelling is herkend; telkens bij `validate` en bij `translate`/`preview` (zonder payload); de
+   testwaarde staat in geen melding, geen uitvoer van `jl-manifest` en geen antwoord van de API; p5b blijft
+   `secret_literal_forbidden` geven; W3 laat na het invullen alleen de naam `HUB_ENROLLMENT_TOKEN` door en weigert
+   `HUB_TOKEN`, `HUB_SECRET` en elke andere geheimnaam (ook als de vertaling `HUB_*` nog niet zelf zet, test het de
+   uitzondering op een ingevulde `envs`-lijst);
    `db_password: {param: db_password}` en `secret_key: {param: secret_key}` van Authentik blijven geldig (met de
    bestaande waarschuwing); een bcrypt-hash waarvan de salt met `.` of een cijfer begint, geeft
    `account_gegevens_verboden` ook waar `interpolation_forbidden` niets ziet; elk bestaand manifest in de werkmap
-   valideert vóór en na met dezelfde uitkomst. N1 en N2 voeren regels uit die kop 3.1 en kop 9 al hebben; N3 en de
+   valideert vóór en na met dezelfde uitkomst (gemeten in herstelpoging 2 met een nabootsing: 0 van 21 anders). De
+   lijst van define-vormen in T2 stap 1 legt de herstelstap vast als gegeven (een lijst in `rules.py` met de digest
+   waarop ze is gemeten), zodat de rooktest van jelly-leon-platform ze bij een nieuwe digest kan vergelijken (punt 4).
+   N1 en N2 voeren regels uit die kop 3.1 en kop 9 al hebben; N3 en de
    tekstregels staan ook in het voorstel voor kop 9: of de herstelstap op de contractronde wacht, beslist de regisseur.
    Daarna: de pins van de andere repos (POORTEN, P-appstore-en-fork kop 7). Reviewers: R-TECH, R-VEILIG en
    R-MANIFEST. Deze stap (S-P2-510) herstelt de validator niet.
 3. **appstore-en-fork: S-P3-490.** W1, met Nederlandse codes in `findings.py` en de docs; W2 en W3 staan er dan al
    (punt 2), hun tests blijven in de suite. Tests bovenop die van S-P3-490: een `dienst` zonder `afnemer` of `rechten`,
    `eerste_gebruik` bij een `dienst`, twee beheerders en een onbekende `controle` geven elk hun code; `rechten: ["*"]`
-   faalt in het schema; een schemafout onder `accounts` noemt de waarde niet; `accounts` staat in geen payload, geen
+   faalt in het schema; een controle die een account noemt met een `beschrijving_nl` van 501 tekens geeft
+   `account_controle_te_lang` en met 500 tekens niet, terwijl dezelfde tekst van 501 tekens bij een controle zonder
+   account geldig blijft; een schemafout onder `accounts` noemt de waarde niet; `accounts` staat in geen payload, geen
    antwoordmodel en niet in `requirements()`; elk bestaand manifest in de werkmap valideert vóór en na met dezelfde
    uitkomst. Reviewers: R-TECH, R-VEILIG en R-MANIFEST.
 4. **jelly-leon-platform: S-P3-445** (na S-P2-410, regel "Vooraf"). Volgens het besluit van de gebruiker (punt 7: A):
@@ -588,6 +657,11 @@ Voorgestelde volgorde. De stap-ID's bestaan al in
      `accounts` heeft, zodat de veiligste stand niet ongemerkt verandert;
    - `healthcheck.monitor` en de controle `beveiliging_actief` blijven een beveiligde van een onbeveiligde Node-RED
      onderscheiden (S-P2-410 bouwpunt 3c, controleproef N2): dat is het enige signaal als `FLOWS` ontbreekt (punt 7);
+   - bij elke nieuwe Node-RED-digest meet de rooktest (`tools/nodered_rooktest.py`) opnieuw welke optievormen `nopt`
+     in die image als `define` aanneemt (`knownOpts` en `shortHands` in `red.js`, de afkortingen, `-D=` en `@`), met
+     dezelfde naslag als in deze stap (de `nopt` en `@node-red/util` uit de image, zonder Node-RED te starten), en
+     vergelijkt ze met de lijst die de herstelstap in `rules.py` vastlegt (punt 2). Een verschil is een wijziging van
+     de manifeststandaard: melden aan appstore-en-fork, de digest niet verhogen tot T2 de nieuwe vorm kent;
    - de commentaarkop, `post_install_checks` id `beheerder_en_flows` (nu "wachten op een contractuitbreiding") en
      ADR-0023 kop "Wat het manifest niet kan (geblokkeerd)" verwijzen naar C-12, het besluit van punt 7 en deze ADR.
      I10-10-01 blijft "Geblokkeerd". De rechten van een later dienstaccount liggen nog niet vast; let op:
@@ -609,7 +683,13 @@ Voorgestelde volgorde. De stap-ID's bestaan al in
      die Node-RED zelf maakt); `user` betekent dat er een `credentialSecret` via het formulier is gezet en is een
      afwijking;
    - `anoniem_geweigerd` (401) blijft (C-11). `dienstaccount_minimaal` gaat vergelijken met `accounts[].rechten` van het
-     Node-RED-manifest, en `SERVICE_USER` wordt `accounts[].id`, zodra dat manifest een dienstaccount heeft;
+     Node-RED-manifest, en `SERVICE_USER` wordt `accounts[].id`, zodra dat manifest een dienstaccount heeft. De weg
+     waarlangs home-control-hub `accounts[]` leest: alleen in zijn repotest, tegen het Node-RED-manifest van
+     jelly-leon-platform op een gepinde commit (zoals `apps/api/tests/unit/test_deploy_artifacts.py` nu de verwijzing
+     naar `install/manifests/node-red.manifest.yaml` in `deploy/truenas/NODE_RED_CUSTOM_APP.md` toetst); die test houdt
+     de constanten voor de naam en de rechten van het dienstaccount gelijk aan het manifest. Tijdens het draaien leest
+     home-control-hub geen manifest en roept het de catalogus-API niet aan (keuze (a): `accounts` komt niet via een
+     API bij een dienst);
    - `deploy/truenas/NODE_RED_CUSTOM_APP.md` en de eigen ADR-0016 van home-control-hub
      (`docs/adr/ADR-0016-b11-node-red-automatisering.md`) krijgen een alinea over C-12.
    Het vervallen van het profiel hangt niet af van punt 7. Zolang de route bestaat, houdt ze een weg open naar
@@ -626,9 +706,13 @@ Voorgestelde volgorde. De stap-ID's bestaan al in
 ## Wat dit ontwerp niet bewijst
 
 - Niets is gebouwd of op TrueNAS geprobeerd. Het gedrag van het echte Custom App-formulier is NIET GEVALIDEERD
-  (echte NAS). De proeven p1 tot en met p7 en n1 tot en met n4 tonen alleen wat de huidige validator doorlaat; W2 en W3
-  zijn niet gebouwd. De meting onder W2 is een nabootsing van de tekst van deze ADR buiten de repo, geen validatorcode
-  en geen bewijs voor de herstelstap of S-P3-490.
+  (echte NAS). De proeven p1 tot en met p7 en n1 tot en met n10 tonen alleen wat de huidige validator doorlaat; W2 en
+  W3 zijn niet gebouwd. De meting onder W2 is een nabootsing van de tekst van deze ADR buiten de repo, geen
+  validatorcode en geen bewijs voor de herstelstap of S-P3-490.
+- De optievormen van T2 stap 1 zijn gemeten met de `nopt` uit de gepinde Node-RED-digest; `red.js` zelf is niet
+  uitgevoerd en Node-RED is niet gestart. Een andere digest kan andere vormen kennen (T2 stap 3). Of het echte Custom
+  App-formulier een omgevingswaarde met U+00A0 of met `--define k=v` ongewijzigd doorgeeft: NIET GEVALIDEERD (echte
+  NAS).
 - Over Node-RED is ONBEKEND: een eerste-gebruik-venster, gebruikersbeheer in de app en aanmelden via OIDC zonder eigen
   `settings.js` (eerst een rooktest in jelly-leon-platform), en de rechten en de eigenaar van `/data/.config.runtime.json`
   (eerst vaststellen met `stat` in die rooktest). Kop 3.1 noemt 0600 en 568:568 voor `/appdata/secrets/` van eigen
@@ -641,8 +725,8 @@ Voorgestelde volgorde. De stap-ID's bestaan al in
 - W2 vindt alleen wat herkenbaar is. Een gecodeerde of gesplitste hash, een geheim onder een naam zonder geheimwoord,
   en een beginwachtwoord onder een geheimnaam zonder accountwoord (bijvoorbeeld `<APP>_PASSWORD`) dat een geheim van de
   Hub krijgt, ziet de validator niet; dan blijft de review van het manifest (R-VEILIG, R-MANIFEST) de controle. Een
-  naam als `BYPASS_…` kan juist ten onrechte als geheimnaam tellen (fail-closed: de schrijver kiest een andere naam).
-  Het veld `accounts` zelf heeft geen veld voor een waarde.
+  naam als `BYPASS_…` of een camelCase-naam als `tokenStore` kan juist ten onrechte als geheimnaam tellen (fail-closed:
+  de schrijver kiest een andere naam). Het veld `accounts` zelf heeft geen veld voor een waarde.
 - Het eerste-gebruik-venster blijft een open venster tot de beheerder het sluit (restrisico van contract kop 9). De gate
   van de Hub (S-P2-080) is hier niet getest.
 - Of de Hub-UI een aanmelding voor home-control-hub doorgeeft zonder haar te loggen, is ONBEKEND tot dat scherm er is.
