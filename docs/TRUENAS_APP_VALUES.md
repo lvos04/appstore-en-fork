@@ -35,7 +35,7 @@ Catalogusapp (bijv. meerdere containers): `catalog_app`/`train`/`version` uit he
 |---|---|---|
 | Image → Repository / Tag / Pull Policy | `image.repository`, `image.tag`, `image.pull_policy` | `image.repository`; `image.tag` + `@<digest>` (ADR-0004, contract 1.3 §2.2) met digest-readback na installatie; altijd `missing` |
 | Timezone | `TZ` | `custom_app.timezone` (parameter, wizard); zonder: `Etc/UTC` + waarschuwing |
-| Environment Variables | `envs[] {name, value}` | `custom_app.env` (letterlijk of getypte parameter; geheimen verboden) |
+| Environment Variables | `envs[] {name, value}` | `custom_app.env` (letterlijk of getypte parameter; een geheim alleen als vault-verwijzing naar een geheim dat de Hub maakt, ADR-0015) |
 | Restart Policy (+ Maximum Retry Count) | `restart_policy` (`no`/`unless-stopped`/`on-failure`/`always`), `max_retry_count` alleen bij `on-failure` | `custom_app.restart_policy` |
 | Disable Builtin Healthcheck / TTY / Stdin | `disable_builtin_healthcheck`, `tty`, `stdin` | altijd `false` |
 | Devices | `devices[] {host_device, container_device}` | `privileges.devices` (met reden; `/dev/dri` nooit handmatig) |

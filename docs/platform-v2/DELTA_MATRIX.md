@@ -41,7 +41,7 @@ aanzet van het manifestmodel uit een afgebroken poging; beoordeeld, aangepast en
 ## Contract 1.3 (2026-11-10, `CONTRACT_1.3_CONFORMITEIT.md` §3, ADR-0013)
 
 Gemeten stand vóór deze ronde: `fc682e5` (zoals de conformiteitslijst). Alleen de punten met moment **NU**; C1.3-ASF-14
-(P2) staat open.
+(P2) is later gebouwd (2026-11-11, ADR-0015, vanaf stand `7b3159d`).
 
 | Punt | Vóór (stand `fc682e5`) | Nu | Validatie |
 |---|---|---|---|
@@ -61,7 +61,7 @@ Gemeten stand vóór deze ronde: `fc682e5` (zoals de conformiteitslijst). Alleen
 | ASF-11 statische `Idempotency-Key`-test | ontbrak | `tests/unit/test_idempotency_routes.py` met uitzonderingslijst | Unit-getest |
 | ASF-12 Emby | adoptie-item, plan met executor-stappen | `platform_wijzigt_nooit`: plan zonder `action_id`, gates HARDE EIS/exportarchief/controlelijst | Unit-getest |
 | ASF-13 eigen manifest | kop 1.2, geen monitor, licentie leeg | kop 1.3, `healthcheck.monitor`, GPL-3.0, `--strict` geldig | Unit-getest |
-| ASF-14 geheime catalogus-values → vault | — | **open (P2)**; tot dan weigert de vertaling een geheime waarde | — |
+| ASF-14 geheime catalogus-values → vault | vertaling weigerde elke geheime parameter (`parameter_value_not_allowed`) | **P2 (ADR-0015):** de vertaling zet alleen `vault://app/<app_id>/<parameter>` (catalogus-`values` en, op besluit van de gebruiker van 2026-11-11, een Custom App-env naar een geheim dat de Hub maakt), markeert elke plek in `vault_refs` en weigert een opgegeven waarde, een verwijzing naar een andere app en een letterlijke verwijzing | Unit-getest; NIET GEVALIDEERD (echte NAS) |
 
 **Review (ADR-0014, 2026-11-10):** alle CI-stappen opnieuw gedraaid (groen) en gericht gezocht. Gerepareerd:
 

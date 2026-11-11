@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from appstore.manifest import validate_data
 from appstore.manifest.model import Manifest
-from appstore.manifest.translate import Target, translate
+from appstore.manifest.translate import Target, TranslationResult, VaultRef, translate
 from appstore.manifest.truenas import AppCreatePayload
-from tests.conftest import FIXTURES
+from tests.conftest import FIXTURES, load_fixture
 
 FIELDS = json.loads((FIXTURES / "truenas" / "ix-app-1.4.8.fields.json").read_text())["fields"]
 PARAMS = {
@@ -239,7 +241,8 @@ def test_catalog_app_translation(catalog_manifest: dict[str, Any]) -> None:
     assert payload.values["storage"]["library"]["host_path_config"]["path"] == "/mnt/p1/fotos"
 
 
-def test_catalog_secret_param_not_filled(catalog_manifest: dict[str, Any]) -> None:
+def test_catalog_secret_param_is_a_vault_reference_not_a_value(catalog_manifest: dict[str, Any]) -> None:
+    """C1.3-ASF-14: een geheime parameter wordt nooit ingevuld; de payload krijgt alleen de vault-verwijzing."""
     catalog_manifest["parameters"].append(
         {
             "name": "db_pw",
@@ -254,8 +257,281 @@ def test_catalog_secret_param_not_filled(catalog_manifest: dict[str, Any]) -> No
     result = translate(
         model, {"timezone": "Etc/UTC", "library_path": "/mnt/p1/fotos"}, Target(truenas_version="25.10.1")
     )
-    assert "parameter_value_not_allowed" in [f.code for f in result.findings]
+    assert "parameter_value_not_allowed" not in [f.code for f in result.findings]
+    assert result.payload is not None and result.ready_for_install
+    assert result.payload.values["db_password"] == "vault://app/voorbeeld-catalogus/db_pw"
+    assert [r.model_dump() for r in result.vault_refs] == [
+        {"path": "values.db_password", "parameter": "db_pw", "ref": "vault://app/voorbeeld-catalogus/db_pw"}
+    ]
+
+
+# ---------------------------------------------------------------------------------------------- C1.3-ASF-14
+CATALOG_13 = "valid-catalog-1-3.manifest.yaml"
+CATALOG_13_PARAMS = {"timezone": "Etc/UTC", "data_path": "/mnt/p1/sso"}
+CATALOG_13_TARGET = Target(truenas_version="25.10.1")
+OWN_REF = "vault://app/voorbeeld-sso/db_password"
+#: Testwaarde die op een geheim lijkt; hij mag nergens in de uitvoer terugkomen (V-094).
+SECRET = "Geheim-" + "Zq7" * 12
+
+
+def _catalog_13() -> dict[str, Any]:
+    return load_fixture(CATALOG_13)
+
+
+def _with_env_secret(custom_manifest: dict[str, Any], **param: Any) -> dict[str, Any]:
+    """Custom App met een omgevingsvariabele naar een geheim dat de Hub maakt (besluit gebruiker 2026-11-11)."""
+    custom_manifest["parameters"].append(
+        {
+            "name": "api_key",
+            "type": "string",
+            "source": "generated",
+            "secret": True,
+            "required": True,
+            "description_nl": "Sleutel die de Hub maakt (vault).",
+            **param,
+        }
+    )
+    custom_manifest["custom_app"]["env"].append({"name": "APP_KEY", "value_from": {"param": "api_key"}})
+    return custom_manifest
+
+
+def test_vault_ref_marker_has_exactly_these_fields() -> None:
+    """V-046: de markering in de uitvoer heeft precies deze velden, niet meer en niet minder."""
+    assert set(VaultRef.model_fields) == {"path", "parameter", "ref"}
+    assert set(TranslationResult.model_fields) == {
+        "ready_for_install",
+        "method",
+        "payload",
+        "preview_hash",
+        "compatibility",
+        "digest_readback",
+        "vault_refs",
+        "findings",
+    }
+    result = translate(_model(_catalog_13()), CATALOG_13_PARAMS, CATALOG_13_TARGET)
+    dumped = result.model_dump(mode="json")
+    assert [set(r) for r in dumped["vault_refs"]] == [{"path", "parameter", "ref"}]
+
+
+def test_catalog_hub_secret_becomes_only_a_vault_reference() -> None:
+    result = translate(_model(_catalog_13()), CATALOG_13_PARAMS, CATALOG_13_TARGET)
+    assert result.ready_for_install, [f.as_text() for f in result.findings]
+    assert result.payload is not None
+    assert result.payload.values["voorbeeld"] == {"db_password": OWN_REF}
+    assert [r.model_dump() for r in result.vault_refs] == [
+        {"path": "values.voorbeeld.db_password", "parameter": "db_password", "ref": OWN_REF}
+    ]
+    # de preview-hash bindt de verwijzing, nooit een waarde
+    assert result.preview_hash and result.preview_hash.startswith("sha256:")
+
+
+def test_vault_reference_uses_manifest_app_id_not_the_app_name() -> None:
+    result = translate(_model(_catalog_13()), CATALOG_13_PARAMS, CATALOG_13_TARGET, app_name="sso-thuis")
+    assert result.payload is not None and result.payload.app_name == "sso-thuis"
+    assert result.payload.values["voorbeeld"]["db_password"] == OWN_REF
+    assert [r.ref for r in result.vault_refs] == [OWN_REF]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"type": "string", "source": "generated", "secret": True},
+        {"type": "string", "source": "secret", "secret": True},
+        {"type": "secret_ref", "source": "generated", "secret": True},
+        {"type": "secret_ref", "source": "secret"},
+        {"type": "string", "source": "generated", "secret": False},
+    ],
+)
+def test_every_kind_of_secret_parameter_becomes_a_reference(change: dict[str, Any]) -> None:
+    """Bouwpunt 1: source generated, source secret en type secret_ref leveren alleen de verwijzing."""
+    data = _catalog_13()
+    for p in data["parameters"]:
+        if p["name"] == "db_password":
+            p.update(change)
+    result = translate(_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET)
+    assert result.payload is not None, [f.as_text() for f in result.findings]
+    assert result.payload.values["voorbeeld"]["db_password"] == OWN_REF
+    assert [r.parameter for r in result.vault_refs] == ["db_password"]
+
+
+def test_supplying_exactly_the_own_reference_is_the_same_translation() -> None:
+    without = translate(_model(_catalog_13()), CATALOG_13_PARAMS, CATALOG_13_TARGET)
+    with_ref = translate(_model(_catalog_13()), dict(CATALOG_13_PARAMS, db_password=OWN_REF), CATALOG_13_TARGET)
+    assert with_ref.ready_for_install and with_ref.payload == without.payload
+    assert with_ref.preview_hash == without.preview_hash and with_ref.vault_refs == without.vault_refs
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        SECRET,
+        "hunter2hunter2",
+        "vault://app/andere-app/db_password",  # verwijzing naar een andere app
+        "vault://app/voorbeeld-sso-x/db_password",  # lijkt op de eigen app-ID
+        "vault://app/voorbeeld-sso/secret_key",  # andere parameter van dezelfde app
+        "vault://voorbeeld-sso/db_password",  # oude vorm met twee delen
+        "vault://app/voorbeeld-sso/db_password/extra",
+        "vault://app/voorbeeld-sso/db_password\n",
+        " vault://app/voorbeeld-sso/db_password",
+        "VAULT://APP/voorbeeld-sso/db_password",
+        "",
+        12345678,
+        True,
+        None,
+        {"param": "db_password"},
+        [OWN_REF],
+    ],
+)
+def test_value_in_place_of_the_reference_is_refused_without_echo(value: Any) -> None:
+    """Bouwpunt 2: alles behalve precies de eigen verwijzing wordt geweigerd; de melding noemt alleen de parameter."""
+    result = translate(_model(_catalog_13()), dict(CATALOG_13_PARAMS, db_password=value), CATALOG_13_TARGET)
+    assert result.payload is None and not result.ready_for_install and result.vault_refs == []
+    refused = [f for f in result.findings if f.code == "parameter_value_not_allowed"]
+    assert len(refused) == 1 and refused[0].path == "values.voorbeeld.db_password"
+    assert "'db_password'" in refused[0].message
+    if isinstance(value, str) and value.strip() and value.strip() != OWN_REF:  # de eigen verwijzing is geen geheim
+        assert value.strip() not in result.model_dump_json()
+        assert value.strip() not in " ".join(f.as_text() for f in result.findings)
+
+
+def test_reference_to_another_app_names_the_reason_not_the_value() -> None:
+    foreign = "vault://app/andere-app/db_password"
+    result = translate(_model(_catalog_13()), dict(CATALOG_13_PARAMS, db_password=foreign), CATALOG_13_TARGET)
+    (refused,) = [f for f in result.findings if f.code == "parameter_value_not_allowed"]
+    assert "andere app" in refused.message and "andere-app" not in refused.message
+    assert "andere-app" not in result.model_dump_json()
+
+
+def test_custom_app_env_hub_secret_becomes_only_a_vault_reference(custom_manifest: dict[str, Any]) -> None:
+    """Besluit gebruiker 2026-11-11: ook een Custom App-env naar een geheim dat de Hub maakt krijgt de verwijzing."""
+    result = translate(_model(_with_env_secret(custom_manifest)), PARAMS, TARGET, app_name="web-thuis")
+    assert result.ready_for_install, [f.as_text() for f in result.findings]
+    assert result.payload is not None
+    assert result.payload.values["envs"][2] == {"name": "APP_KEY", "value": "vault://app/voorbeeld-web/api_key"}
+    assert [r.model_dump() for r in result.vault_refs] == [
+        {"path": "values.envs[2].value", "parameter": "api_key", "ref": "vault://app/voorbeeld-web/api_key"}
+    ]
+    for path, _value in _flatten(result.payload.values):  # het formulier van ix-app 1.4.8 blijft kloppen
+        assert path in FIELDS, path
+
+
+def test_custom_app_env_secret_value_or_foreign_reference_is_refused(custom_manifest: dict[str, Any]) -> None:
+    model = _model(_with_env_secret(custom_manifest))
+    for value in (SECRET, "vault://app/andere-app/api_key"):
+        result = translate(model, dict(PARAMS, api_key=value), TARGET)
+        assert result.payload is None and not result.ready_for_install and result.vault_refs == []
+        (refused,) = [f for f in result.findings if f.code == "parameter_value_not_allowed"]
+        assert refused.path == "custom_app.env[2].value_from" and "'api_key'" in refused.message
+        assert value not in result.model_dump_json()
+    ok = translate(model, dict(PARAMS, api_key="vault://app/voorbeeld-web/api_key"), TARGET)
+    assert ok.ready_for_install and [r.ref for r in ok.vault_refs] == ["vault://app/voorbeeld-web/api_key"]
+
+
+def test_secret_without_text_place_is_still_refused(custom_manifest: dict[str, Any]) -> None:
+    """Een verwijzing alleen op een tekstplek: een geheime poort, tijdzone of hostpad krijgt nooit een verwijzing."""
+    for p in custom_manifest["parameters"]:
+        if p["name"] == "web_port":
+            p.update(source="generated", secret=True)
+            p.pop("default")
+    result = translate(_model(custom_manifest), PARAMS, TARGET)
+    assert result.payload is None and result.vault_refs == []
+    (refused,) = [f for f in result.findings if f.code == "parameter_value_not_allowed"]
+    assert refused.path == "network.ports[0].host_port"
+    assert "vault://" not in result.model_dump_json()
+
+
+def test_secret_of_a_non_text_type_gets_no_reference() -> None:
+    data = _catalog_13()
+    for p in data["parameters"]:
+        if p["name"] == "web_port":
+            p.update(source="generated", secret=True)
+            p.pop("default")
+    result = translate(_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET)
+    assert result.payload is None and result.vault_refs == []
+    refused = [f for f in result.findings if f.code == "parameter_value_not_allowed"]
+    assert [f.path for f in refused] == ["values.network.web_port.port_number"]
+
+
+def test_custom_app_env_only_takes_a_secret_that_the_hub_makes(custom_manifest: dict[str, Any]) -> None:
+    """Verdediging in de diepte: de validator weigert al een ander geheim in het formulier; de vertaling ook."""
+    model = _model(_with_env_secret(custom_manifest))
+    data = model.model_dump(mode="json")
+    for p in data["parameters"]:
+        if p["name"] == "api_key":
+            p["source"] = "secret"
+    forged = Manifest.model_validate(data)  # buiten de validator om
+    result = translate(forged, PARAMS, TARGET)
+    assert result.payload is None and result.vault_refs == []
+    assert [f.path for f in result.findings if f.code == "parameter_value_not_allowed"] == [
+        "custom_app.env[2].value_from"
+    ]
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "vault://app/andere-app/db_password",
+        OWN_REF,
+        "VAULT://app/andere-app/geheim",
+        "prefix vault://app/andere-app/geheim",
+    ],
+)
+def test_literal_vault_reference_in_catalog_values_is_refused(literal: str) -> None:
+    """Alleen de vertaling maakt een verwijzing: een letterlijke verwijzing in het manifest zou de Hub het geheim van
+    een andere app laten invullen."""
+    data = _catalog_13()
+    data["values"]["voorbeeld"]["andere"] = literal
+    result = translate(_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET)
+    assert result.payload is None and not result.ready_for_install and result.vault_refs == []
+    refused = [f for f in result.findings if f.code == "vault_ref_not_allowed"]
+    assert [f.path for f in refused] == ["values.voorbeeld.andere"]
+    assert literal not in " ".join(f.message for f in result.findings)
+
+
+def test_literal_vault_reference_in_custom_app_env_is_refused(custom_manifest: dict[str, Any]) -> None:
+    custom_manifest["custom_app"]["env"].append({"name": "OTHER", "value": "vault://app/andere-app/db_password"})
+    result = translate(_model(custom_manifest), PARAMS, TARGET)
+    assert result.payload is None and result.vault_refs == []
+    assert [f.path for f in result.findings if f.code == "vault_ref_not_allowed"] == ["values.envs[2].value"]
+
+
+def test_vault_reference_in_a_normal_parameter_is_refused(custom_manifest: dict[str, Any]) -> None:
+    """Een gewone (wizard)parameter kan geen verwijzing binnensmokkelen."""
+    result = translate(_model(custom_manifest), dict(PARAMS, public_url="http://x/vault://app/a/b"), TARGET)
     assert result.payload is None
+    (invalid,) = [f for f in result.findings if f.code == "parameter_value_invalid"]
+    assert invalid.path == "custom_app.env[1].value_from" and "vault://app/a/b" not in invalid.message
+
+
+def test_secret_never_reaches_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    translate(_model(_catalog_13()), dict(CATALOG_13_PARAMS, db_password=SECRET), CATALOG_13_TARGET)
+    assert SECRET not in caplog.text
+
+
+def test_cli_translate_never_prints_the_secret(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from appstore.manifest.cli import main
+
+    params = tmp_path / "params.json"
+    cmd = [
+        "translate",
+        str(FIXTURES / "manifests" / CATALOG_13),
+        "--params",
+        str(params),
+        "--truenas-version",
+        "25.10.1",
+    ]
+    params.write_text(json.dumps(dict(CATALOG_13_PARAMS, db_password=SECRET)), encoding="utf-8")
+    code = main(cmd)
+    out = capsys.readouterr()
+    assert code != 0 and SECRET not in out.out and SECRET not in out.err
+    assert "parameter_value_not_allowed" in out.out
+    params.write_text(json.dumps(CATALOG_13_PARAMS), encoding="utf-8")
+    assert main(cmd) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["vault_refs"] == [
+        {"path": "values.voorbeeld.db_password", "parameter": "db_password", "ref": OWN_REF}
+    ]
 
 
 # ---------------------------------------------------------------------------------------------- contract 1.2 (M2, M3, M5)

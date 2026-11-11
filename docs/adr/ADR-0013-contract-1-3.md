@@ -103,6 +103,7 @@ in de code en de tests.
     healthcheck apart, ook bij "Custom User 568".
 14. **Niet in deze ronde:** C1.3-ASF-14 (vault-verwijzing voor geheime waarden van catalogusapps) is P2; tot dan weigert
     de vertaling een geheime waarde eerlijk (`parameter_value_not_allowed`) en staat er nooit een geheim in een payload.
+    Uitgewerkt in P2: [ADR-0015](ADR-0015-vault-verwijzing-geheimen-in-de-vertaling.md) (alleen een vault-verwijzing).
 
 ## Gevolgen
 

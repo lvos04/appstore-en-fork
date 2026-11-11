@@ -2,6 +2,18 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Geheimen in de vertaling: alleen een vault-verwijzing** (ADR-0015, C1.3-ASF-14):
+  - Een geheime parameter (`source: generated`/`secret`, `type: secret_ref`, `secret: true`) wordt nooit ingevuld; op zijn
+    plek komt `vault://app/<app_id>/<parameter>` (de vaste `app_id` uit het manifest, niet de gekozen appnaam). Dat
+    geldt in de `values` van een catalogusapp en, op besluit van de gebruiker (2026-11-11), in een omgevingsvariabele
+    van een Custom App naar een geheim dat de Hub maakt. Op een plek die een getypte waarde vraagt blijft een geheim
+    geweigerd.
+  - Nieuw veld `vault_refs` (`{path, parameter, ref}`) in de vertaling (`jl-manifest translate`, `POST
+    /catalog/v1/preview`), zodat de Hub en de executor weten wat zij invullen.
+  - Een opgegeven geheime waarde of een verwijzing naar een andere app wordt geweigerd (`parameter_value_not_allowed`);
+    de melding noemt de parameter, nooit de waarde. Een letterlijke `vault://`-tekst in het manifest geeft de nieuwe code
+    `vault_ref_not_allowed`. Het manifestschema en de validatorregels zijn niet gewijzigd.
+
 - **Review contract 1.3** (ADR-0014):
   - Healthcheck negeert proxy-omgevingsvariabelen (met `HTTP_PROXY` in het formulier werd de container onterecht
     `unhealthy`); de image-E2E controleert dat.

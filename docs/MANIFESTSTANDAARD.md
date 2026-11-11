@@ -3,7 +3,8 @@
 Normatief: [`schemas/manifest-v1.schema.json`](../schemas/manifest-v1.schema.json) (JSON Schema draft 2020-12) plus de
 regels in `apps/api/src/appstore/manifest/rules.py`; controlelijsten zonder installatie:
 [`schemas/checklist-v1.schema.json`](../schemas/checklist-v1.schema.json). Keuzes en redenen: [ADR-0002](adr/ADR-0002-manifeststandaard-v1.md),
-vertaling naar TrueNAS: [ADR-0004](adr/ADR-0004-truenas-vertaling.md) en [TRUENAS_APP_VALUES.md](TRUENAS_APP_VALUES.md).
+vertaling naar TrueNAS: [ADR-0004](adr/ADR-0004-truenas-vertaling.md), geheimen in de vertaling:
+[ADR-0015](adr/ADR-0015-vault-verwijzing-geheimen-in-de-vertaling.md) en [TRUENAS_APP_VALUES.md](TRUENAS_APP_VALUES.md).
 Voorbeeld: [`deploy/manifest/appstore-en-fork.manifest.yaml`](../deploy/manifest/appstore-en-fork.manifest.yaml).
 
 ## Valideren
@@ -71,8 +72,8 @@ Oude manifesten blijven tijdens de overgang **geldig**; de nieuwe eisen geven wa
 - **Geheimen die de Hub maakt:** `source: generated` + `secret: true` (contract 1.3 §3.1 a). De waarde staat nooit in
   het manifest (geen `default` of `example`, anders `secret_literal_forbidden`); in het formulier of de `values` geeft
   dat de **waarschuwing** `secret_in_form` (te accepteren) in plaats van een fout. `secret: true` met een andere
-  `source` dan `generated`/`secret` → `secret_param_invalid`. Tot de vault-verwijzing in de vertaling bestaat (P2,
-  C1.3-ASF-14) weigert de vertaling een geheime waarde (`parameter_value_not_allowed`): nooit een geheim in een payload.
+  `source` dan `generated`/`secret` → `secret_param_invalid`. De vertaling zet voor een geheim alleen een verwijzing
+  naar de vault van de Hub, nooit een waarde (P2, C1.3-ASF-14; zie "Geheimen in de vertaling" hieronder).
 - **`accepted_findings: [{code, reden_nl}]`** — alleen `backup_db_export_none`, `secret_in_form` (alleen bij een
   geheim dat de Hub maakt) en `digest_pending_release` (alleen vóór de eerste release van een eigen image).
   `--strict` faalt op elke andere waarschuwing én op een geaccepteerde code die niet (meer) optreedt
@@ -94,6 +95,29 @@ Oude manifesten blijven tijdens de overgang **geldig**; de nieuwe eisen geven wa
   formaat van jelly-leon-platform, met `kind` en `install` erbij). Valideren met `jl-manifest checklist`; de validator
   van manifest v1 weigert hem (`checklist_not_installable`). Regels: stap-ID's horen bij het document, besluiten van een
   stap staan in `besluiten`, alleen-lezen TrueNAS-methoden, geen voorbeeldwaarden.
+
+## Geheimen in de vertaling (C1.3-ASF-14, ADR-0015)
+
+Een geheime parameter (`source: generated` of `secret`, `type: secret_ref` of `secret: true`) wordt nooit ingevuld.
+`jl-manifest translate` en `POST /catalog/v1/preview` zetten op zijn plek alleen de tekst
+`vault://app/<app_id>/<parameter>`, met de vaste `app_id` uit het manifest (nooit de gekozen appnaam). De Hub maakt en
+bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
+
+- **Waar:** in de `values` van een catalogusapp, en in een omgevingsvariabele van een Custom App
+  (`custom_app.env[].value_from`) alleen naar een geheim dat de Hub maakt (`source: generated` + `secret: true`;
+  besluit van de gebruiker van 2026-11-11, dat afwijkt van contract 1.3 §3.1 "nooit geheimen in het Custom
+  App-formulier" — de contractwijziging volgt in ai-server-manager). Een geheim op een plek die een getypte waarde vraagt
+  (hostpoort, hostpad, tijdzone, GPU) of van een ander type dan `string`/`secret_ref` blijft geweigerd
+  (`parameter_value_not_allowed`).
+- **Opgegeven waarden:** voor een geheime parameter mag hooguit precies de eigen verwijzing worden meegegeven. Een
+  geheime waarde, een verwijzing naar een andere app of een andere parameter, of iets anders → `parameter_value_not_allowed`.
+  De melding noemt de parameter, nooit de waarde; de waarde staat ook niet in het antwoord, het bewijs of de log.
+- **Markering:** de uitvoer heeft `vault_refs`: per verwijzing precies `{path, parameter, ref}`, bijvoorbeeld
+  `{"path": "values.envs[2].value", "parameter": "api_key", "ref": "vault://app/<app_id>/api_key"}`. Zonder payload is de
+  lijst leeg. De `preview_hash` gaat over de payload met de verwijzingen.
+- **Alleen de vertaling maakt een verwijzing:** een letterlijke `vault://`-tekst in de `values` of in
+  `custom_app.env[].value` → `vault_ref_not_allowed` (geen payload); een gewone parameter met `vault://` in de waarde →
+  `parameter_value_invalid`.
 
 ## Adoptiemanifest van een bestaande app (B08-002, ADR-0010)
 
@@ -226,6 +250,7 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `parameter_value_invalid` | Waarde voor een parameter is ongeldig. |
 | `parameter_value_unknown` | Waarde opgegeven voor een onbekende parameter. |
 | `parameter_value_not_allowed` | Deze parameter mag niet via de installatie worden meegegeven. |
+| `vault_ref_not_allowed` | Vault-verwijzing die de vertaling niet zelf heeft gemaakt (alleen voor een geheime parameter). |
 | `manifest_invalid` | Het manifest is niet geldig; vertalen is geweigerd. |
 | `ix_app_version_unknown` | Versie van de TrueNAS-catalogusapp ix-app is onbekend. |
 | `ix_app_version_unsupported` | Versie van ix-app wordt niet ondersteund. |

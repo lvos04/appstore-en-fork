@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -129,6 +130,45 @@ def test_ex47_preview_refused_before_execution(linked: TestClient, hub: FakeHub)
     assert "vóór uitvoering" in body["blocked_reason_nl"]
     ev = linked.get(f"/connector/v1/evidence/{body['evidence_id']}", headers=hub.auth()).json()
     assert "privileged_forbidden" in ev["summary"]["blocking_codes"]
+
+
+def test_preview_secret_only_as_vault_reference_never_echoed(
+    linked: TestClient, hub: FakeHub, caplog: pytest.LogCaptureFixture
+) -> None:
+    """C1.3-ASF-14 via de API: een geheim dat de Hub maakt staat alleen als vault-verwijzing in het antwoord; een
+    opgegeven waarde wordt geweigerd en staat niet in het antwoord, het bewijs of de log (V-094)."""
+    text = (FIXTURES / "manifests" / "valid-catalog-1-3.manifest.yaml").read_text()
+    secret = "Geheim-" + "Qw8" * 12
+    body: dict[str, Any] = {
+        "manifest_yaml": text,
+        "parameters": {"timezone": "Etc/UTC", "data_path": "/mnt/p1/sso"},
+        "target": {"truenas_version": "25.10.1"},
+        "inventory": {"observed_at": datetime.now(UTC).isoformat(), "source": "simulator", "apps": []},
+    }
+    with caplog.at_level(logging.DEBUG):
+        ok = linked.post("/catalog/v1/preview", headers=hub.auth(roles=["operator"]), json=body)
+        refused = linked.post(
+            "/catalog/v1/preview",
+            headers=hub.auth(roles=["operator"]),
+            json={**body, "parameters": {**body["parameters"], "db_password": secret}},
+        )
+        ev = linked.get(f"/connector/v1/evidence/{refused.json()['evidence_id']}", headers=hub.auth())
+    assert ok.status_code == 200 and ok.json()["ready_for_install"] is True, ok.json()
+    translation = ok.json()["translation"]
+    assert translation["payload"]["values"]["voorbeeld"] == {"db_password": "vault://app/voorbeeld-sso/db_password"}
+    assert translation["vault_refs"] == [
+        {
+            "path": "values.voorbeeld.db_password",
+            "parameter": "db_password",
+            "ref": "vault://app/voorbeeld-sso/db_password",
+        }
+    ]
+    assert refused.status_code == 200 and refused.json()["ready_for_install"] is False
+    assert refused.json()["translation"]["payload"] is None and refused.json()["translation"]["vault_refs"] == []
+    assert secret not in refused.text
+    assert ev.status_code == 200 and secret not in ev.text
+    assert "parameter_value_not_allowed" in ev.json()["summary"]["blocking_codes"]
+    assert secret not in caplog.text
 
 
 def test_preview_ready_and_unknowns(linked: TestClient, hub: FakeHub) -> None:

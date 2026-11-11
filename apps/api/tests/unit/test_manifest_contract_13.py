@@ -196,20 +196,21 @@ def test_upstream_custom_app_names_the_no_new_privileges_risk() -> None:
     assert report.valid and report.codes() == ["restrisico_nnp_ontbreekt"] and not report.strict_valid
 
 
-def test_hub_generated_secret_is_never_translated_into_values_yet() -> None:
-    """C1.3-ASF-14 (P2, nog niet gebouwd): de vertaling zet alleen een vault-verwijzing, nooit een waarde. Tot dan
-    weigert de vertaling een geheime waarde eerlijk; er komt nooit een geheim in de payload."""
+def test_hub_generated_secret_is_only_a_vault_reference_in_values() -> None:
+    """C1.3-ASF-14 (P2): de vertaling zet alleen de vault-verwijzing ``vault://app/<app_id>/<parameter>``, nooit een
+    waarde; de executor vult de waarde in. Een opgegeven waarde wordt geweigerd en komt nergens in de uitvoer."""
     _, model = validate_data(fixture(CATALOG_13))
     assert model is not None
+    params = {"timezone": "Etc/UTC", "web_port": 30995, "data_path": "/mnt/p1/sso"}
+    result = translate(model, params, Target(truenas_version="25.10.1"))
+    assert result.ready_for_install and result.payload is not None
+    assert result.payload.values["voorbeeld"]["db_password"] == "vault://app/voorbeeld-sso/db_password"
+    assert [(r.path, r.parameter) for r in result.vault_refs] == [("values.voorbeeld.db_password", "db_password")]
     secret = "geheim-" + "x" * 32
-    result = translate(
-        model,
-        {"timezone": "Etc/UTC", "web_port": 30995, "data_path": "/mnt/p1/sso", "db_password": secret},
-        Target(truenas_version="25.10.1"),
-    )
-    assert result.payload is None and not result.ready_for_install
-    assert "parameter_value_not_allowed" in [f.code for f in result.findings]
-    assert secret not in result.model_dump_json()
+    refused = translate(model, dict(params, db_password=secret), Target(truenas_version="25.10.1"))
+    assert refused.payload is None and not refused.ready_for_install and refused.vault_refs == []
+    assert "parameter_value_not_allowed" in [f.code for f in refused.findings]
+    assert secret not in refused.model_dump_json()
 
 
 # ---------------------------------------------------------------------------------------------- kind: checklist
