@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,9 +13,12 @@ import pytest
 import yaml
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
+from sqlalchemy import update
+from sqlalchemy.orm import Session
 
 from appstore.api.common import AppContext
 from appstore.manifest.provenance import b64url, raw_public, sign_data
+from appstore.models import ManifestVersion
 from appstore.worker import run_once, startup
 from tests.conftest import FIXTURES
 from tests.fakehub import FakeHub
@@ -132,21 +136,39 @@ def test_ex47_preview_refused_before_execution(linked: TestClient, hub: FakeHub)
     assert "privileged_forbidden" in ev["summary"]["blocking_codes"]
 
 
-def test_preview_secret_only_as_vault_reference_never_echoed(
-    linked: TestClient, hub: FakeHub, caplog: pytest.LogCaptureFixture
-) -> None:
-    """C1.3-ASF-14 via de API: een geheim dat de Hub maakt staat alleen als vault-verwijzing in het antwoord; een
-    opgegeven waarde wordt geweigerd en staat niet in het antwoord, het bewijs of de log (V-094)."""
-    text = (FIXTURES / "manifests" / "valid-catalog-1-3.manifest.yaml").read_text()
-    secret = "Geheim-" + "Qw8" * 12
-    body: dict[str, Any] = {
-        "manifest_yaml": text,
+CATALOG_13 = "valid-catalog-1-3.manifest.yaml"
+
+
+def _sso_body(**source: Any) -> dict[str, Any]:
+    return {
+        **source,
         "parameters": {"timezone": "Etc/UTC", "data_path": "/mnt/p1/sso"},
         "target": {"truenas_version": "25.10.1"},
         "inventory": {"observed_at": datetime.now(UTC).isoformat(), "source": "simulator", "apps": []},
     }
+
+
+def _add_bundled(worker_ctx: AppContext, bundled_dir: Path, name: str) -> None:
+    shutil.copy(FIXTURES / "manifests" / name, bundled_dir / name)
+    _sync_bundled(worker_ctx)
+
+
+def test_preview_secret_only_as_vault_reference_never_echoed(
+    linked: TestClient, hub: FakeHub, worker_ctx: AppContext, bundled_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """C1.3-ASF-14 via de API: een geheim dat de Hub maakt staat alleen als vault-verwijzing in het antwoord (manifest
+    uit de catalogus, via app_id of version_id); een opgegeven waarde wordt geweigerd en staat niet in het antwoord,
+    het bewijs of de log (V-094)."""
+    _add_bundled(worker_ctx, bundled_dir, CATALOG_13)
+    secret = "Geheim-" + "Qw8" * 12
+    body = _sso_body(app_id="voorbeeld-sso")
     with caplog.at_level(logging.DEBUG):
         ok = linked.post("/catalog/v1/preview", headers=hub.auth(roles=["operator"]), json=body)
+        by_version = linked.post(
+            "/catalog/v1/preview",
+            headers=hub.auth(roles=["operator"]),
+            json=_sso_body(version_id=ok.json()["version_id"]),
+        )
         refused = linked.post(
             "/catalog/v1/preview",
             headers=hub.auth(roles=["operator"]),
@@ -163,12 +185,80 @@ def test_preview_secret_only_as_vault_reference_never_echoed(
             "ref": "vault://app/voorbeeld-sso/db_password",
         }
     ]
+    assert by_version.status_code == 200 and by_version.json()["ready_for_install"] is True
+    assert by_version.json()["translation"]["vault_refs"] == translation["vault_refs"]
     assert refused.status_code == 200 and refused.json()["ready_for_install"] is False
     assert refused.json()["translation"]["payload"] is None and refused.json()["translation"]["vault_refs"] == []
     assert secret not in refused.text
     assert ev.status_code == 200 and secret not in ev.text
     assert "parameter_value_not_allowed" in ev.json()["summary"]["blocking_codes"]
     assert secret not in caplog.text
+
+
+def _blocking(resp: Any) -> set[str]:
+    return {f["code"] for f in resp.json()["translation"]["findings"] if f["severity"] == "error"}
+
+
+def test_preview_of_a_loose_manifest_never_gets_a_vault_reference(linked: TestClient, hub: FakeHub) -> None:
+    """R-VEILIG-1: de app_id van een los manifest (``manifest_yaml``) staat niet vast. Een operator kan zo geen
+    verwijzing naar het geheim van een andere app (hier ``voorbeeld-catalogus``) in de env van een willekeurige image
+    laten zetten: geen verwijzing, niet installeerbaar."""
+    data = yaml.safe_load((FIXTURES / "manifests" / "valid-custom-upstream.manifest.yaml").read_text())
+    data["app_id"] = "voorbeeld-catalogus"
+    data["parameters"].append(
+        {
+            "name": "db_password",
+            "type": "string",
+            "source": "generated",
+            "secret": True,
+            "required": True,
+            "description_nl": "Geheim dat de Hub maakt.",
+        }
+    )
+    data["custom_app"]["env"].append({"name": "EXFIL", "value_from": {"param": "db_password"}})
+    inventory = {"observed_at": datetime.now(UTC).isoformat(), "source": "simulator", "apps": []}
+    resp = linked.post(
+        "/catalog/v1/preview",
+        headers=hub.auth(roles=["operator"]),
+        json={
+            "manifest_yaml": yaml.safe_dump(data, sort_keys=False),
+            "parameters": PARAMS,
+            "target": {"truenas_version": "25.10.1", "ix_app_version": "1.4.8"},
+            "inventory": inventory,
+        },
+    )
+    assert resp.status_code == 200 and resp.json()["validation"]["valid"] is True
+    assert resp.json()["ready_for_install"] is False
+    assert resp.json()["translation"]["payload"] is None and resp.json()["translation"]["vault_refs"] == []
+    assert "parameter_value_not_allowed" in _blocking(resp) and "vault://" not in resp.text
+    loose = linked.post(
+        "/catalog/v1/preview",
+        headers=hub.auth(roles=["operator"]),
+        json=_sso_body(manifest_yaml=(FIXTURES / "manifests" / CATALOG_13).read_text()),
+    )
+    assert loose.json()["ready_for_install"] is False and loose.json()["translation"]["vault_refs"] == []
+    assert "parameter_value_not_allowed" in _blocking(loose) and "vault://" not in loose.text
+
+
+@pytest.mark.parametrize("change", [{"valid": False}, {"entry_id": None}])
+def test_preview_of_a_version_outside_the_catalog_gets_no_vault_reference(
+    linked: TestClient, hub: FakeHub, worker_ctx: AppContext, bundled_dir: Path, change: dict[str, Any]
+) -> None:
+    """R-VEILIG-1: alleen een geldige versie die bij een catalogus-entry met dezelfde app_id hoort, legt de app_id
+    vast. Een geweigerde of losse versie (bijvoorbeeld ``app_id_claimed_by_other_source``) krijgt geen verwijzing."""
+    _add_bundled(worker_ctx, bundled_dir, CATALOG_13)
+    version_id = linked.post(
+        "/catalog/v1/preview", headers=hub.auth(roles=["operator"]), json=_sso_body(app_id="voorbeeld-sso")
+    ).json()["version_id"]
+    with Session(worker_ctx.engine) as s:
+        s.execute(update(ManifestVersion).where(ManifestVersion.id == uuid.UUID(version_id)).values(**change))
+        s.commit()
+    resp = linked.post(
+        "/catalog/v1/preview", headers=hub.auth(roles=["operator"]), json=_sso_body(version_id=version_id)
+    )
+    assert resp.status_code == 200 and resp.json()["ready_for_install"] is False
+    assert resp.json()["translation"]["vault_refs"] == [] and "parameter_value_not_allowed" in _blocking(resp)
+    assert "vault://" not in resp.text
 
 
 def test_preview_ready_and_unknowns(linked: TestClient, hub: FakeHub) -> None:

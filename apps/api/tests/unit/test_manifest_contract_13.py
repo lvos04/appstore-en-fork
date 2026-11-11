@@ -202,12 +202,12 @@ def test_hub_generated_secret_is_only_a_vault_reference_in_values() -> None:
     _, model = validate_data(fixture(CATALOG_13))
     assert model is not None
     params = {"timezone": "Etc/UTC", "web_port": 30995, "data_path": "/mnt/p1/sso"}
-    result = translate(model, params, Target(truenas_version="25.10.1"))
+    result = translate(model, params, Target(truenas_version="25.10.1"), trusted_app_id=True)
     assert result.ready_for_install and result.payload is not None
     assert result.payload.values["voorbeeld"]["db_password"] == "vault://app/voorbeeld-sso/db_password"
     assert [(r.path, r.parameter) for r in result.vault_refs] == [("values.voorbeeld.db_password", "db_password")]
     secret = "geheim-" + "x" * 32
-    refused = translate(model, dict(params, db_password=secret), Target(truenas_version="25.10.1"))
+    refused = translate(model, dict(params, db_password=secret), Target(truenas_version="25.10.1"), trusted_app_id=True)
     assert refused.payload is None and not refused.ready_for_install and refused.vault_refs == []
     assert "parameter_value_not_allowed" in [f.code for f in refused.findings]
     assert secret not in refused.model_dump_json()

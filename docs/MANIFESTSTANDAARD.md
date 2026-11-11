@@ -103,21 +103,29 @@ Een geheime parameter (`source: generated` of `secret`, `type: secret_ref` of `s
 `vault://app/<app_id>/<parameter>`, met de vaste `app_id` uit het manifest (nooit de gekozen appnaam). De Hub maakt en
 bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
 
+- **Alleen bij een vaste `app_id`:** een los manifest kan zich de `app_id` van een andere app geven. Een verwijzing
+  komt er alleen bij `POST /catalog/v1/preview` met `app_id` of `version_id` van een geldige catalogusversie (die bij
+  een catalogus-entry met dezelfde `app_id` hoort) en bij `jl-manifest translate` (eigen bestand, installeert niets).
+  `POST /catalog/v1/preview` met `manifest_yaml` geeft voor een geheim `parameter_value_not_allowed`. `vault_refs` is
+  geen autorisatie: de Hub bindt de `app_id` aan de catalogusversie en aan het doel van de actie.
 - **Waar:** in de `values` van een catalogusapp, en in een omgevingsvariabele van een Custom App
   (`custom_app.env[].value_from`) alleen naar een geheim dat de Hub maakt (`source: generated` + `secret: true`;
   besluit van de gebruiker van 2026-11-11, dat afwijkt van contract 1.3 §3.1 "nooit geheimen in het Custom
   App-formulier" — de contractwijziging volgt in ai-server-manager). Een geheim op een plek die een getypte waarde vraagt
   (hostpoort, hostpad, tijdzone, GPU) of van een ander type dan `string`/`secret_ref` blijft geweigerd
-  (`parameter_value_not_allowed`).
+  (`parameter_value_not_allowed`), net als een verwijzing onder een sleutel met `.`, `[` of `]` (dubbelzinnig pad) of
+  onder een sleutel `image`, `images`, `TZ`, `notes` of `labels` (openbaar of gelogd).
 - **Opgegeven waarden:** voor een geheime parameter mag hooguit precies de eigen verwijzing worden meegegeven. Een
-  geheime waarde, een verwijzing naar een andere app of een andere parameter, of iets anders → `parameter_value_not_allowed`.
+  geheime waarde, een verwijzing naar een andere app of een andere parameter, of iets anders → `parameter_value_not_allowed`,
+  ook voor een geheime parameter die het manifest niet gebruikt (`parameters.<naam>`).
   De melding noemt de parameter, nooit de waarde; de waarde staat ook niet in het antwoord, het bewijs of de log.
 - **Markering:** de uitvoer heeft `vault_refs`: per verwijzing precies `{path, parameter, ref}`, bijvoorbeeld
   `{"path": "values.envs[2].value", "parameter": "api_key", "ref": "vault://app/<app_id>/api_key"}`. Zonder payload is de
-  lijst leeg. De `preview_hash` gaat over de payload met de verwijzingen.
-- **Alleen de vertaling maakt een verwijzing:** een letterlijke `vault://`-tekst in de `values` of in
-  `custom_app.env[].value` → `vault_ref_not_allowed` (geen payload); een gewone parameter met `vault://` in de waarde →
-  `parameter_value_invalid`.
+  lijst leeg. De `preview_hash` gaat over de payload met de verwijzingen. `path` is eenduidig: elk deel tussen de punten
+  is een sleutel zonder `.`, `[` of `]`, `[i]` is een lijstpositie.
+- **Alleen de vertaling maakt een verwijzing:** een letterlijke `vault://`-tekst (ook in een sleutel) in de `values` of
+  in `custom_app.env[].value` → `vault_ref_not_allowed` (geen payload); de controle vergelijkt de echte plek, niet het
+  pad als tekst. Een gewone parameter met `vault://` in de waarde → `parameter_value_invalid`.
 
 ## Adoptiemanifest van een bestaande app (B08-002, ADR-0010)
 

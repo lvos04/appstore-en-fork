@@ -521,7 +521,12 @@ def preview(body: PreviewRequest, request: Request, db: DB, principal: Operator)
         )
     else:
         translation = translate(
-            manifest, body.parameters, body.target, app_name=body.app_name, manifest_sha256=report.manifest_sha256
+            manifest,
+            body.parameters,
+            body.target,
+            app_name=body.app_name,
+            manifest_sha256=report.manifest_sha256,
+            trusted_app_id=_app_id_bound(db, version, manifest),
         )
         conflicts = analyse(manifest, translation.payload, body.inventory)
         ready = translation.ready_for_install and conflicts.status == "ok"
@@ -558,6 +563,17 @@ def preview(body: PreviewRequest, request: Request, db: DB, principal: Operator)
     db.commit()
     result["evidence_id"] = str(evidence_id)
     return result
+
+
+def _app_id_bound(db: Session, version: ManifestVersion | None, manifest: Manifest) -> bool:
+    """R-VEILIG-1 (ADR-0015): alleen een geldige versie die bij een catalogus-entry met dezelfde ``app_id`` hoort, legt
+    de ``app_id`` vast (één bron per ``app_id``, ``app_id_claimed_by_other_source``). Een los manifest
+    (``manifest_yaml``) of een geweigerde versie kan zich de ``app_id`` van een andere app geven: dan geen
+    vault-verwijzing."""
+    if version is None or not version.valid or version.entry_id is None:
+        return False
+    entry = db.get(CatalogEntry, version.entry_id)
+    return entry is not None and entry.app_id == manifest.app_id == version.app_id
 
 
 # ---------------------------------------------------------------------------------------------- import (B08-002)

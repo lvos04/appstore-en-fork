@@ -13,6 +13,14 @@
   - Een opgegeven geheime waarde of een verwijzing naar een andere app wordt geweigerd (`parameter_value_not_allowed`);
     de melding noemt de parameter, nooit de waarde. Een letterlijke `vault://`-tekst in het manifest geeft de nieuwe code
     `vault_ref_not_allowed`. Het manifestschema en de validatorregels zijn niet gewijzigd.
+  - Herstel na de review (ADR-0015): een verwijzing alleen bij een vaste `app_id` (`POST /catalog/v1/preview` met een
+    geldige catalogusversie, of `jl-manifest translate`); `POST /catalog/v1/preview` met `manifest_yaml` geeft voor een
+    geheim `parameter_value_not_allowed`. Geen verwijzing onder een sleutel met `.`, `[` of `]` of onder `image`,
+    `images`, `TZ`, `notes` of `labels`; de controle op letterlijke verwijzingen vergelijkt de echte plek en kijkt ook
+    naar sleutels; een waarde voor een ongebruikte geheime parameter wordt ook geweigerd.
+  - Gevolg buiten deze repo: de CI van jelly-leon-platform haalt `jl-manifest` ongepind van de werkbranch; de test
+    `test_authentik_translation_is_blocked_until_the_executor_fills_secrets` daar verwacht nog de oude melding met
+    `capability_unavailable` (codes en paden zijn gelijk). Bijwerken in jelly-leon-platform (S-P2-395).
 
 - **Review contract 1.3** (ADR-0014):
   - Healthcheck negeert proxy-omgevingsvariabelen (met `HTTP_PROXY` in het formulier werd de container onterecht
