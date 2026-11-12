@@ -21,7 +21,13 @@ from appstore.manifest import validate_data
 from appstore.manifest.canonical import canonical_json
 from appstore.manifest.findings import CODES, Finding, Severity
 from appstore.manifest.model import Manifest
-from appstore.manifest.rules import has_account_word, is_account_name, t2_safety_net_reasons
+from appstore.manifest.rules import (
+    check_manifest,
+    has_account_word,
+    is_account_name,
+    secret_text_findings,
+    t2_safety_net_reasons,
+)
 from appstore.manifest.translate import Target, filled_value_findings, translate
 from tests.conftest import REPO_ROOT
 from tests.geheimen_proeven import (
@@ -116,19 +122,29 @@ def _lange_sleutel(stuk: str, lengte: int, achter: str = "") -> str:
 def test_long_keys_on_many_paths_stay_linear(stuk: str) -> None:
     """Zonder cache telt elke sleutel in een pad of melding één keer per doorloop (ADR-0019): een sleutel van 60 000
     tekens met duizenden treffers eronder, of een lange geheimnaam boven duizenden parameterplekken, is in minder dan
-    2 s getoetst en vertaald (met het pad per treffer opnieuw opgebouwd duurde dit minuten)."""
+    2 s getoetst en vertaald (met het pad per treffer opnieuw opgebouwd duurde dit minuten). ADR-0022: het rapport van
+    ``validate_data`` stopt na 1000 meldingen; de regels zelf (``secret_text_findings`` en ``check_manifest``, zonder
+    de grens per rapport) maken nog alle treffers, en die tijd wordt gemeten."""
     sleutel = _lange_sleutel(stuk, 60_000)
     treffers = met_waarden({sleutel: {f"a{i}": "credentialSecret=x" for i in range(3000)}})
     start = time.perf_counter()
+    gevonden = secret_text_findings(treffers) + check_manifest(Manifest.model_validate(treffers))
+    assert time.perf_counter() - start < 2.0
+    assert sum(f.severity is Severity.ERROR for f in gevonden) >= 3000
+    start = time.perf_counter()
     report, _ = validate_data(treffers)
     assert time.perf_counter() - start < 2.0
-    assert report.errors >= 3000
+    assert len(report.findings) == 1001 and "te_veel_meldingen" in report.codes()
     geheim = _lange_sleutel(stuk, 60_000, "_password")
     plekken = met_waarden({geheim: {f"a{i}": {"param": "w"} for i in range(3000)}}, wizard("w"))
     start = time.perf_counter()
+    gevonden = secret_text_findings(plekken) + check_manifest(Manifest.model_validate(plekken))
+    assert time.perf_counter() - start < 2.0
+    assert sum(f.severity is Severity.ERROR for f in gevonden) >= 3000
+    start = time.perf_counter()
     report, _ = validate_data(plekken)
     assert time.perf_counter() - start < 2.0
-    assert report.errors >= 3000
+    assert len(report.findings) == 1001 and "te_veel_meldingen" in report.codes()
 
     def change(d: dict[str, Any]) -> None:
         d["parameters"].append(wizard("w"))

@@ -13,6 +13,7 @@ import hashlib
 import json
 from functools import lru_cache
 from importlib import resources
+from itertools import islice
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -22,7 +23,7 @@ from pydantic import ValidationError as PydanticError
 
 from .. import __version__
 from .canonical import canonical_json, sha256_digest
-from .findings import Finding, Severity, error
+from .findings import MAX_FINDINGS, Finding, Severity, TooManyFindingsError, error, finding_budget
 from .loader import load_manifest_text
 from .model import Manifest
 from .rules import check_manifest, recognised_secret, render_shown, secret_text_findings, shown_key
@@ -111,7 +112,13 @@ def _shown(data: dict[str, Any], err: JsonSchemaError) -> str:
 
 def _schema_findings(data: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
-    errors = sorted(_validator().iter_errors(data), key=lambda e: (list(map(str, e.absolute_path)), e.validator))
+    # ADR-0022: elke schemafout geeft minstens één melding; meer dan MAX_FINDINGS fouten geven dus altijd
+    # te_veel_meldingen. Daarom niet meer dan MAX_FINDINGS + 1 fouten ophalen (en sorteren): zo staan niet alle
+    # schemafouten van een groot manifest tegelijk in het geheugen. Bij hooguit MAX_FINDINGS fouten is alles gelijk.
+    errors = sorted(
+        islice(_validator().iter_errors(data), MAX_FINDINGS + 1),
+        key=lambda e: (list(map(str, e.absolute_path)), e.validator),
+    )
     for err in errors:
         path = _path(err)
         kw = str(err.validator)
@@ -278,6 +285,16 @@ def validate_data(data: Any) -> tuple[ValidationReport, Manifest | None]:
             ],
             manifest_sha,
         ), None
+    # ADR-0022: hooguit MAX_FINDINGS meldingen; bij de volgende stopt het verzamelen (fail-closed, geen model)
+    with finding_budget() as budget:
+        try:
+            return _checked(data, manifest_sha)
+        except TooManyFindingsError:
+            return build_report(data, budget.result(), manifest_sha), None
+
+
+def _checked(data: dict[str, Any], manifest_sha: str) -> tuple[ValidationReport, Manifest | None]:
+    """Compose-detectie, schema, tekstregels, model en semantische regels (binnen het budget van ADR-0022)."""
     findings = _compose_findings(data)
     findings.extend(_schema_findings(data))
     # ADR-0016 W2: tekstregels op de ruwe gegevens, zodat de melding er ook is als het schema faalt; ze houden de

@@ -20,6 +20,16 @@ jl-manifest translate mijn-app.manifest.yaml --params p.json --truenas-version <
 ```
 Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert niets uit).
 
+**Hooguit 1000 meldingen per rapport (ADR-0022).** Een rapport verzamelt hooguit 1000 meldingen (`MAX_FINDINGS` in
+`apps/api/src/appstore/manifest/findings.py`). Komt er nog een bij, dan stopt het verzamelen: het rapport houdt de
+eerste 1000 meldingen en krijgt één vaste fout `te_veel_meldingen` (dus hooguit 1001 regels). Dat is fail-closed: het
+rapport is ongeldig, er is geen model en de vertaling heeft geen payload, `preview_hash` of `vault_refs`. Het geldt voor
+de validatie (`jl-manifest validate`, `POST /catalog/v1/validate` met het JSON-veld `manifest` of met `manifest_yaml`,
+en de catalogussynchronisatie, die daar alleen haar eigen controles op handtekening en bron aan toevoegt), voor de
+vertaling (`jl-manifest translate` en `POST /catalog/v1/preview`) en voor de conflictanalyse van de preview, elk als
+eigen rapport. De bestaande manifesten geven hooguit 23 meldingen. Zonder deze grens gaf één verzoek van 256 KiB van
+de laagste rol 126 112 meldingen: een antwoord van 281 MiB en ongeveer 2 GiB extra geheugen.
+
 ## Opbouw in het kort
 
 | Veld | Betekenis |
@@ -140,7 +150,8 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
   ingevuld (`account_gegevens_verboden` of `secret_in_form`); een parameter met een geheimnaam op een plek waarvan de
   eigen naam of een voorouder een accountwoord heeft (`admin: {param: db_password}`, ook als vault-verwijzing) →
   `account_gegevens_verboden` (ADR-0019), net als een parameter met een geheimmarkering op zo'n plek (`admin.pw` naar
-  `init_value`; ADR-0021); een `HUB_*`-naam die de vertaling niet zelf zette →
+  `init_value`; ADR-0021) en, op elke plek, een parameter met een geheimmarkering waarvan de eigen naam een accountwoord
+  als heel naamdeel heeft (`x` of `X` naar `admin_pw`; ADR-0022); een `HUB_*`-naam die de vertaling niet zelf zette →
   `reserved_env`. Dan is er geen payload; de melding noemt het pad, nooit de waarde. Alleen de naam
   `HUB_ENROLLMENT_TOKEN` mag een geheim dragen (het eenmalige enrollment-token, contract 1.3 §3.1), en alleen als de
   vertaling hem zelf op die plek zette (dat doet zij nu nooit); T1 en T2 gelden ook daar. `HUB_TOKEN`, `HUB_SECRET` en
@@ -150,7 +161,7 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
   `vertaling_te_groot`, zonder payload (fail-closed); na de 256e plek vult de vertaling niets meer in. De bestaande
   manifesten hebben hooguit 11 plekken en een payload van een paar KiB.
 
-## Geheimen en accountgegevens weigeren (ADR-0016 W2, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021)
+## Geheimen en accountgegevens weigeren (ADR-0016 W2, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021, ADR-0022)
 
 Een account (beheerder of dienstaccount) gaat nooit door het manifest, het formulier of Git (ADR-0016, besluit 1).
 Daarom weigert de validator geheimen en accountgegevens overal, ook als het manifest geen `accounts` heeft. De melding
@@ -162,7 +173,8 @@ sleutel met een `=` of met iets dat T1/T2 herkent, staat in pad en melding als `
 en een herkende waarde in `app_id`, `version` of `install.method` staat niet in het rapport (het veld is dan leeg).
 Een sleutel van meer dan 256 tekens staat in pad en melding ook als `<verborgen>` (één vaste vorm; de regels zelf
 lezen de hele sleutel), en een pad van meer dan 1024 tekens staat ingekort in de melding: de eerste 1024 tekens en dan
-`…` (ADR-0021). Zo blijft een melding klein, hoe lang een sleutel ook is en hoeveel meldingen er ook zijn.
+`…` (ADR-0021). Zo blijft één melding klein, hoe lang een sleutel ook is. Het aantal meldingen begrenst dat niet; dat
+doet de grens van 1000 meldingen per rapport (ADR-0022, zie "Valideren").
 
 - **Geheimnaam:** een naam waarin `PASS`, `PASSWD`, `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `APIKEY`, `PRIVATE_KEY`,
   `PRIVATEKEY`, `CREDENTIAL`, `AUTH_KEY`, `SALT` of `WACHTWOORD` staat, gevolgd door het einde van de naam of door `_`,
@@ -200,7 +212,11 @@ lezen de hele sleutel), en een pad van meer dan 1024 tekens staat ingekort in de
   gebruikt, geeft de fout `secret_in_form`. Op een plek waarvan de eigen naam of een voorouder een accountwoord heeft,
   telt ook de geheimmarkering van de parameter: een parameter met `secret: true`, `type: secret_ref` of `source:
   secret`/`generated` geeft daar `account_gegevens_verboden`, ook als zijn naam geen geheimwoord heeft (`admin_pw` naar
-  de omgevingsvariabele `ADMIN_PW`, `admin.pw` of `admin: {param: init_value}`; ADR-0021, binnen besluit C-12). De
+  de omgevingsvariabele `ADMIN_PW`, `admin.pw` of `admin: {param: init_value}`; ADR-0021, binnen besluit C-12). En
+  een parameter met een geheimmarkering waarvan de eigen naam een accountwoord als heel naamdeel heeft (`admin_pw`,
+  `root_key`, `beheer_code`) telt als accountnaam: `account_gegevens_verboden` op elke plek, ook op een plek zonder
+  accountwoord (`x: {param: admin_pw}`, de omgevingsvariabele `X` naar `admin_pw`; ADR-0022, binnen besluit C-12). Een
+  accountwoord als deel van een woord telt daar niet (`phpmyadmin_pw`). De
   regels voor de naam van de parameter gelden niet voor een parameter van type `boolean` zonder geheimmarkering (uitleg
   (a): een geheim is nooit een boolean; ADR-0019); een boolean met een geheimmarkering valt er wel onder (ADR-0021).
   De regels voor de plek zelf gelden altijd.
@@ -214,11 +230,11 @@ Naamregels (per plek één code):
 |---|---|
 | `secret_literal_forbidden` (N1) | een geheimplek met een letterlijke waarde, ook een accountplek: `custom_app.env[].value`, een sleutel of naam/waarde-paar in `values` (ook wat eronder ligt), en een parameter met een geheimnaam zonder geheimmarkering met een `default` of `example` |
 | `secret_in_form` (N2, fout) | een geheimplek die geen accountplek is en haar waarde krijgt via `value_from` of `{param}` van een gewone parameter, of een gewone parameter met een geheimnaam die ergens wordt gebruikt |
-| `account_gegevens_verboden` (N3, fout, niet te accepteren) | een accountplek (ook via een voorouder) die haar waarde krijgt via `value_from` of `{param}`, van welke parameter ook, dus ook van een geheim dat de Hub maakt, of een gebruikte parameter met een accountnaam, of een parameter met een geheimnaam (ADR-0019) of met een geheimmarkering (ADR-0021) op een plek waarvan de eigen naam of een voorouder een accountwoord heeft; op dat pad geen `secret_in_form` |
+| `account_gegevens_verboden` (N3, fout, niet te accepteren) | een accountplek (ook via een voorouder) die haar waarde krijgt via `value_from` of `{param}`, van welke parameter ook, dus ook van een geheim dat de Hub maakt, of een gebruikte parameter met een accountnaam, of een parameter met een geheimnaam (ADR-0019) of met een geheimmarkering (ADR-0021) op een plek waarvan de eigen naam of een voorouder een accountwoord heeft, of een gebruikte parameter met een geheimmarkering en een accountwoord als heel naamdeel in de eigen naam, op elke plek (ADR-0022); op dat pad geen `secret_in_form` |
 
 Geen fout: een geheimnaam die geen accountnaam is, naar een geheim dat de Hub maakt (zoals `db_password` en
-`secret_key` van Authentik), op een plek zonder accountwoord in de eigen naam of een voorouder; daar blijft de te
-accepteren waarschuwing `secret_in_form`.
+`secret_key` van Authentik) zonder accountwoord als heel naamdeel in de naam van de parameter, op een plek zonder
+accountwoord in de eigen naam of een voorouder; daar blijft de te accepteren waarschuwing `secret_in_form`.
 
 Tekstregels (`account_gegevens_verboden`, fout; een sleutel valt onder de naamregels, alleen een sleutel in `values`
 krijgt daarnaast T1):
@@ -240,8 +256,10 @@ krijgt daarnaast T1):
   stuurteken na een `=` of binnen een JSON-tekst is een waarde (ADR-0018).
 - **Lengte en rekentijd (ADR-0018):** de tekstregels lopen in lineaire tijd. Een tekst langer dan 65536 tekens toetsen
   ze niet: die is fail-closed een fout (`account_gegevens_verboden`, "te lang om op geheimen te toetsen").
-  Het pad van een melding wordt pas gemaakt als er een melding is (ADR-0021): het geheugen en de rekentijd hangen niet
-  af van de lengte van een sleutel keer het aantal waarden eronder.
+  Het pad van een melding wordt pas gemaakt als er een melding is (ADR-0021), en een rapport stopt na 1000 meldingen
+  (ADR-0022): pas samen zorgen ze ervoor dat het geheugen en de rekentijd niet afhangen van de lengte van een sleutel
+  keer het aantal waarden eronder. Zonder die grens groeide het antwoord wel met het aantal meldingen (gemeten: één
+  verzoek van 256 KiB, 126 112 meldingen, 281 MiB antwoord).
   `POST /catalog/v1/validate` past op het JSON-veld `manifest` dezelfde grenzen toe als op `manifest_yaml`
   (256 KiB als compacte JSON en 32 niveaus: `manifest_too_large`, `yaml_too_deep`).
 - De regels van `nopt` waarop T2 steunt, zijn gemeten op de gepinde Node-RED-digest (ADR-0016, "Context"); de
@@ -252,8 +270,9 @@ krijgt daarnaast T1):
 Wat de validator niet ziet: een gecodeerde of gesplitste hash, een geheim onder een naam zonder geheimwoord dat via
 een gewone parameter (zonder geheimmarkering) of letterlijk in het manifest staat, en (ADR-0019, ADR-0020) een
 accountwoord dat in een voorouder aan een ander woord vastzit en zelf niet in de vaste lijst staat. Een parameter met
-een geheimmarkering ziet de validator wel: op een plek met een accountwoord is dat een fout (ADR-0021), elders de te
-accepteren waarschuwing `secret_in_form`. De samenstellingen `administrator`, `beheerder`, `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` en
+een geheimmarkering ziet de validator wel: op een plek met een accountwoord (ADR-0021), of met een accountwoord als heel
+naamdeel in zijn eigen naam (ADR-0022), is dat een fout; elders `secret_in_form` (te accepteren alleen bij een geheim
+dat de Hub maakt). De samenstellingen `administrator`, `beheerder`, `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` en
 `adminuser` staan sinds ADR-0020 in de lijst en tellen weer. De lijst blijft open voor nieuwe samenstellingen: een
 geheim van de Hub onder bijvoorbeeld `sysadmin`, `webadmin` of `rootaccount` geeft de te accepteren waarschuwing
 `secret_in_form`, tot de lijst met een nieuwe ADR is uitgebreid. Dan blijft de review van het manifest de controle
@@ -280,6 +299,10 @@ naam, of buiten een geheimplek een parameter; er is geen uitzondering (ADR-0018,
   sinds ADR-0019 niet meer: `phpmyadmin.db_password`, `rootless.cache.secret`, `groot.password` en
   `administration.db.password` naar een geheim dat de Hub maakt, geven weer de te accepteren waarschuwing
   `secret_in_form`;
+- een accountwoord als heel naamdeel in de eigen naam van een parameter met een geheimmarkering telt sinds ADR-0022
+  altijd: een geheim dat de Hub maakt met de naam `root_ca`, `owner_id`, `setup_sleutel` of `initial_seed` geeft
+  `account_gegevens_verboden`, op elke plek, ook als het geen aanmelding is. De naam van een parameter kiest het
+  manifest zelf: kies dan een naam zonder accountwoord (`ca_sleutel`, `seed_waarde`);
 - een parameter van type poort of getal met een geheimwoord in de naam (`token_poort`, `password_min_length`) valt
   onder de naamregels (`secret_in_form` waar hij wordt gebruikt); kies een andere naam. Een parameter van type
   `boolean` zonder geheimmarkering niet (`password_login`; ADR-0019, ADR-0021);
@@ -419,6 +442,7 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `signature_invalid` | Handtekening klopt niet. |
 | `app_id_claimed_by_other_source` | App-ID hoort bij een andere catalogusbron. |
 | `manifest_niet_verwerkt` | Een onverwachte fout bij dit manifest tijdens de synchronisatie: alleen dit manifest is geweigerd (fail-closed, ADR-0018). |
+| `te_veel_meldingen` | Meer dan 1000 meldingen in één rapport (validatie, vertaling of conflictanalyse): het verzamelen is gestopt na de eerste 1000 en het rapport is ongeldig, zonder payload (fail-closed, ADR-0022). |
 | `parameter_value_missing` | Waarde voor een verplichte parameter ontbreekt. |
 | `parameter_value_invalid` | Waarde voor een parameter is ongeldig. |
 | `parameter_value_unknown` | Waarde opgegeven voor een onbekende parameter. |

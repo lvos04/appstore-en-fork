@@ -254,34 +254,37 @@ def test_a_key_longer_than_the_limit_is_shown_in_one_fixed_form() -> None:
 def test_answer_under_a_long_key_stays_small() -> None:
     """Vervolgpunt van R-VEILIG-8 (de grootte van het antwoord): een sleutel van 60 000 tekens met 3000 treffers
     eronder gaf een rapport plus tekst van 346 MiB, omdat elke melding het hele pad droeg. Nu staat de sleutel er als
-    ``<verborgen>``: rapport en tekst samen blijven onder 4 MiB en de piek onder 50 MiB."""
+    ``<verborgen>``: rapport en tekst samen blijven onder 4 MiB en de piek onder 50 MiB. ADR-0022: sinds de grens van
+    1000 meldingen per rapport met 900 treffers (alle in het rapport); zonder ``<verborgen>`` is dat ruim 100 MiB."""
     sleutel = "s" * 60_000
-    data = met_waarden({sleutel: {f"a{i}": "credentialSecret=x" for i in range(3000)}})
+    data = met_waarden({sleutel: {f"a{i}": "credentialSecret=x" for i in range(900)}})
 
     def werk() -> tuple[int, int]:
         report, _ = validate_data(data)
+        assert "te_veel_meldingen" not in report.codes()
         return report.errors, len(report.model_dump_json()) + len(report.as_text())
 
     piek, (fouten, grootte) = _piek_mib(werk)
-    assert fouten >= 3000
+    assert fouten >= 900
     assert grootte < 4 * 2**20, f"antwoord {grootte / 2**20:.0f} MiB"
     assert piek < PIEK_GRENS_MIB, f"piek {piek:.0f} MiB"
 
 
 def test_a_long_path_is_shortened_in_a_finding() -> None:
     """ADR-0021: ook met sleutels van hooguit 256 tekens kan een pad lang worden (32 niveaus). Een pad van meer dan
-    ``MAX_SHOWN_PATH`` tekens staat ingekort in de melding (het begin en ``…``); zo is de grootte van een melding
-    begrensd, hoeveel meldingen er ook zijn. Een korter pad staat er zoals het is."""
+    ``MAX_SHOWN_PATH`` tekens staat ingekort in de melding (het begin en ``…``); zo is de grootte van één melding
+    begrensd (het aantal meldingen per rapport begrenst ADR-0022; daarom 900 treffers). Een korter pad staat er zoals
+    het is."""
     assert MAX_SHOWN_PATH == 1024
     values: dict[str, Any] = {}
     node = values
     for i in range(8):
         node[f"{i}" + "n" * 255] = {}
         node = node[f"{i}" + "n" * 255]
-    node.update({f"a{i}": "credentialSecret=x" for i in range(2000)})
+    node.update({f"a{i}": "credentialSecret=x" for i in range(900)})
     report, _ = validate_data(met_waarden({"diep": values}))
     paden = [f.path for f in report.findings if f.code == CODE]
-    assert len(paden) == 2000
+    assert len(paden) == 900
     assert all(len(p) == MAX_SHOWN_PATH + 1 and p.endswith("…") for p in paden)
     assert all(p.startswith("values.voorbeeld.diep.0nnn") for p in paden)
     assert len(report.model_dump_json()) + len(report.as_text()) < 12 * 2**20
@@ -291,7 +294,9 @@ def test_a_long_path_is_shortened_in_a_finding() -> None:
 
 def test_long_keys_with_many_findings_stay_fast() -> None:
     """De rekentijd blijft lineair nu het pad per melding wordt gemaakt: 30 000 treffers onder 24 geneste sleutels van
-    256 tekens zijn in minder dan 5 s getoetst (elke sleutel komt uit de cache of is direct ``<verborgen>``)."""
+    256 tekens zijn in minder dan 5 s getoetst (elke sleutel komt uit de cache of is direct ``<verborgen>``). ADR-0022:
+    het rapport van ``validate_data`` stopt na 1000 meldingen; de tekstregels zelf (``secret_text_findings``, zonder
+    de grens per rapport) maken nog alle 30 000 meldingen, en die tijd wordt gemeten."""
     values: dict[str, Any] = {}
     node = values
     for i in range(24):
@@ -300,9 +305,13 @@ def test_long_keys_with_many_findings_stay_fast() -> None:
     node.update({f"a{i}": "credentialSecret=x" for i in range(30_000)})
     data = met_waarden({"diep": values})
     start = time.perf_counter()
+    gevonden = secret_text_findings(data)
+    assert time.perf_counter() - start < 5.0
+    assert len(gevonden) >= 30_000
+    start = time.perf_counter()
     report, _ = validate_data(data)
     assert time.perf_counter() - start < 5.0
-    assert report.errors >= 30_000
+    assert len(report.findings) == 1001 and "te_veel_meldingen" in report.codes()
 
 
 # ---------------------------------------------------------------------------------------------- R-VEILIG-9, R-TECH-10

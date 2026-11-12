@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field
 
 from .canonical import canonical_json, sha256_digest
-from .findings import Finding, Severity, error, warning
+from .findings import Finding, Severity, TooManyFindingsError, error, finding_budget, warning
 from .loader import MAX_MANIFEST_BYTES
 from .model import CustomApp, Manifest, Parameter, ParamRef
 from .rules import (
@@ -45,6 +45,7 @@ from .rules import (
     is_account_name,
     is_own_image,
     is_secret_name,
+    marked_account_param,
     name_value_pair,
     param_name_counts,
     path_segments,
@@ -745,7 +746,8 @@ def _filled_place(
     param: Parameter | None,
 ) -> Finding | None:
     """W3 op één ingevulde plek: een accountplek met een waarde (ook een vault-verwijzing), een parameter met een
-    geheimnaam of een geheimmarkering op een plek met een accountwoord (ADR-0019, ADR-0021), een tekst waarin T1 of T2
+    geheimnaam of een geheimmarkering op een plek met een accountwoord (ADR-0019, ADR-0021), een parameter met een
+    geheimmarkering en een accountwoord in de eigen naam, op elke plek (ADR-0022), een tekst waarin T1 of T2
     iets vindt (altijd, ook onder ``HUB_ENROLLMENT_TOKEN``), of een geheimplek met een waarde die geen eigen
     vault-verwijzing van de vertaling is. ``place`` erft van de voorouders van de plek (ADR-0018); ``path`` geeft het
     getoonde pad en wordt alleen bij een melding aangeroepen (ADR-0021); ``param`` is de parameter die de plek vulde
@@ -769,6 +771,13 @@ def _filled_place(
                 "een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook niet als vault-verwijzing "
                 f"({'ADR-0019' if named else 'ADR-0021'}).",
             )
+    if param is not None and has_value(value) and marked_account_param(param):
+        return error(
+            "account_gegevens_verboden",
+            path(),
+            f"{shown_key(param.name)} is een geheim met een accountwoord in de eigen naam: dat is de aanmelding van een "
+            "beheerder of dienstaccount; die gaat nooit mee in de installatie, ook niet als vault-verwijzing (ADR-0022).",
+        )
     if isinstance(value, str) and not own and (reasons := secret_text_reasons(value, settings=True)):
         return secret_text_finding(path(), reasons)
     enrollment = place.name == ENROLLMENT_ENV and at in hub_at
@@ -937,8 +946,36 @@ def translate(
     ``trusted_app_id``: de aanroeper staat in voor de ``app_id`` van het manifest (een geldige versie uit de catalogus,
     of het eigen bestand bij ``jl-manifest translate``). Alleen dan krijgt een geheime parameter een vault-verwijzing;
     standaard niet, want een los manifest kan zich de ``app_id`` van een andere app geven (ADR-0015).
+
+    ADR-0022: de vertaling is één rapport met hooguit ``MAX_FINDINGS`` meldingen. Bij de volgende stopt zij; dan zijn er
+    de eerste meldingen plus de vaste fout ``te_veel_meldingen``, en geen payload, ``preview_hash`` of ``vault_refs``.
     """
     target = target or Target()
+    with finding_budget() as budget:
+        try:
+            return _translate(manifest, parameters, target, app_name, manifest_sha256, trusted_app_id=trusted_app_id)
+        except TooManyFindingsError:
+            kept = budget.result()
+    compat, _ = check_compatibility(manifest, target)  # alleen voor het veld; de meldingen staan al in ``kept``
+    return TranslationResult(
+        ready_for_install=False,
+        payload=None,
+        preview_hash=None,
+        compatibility=compat,
+        findings=sorted(kept, key=lambda f: (f.severity is not Severity.ERROR, f.path, f.code)),
+    )
+
+
+def _translate(
+    manifest: Manifest,
+    parameters: dict[str, Any] | None,
+    target: Target,
+    app_name: str | None,
+    manifest_sha256: str | None,
+    *,
+    trusted_app_id: bool,
+) -> TranslationResult:
+    """De vertaling zelf (zie :func:`translate`), binnen het budget van ADR-0022."""
     manifest_sha = manifest_sha256 or sha256_digest(manifest.model_dump(mode="json", exclude_none=False))
     compat, findings = check_compatibility(manifest, target)
     resolver = _Resolver(manifest, dict(parameters or {}), trusted_app_id=trusted_app_id)

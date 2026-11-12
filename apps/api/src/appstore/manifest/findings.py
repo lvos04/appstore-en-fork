@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
@@ -29,8 +32,8 @@ class Finding(BaseModel):
 
 
 #: ADR-0021: een pad in een melding is hooguit zoveel tekens. Een langer pad (veel geneste sleutels van elk hooguit 256
-#: tekens) staat er ingekort: het begin en :data:`PATH_CUT`. Zo is een melding begrensd, hoeveel meldingen een manifest
-#: ook geeft. De paden van de bestaande manifesten zijn hooguit enkele tientallen tekens.
+#: tekens) staat er ingekort: het begin en :data:`PATH_CUT`. Zo is één melding begrensd; het aantal meldingen per rapport
+#: begrenst :data:`MAX_FINDINGS` (ADR-0022). De paden van de bestaande manifesten zijn hooguit enkele tientallen tekens.
 MAX_SHOWN_PATH = 1024
 PATH_CUT = "…"
 
@@ -41,12 +44,80 @@ def _shown(path: str) -> str:
     return path or "(root)"
 
 
+#: ADR-0022 (besluit B-1): een rapport verzamelt hooguit zoveel meldingen. Komt er nog een bij, dan stopt het verzamelen
+#: en krijgt het rapport één vaste fout :data:`TOO_MANY` (fail-closed: het rapport is ongeldig, de vertaling heeft geen
+#: payload). Het geldt per rapport: de validatie (``validate_data``, ook via ``validate_text``, het JSON-veld en
+#: ``manifest_yaml`` van ``POST /catalog/v1/validate`` en de synchronisatie), de vertaling (``translate``, ook in
+#: ``POST /catalog/v1/preview``) en de conflictanalyse van de preview. De bestaande manifesten geven hooguit 23
+#: meldingen; één verzoek van 256 KiB gaf er 126 112 (antwoord 282 MiB, RSS tot 2,8 GiB).
+MAX_FINDINGS = 1000
+TOO_MANY = "te_veel_meldingen"
+
+
+class TooManyFindingsError(Exception):
+    """Er komt een melding bij boven :data:`MAX_FINDINGS`; het rapport dat :func:`finding_budget` opende, stopt."""
+
+
+class FindingBudget:
+    """De meldingen van één rapport: hoeveel er zijn gemaakt, en de eerste :data:`MAX_FINDINGS` zelf."""
+
+    __slots__ = ("count", "kept")
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.kept: list[Finding] = []
+
+    def result(self) -> list[Finding]:
+        """De eerste :data:`MAX_FINDINGS` meldingen en daarna de vaste fout :data:`TOO_MANY`."""
+        return [*self.kept, _too_many()]
+
+
+_BUDGET: ContextVar[FindingBudget | None] = ContextVar("appstore_finding_budget", default=None)
+
+
+@contextmanager
+def finding_budget() -> Iterator[FindingBudget]:
+    """Een nieuw rapport (ADR-0022): elke melding die :func:`error` of :func:`warning` binnen dit blok maakt, telt mee.
+    Bij melding nummer ``MAX_FINDINGS + 1`` gooit die functie :class:`TooManyFindingsError`; de aanroeper vangt die en
+    geeft :meth:`FindingBudget.result` als meldingen, zonder payload. Zo groeit het geheugen niet met het aantal
+    meldingen. Een geneste aanroep opent een eigen budget; na het blok geldt weer het vorige (of geen)."""
+    budget = FindingBudget()
+    token = _BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        _BUDGET.reset(token)
+
+
+def _counted(finding: Finding) -> Finding:
+    budget = _BUDGET.get()
+    if budget is not None:
+        budget.count += 1
+        if budget.count > MAX_FINDINGS:
+            raise TooManyFindingsError
+        budget.kept.append(finding)
+    return finding
+
+
+def _too_many() -> Finding:
+    # niet via error(): de vaste fout telt zelf niet mee
+    return Finding(
+        code=TOO_MANY,
+        severity=Severity.ERROR,
+        path=_shown(""),
+        message=(
+            f"Meer dan {MAX_FINDINGS} meldingen: het verzamelen is gestopt en het rapport is ongeldig (fail-closed, "
+            "ADR-0022). Het rapport toont alleen de eerste meldingen; los die op en valideer opnieuw."
+        ),
+    )
+
+
 def error(code: str, path: str, message: str) -> Finding:
-    return Finding(code=code, severity=Severity.ERROR, path=_shown(path), message=message)
+    return _counted(Finding(code=code, severity=Severity.ERROR, path=_shown(path), message=message))
 
 
 def warning(code: str, path: str, message: str) -> Finding:
-    return Finding(code=code, severity=Severity.WARNING, path=_shown(path), message=message)
+    return _counted(Finding(code=code, severity=Severity.WARNING, path=_shown(path), message=message))
 
 
 #: Alle codes die de validator kan geven (documentatie + test op volledigheid).
@@ -152,6 +223,7 @@ CODES: dict[str, str] = {
     "signature_invalid": "Handtekening klopt niet.",
     "app_id_claimed_by_other_source": "App-ID hoort bij een andere catalogusbron.",
     "manifest_niet_verwerkt": "Een onverwachte fout bij dit manifest: alleen dit manifest is geweigerd (fail-closed).",
+    "te_veel_meldingen": "Meer dan 1000 meldingen: het verzamelen is gestopt en het rapport is ongeldig (fail-closed).",
     # vertaling naar TrueNAS (app.create)
     "parameter_value_missing": "Waarde voor een verplichte parameter ontbreekt.",
     "parameter_value_invalid": "Waarde voor een parameter is ongeldig.",

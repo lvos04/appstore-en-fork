@@ -813,6 +813,16 @@ def is_marked_secret(param: Parameter) -> bool:
     return param.secret or param.type == "secret_ref" or param.source in ("secret", "generated")
 
 
+def marked_account_param(param: Parameter) -> bool:
+    """ADR-0022 (besluit B-2, volgt uit C-12 "strikt zonder"): een parameter met een geheimmarkering
+    (:func:`is_marked_secret`) waarvan de eigen naam een accountwoord als heel naamdeel heeft (:func:`has_account_word`:
+    ``admin_pw``, ``root_key``, ``beheer_code``) is de aanmelding van een beheerder of dienstaccount, net als een
+    parameter met een accountnaam: ``account_gegevens_verboden`` op elke plek, ook op een plek zonder accountwoord.
+    Een accountwoord als deel van een woord telt niet (``phpmyadmin_pw``), en een gewone parameter zonder
+    geheimmarkering ook niet."""
+    return is_marked_secret(param) and has_account_word(param.name)
+
+
 def has_value(value: Any) -> bool:
     """Niet-lege waarde (ADR-0016 W2, ADR-0018): elke tekst behalve de lege tekst (ook alleen spaties, U+00A0 of
     stuurtekens: bash, ``nopt`` en de apps zien die als waarde), een getal of een niet-lege lijst of object. Ja/nee en
@@ -1211,10 +1221,11 @@ class _Rules:
         self.out.append(warning(code, path, msg))
 
     def account_value(self, path: str, shown: str) -> None:
-        """N3 (ADR-0016 W2, ADR-0018, ADR-0019, ADR-0021): een accountplek krijgt haar waarde via ``value_from`` of
-        ``{param}``, van welke parameter ook, of een parameter met een accountnaam wordt gebruikt, of een parameter met
-        een geheimnaam of een geheimmarkering komt op een plek met een accountwoord. Niet te accepteren; op dit pad
-        geen ``secret_in_form``. ``shown`` is de naam zoals hij in de melding staat (:func:`shown_key`)."""
+        """N3 (ADR-0016 W2, ADR-0018, ADR-0019, ADR-0021, ADR-0022): een accountplek krijgt haar waarde via
+        ``value_from`` of ``{param}``, van welke parameter ook, of een parameter met een accountnaam wordt gebruikt, of een
+        parameter met een geheimnaam of een geheimmarkering komt op een plek met een accountwoord, of een parameter met
+        een geheimmarkering en een accountwoord in de eigen naam wordt gebruikt. Niet te accepteren; op dit pad geen
+        ``secret_in_form``. ``shown`` is de naam zoals hij in de melding staat (:func:`shown_key`)."""
         self.err(
             "account_gegevens_verboden",
             path,
@@ -1240,11 +1251,12 @@ class _Rules:
 
     def param_name_rules(self, path: str, param: Parameter) -> bool:
         """ADR-0018: de naam van een gebruikte parameter telt ook. Een accountnaam geeft N3 (ook bij een geheim dat de
-        Hub maakt); een geheimnaam zonder geheimmarkering geeft N2. Niet bij type ``boolean`` zonder geheimmarkering
-        (ADR-0019, ADR-0021). Geeft ``True`` als er een fout is gemeld."""
+        Hub maakt), net als een geheimmarkering met een accountwoord in de eigen naam (ADR-0022,
+        :func:`marked_account_param`); een geheimnaam zonder geheimmarkering geeft N2. Niet bij type ``boolean`` zonder
+        geheimmarkering (ADR-0019, ADR-0021). Geeft ``True`` als er een fout is gemeld."""
         if not param_name_counts(param):
             return False
-        if is_account_name(param.name):
+        if is_account_name(param.name) or marked_account_param(param):
             self.account_value(path, shown_key(param.name))
             return True
         if is_secret_name(param.name) and not is_marked_secret(param):
@@ -1622,6 +1634,9 @@ class _Rules:
                 elif param is not None and is_marked_secret(param) and has_account_word(env.name):
                     # ADR-0021: ook een parameter met een geheimmarkering zonder geheimwoord in de naam (admin_pw)
                     self.account_value(path, shown_key(param.name))
+                elif param is not None and marked_account_param(param):
+                    # ADR-0022: een geheimmarkering met een accountwoord in de eigen naam, ook onder een gewone naam (X)
+                    self.account_value(path, shown_key(param.name))
                 elif param is not None and param.hub_generated_secret:
                     # contract 1.3 §3.1 a: de Hub maakt het geheim (vault) en geeft het alleen in de values mee
                     self.warn(
@@ -1711,11 +1726,13 @@ class _Rules:
             names = param is not None and param_name_counts(param)  # ADR-0019: niet bij een gewone boolean
             # ADR-0018: een accountplek (ook via een voorouder) of een parameter met een accountnaam; ADR-0019: ook een
             # parameter met een geheimnaam op een plek waarvan de eigen naam of een voorouder een accountwoord heeft;
-            # ADR-0021: op zo'n plek ook een parameter met een geheimmarkering zonder geheimwoord in de naam
+            # ADR-0021: op zo'n plek ook een parameter met een geheimmarkering zonder geheimwoord in de naam;
+            # ADR-0022: op elke plek een parameter met een geheimmarkering en een accountwoord in de eigen naam
             account = where.account or (
                 param is not None
                 and (
                     (names and is_account_name(param.name))
+                    or marked_account_param(param)
                     or (where.account_word and ((names and is_secret_name(param.name)) or is_marked_secret(param)))
                 )
             )
