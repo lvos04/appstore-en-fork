@@ -2,6 +2,21 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Geheimen en accountgegevens weigeren: herstelronde 2** (ADR-0019; stap S-P2-520):
+  - De cache van de naamregels bewaart alleen namen tot 256 tekens; een lange sleutel uit een verzoek blijft niet meer
+    in het geheugen staan. Paden en meldingen blijven ook zonder cache lineair.
+  - Een parameter met een geheimnaam op een plek met een accountwoord (`admin: {param: db_password}`, `adminUser.pw`,
+    een paar of omgevingsvariabele `ADMIN_PW`) geeft `account_gegevens_verboden`, ook als geheim van de Hub, en na het
+    invullen geen payload.
+  - Een accountwoord in een voorouder telt alleen als heel naamdeel (`admin`, `adminUser`, `admins`; niet `phpmyadmin`,
+    `rootless`, `groot`, `administration`). Een parameter van type `boolean` valt niet onder de naamregels voor de naam
+    van een parameter.
+  - Nieuwe foutcode `vertaling_te_groot`: meer dan 256 plekken met een parameterwaarde, of een payload groter dan
+    256 KiB, geeft geen payload (fail-closed).
+  - `docs/MANIFESTSTANDAARD.md`: bekende valse treffers bijgewerkt (camelCase-geheimnaam erft, vaste sleutels van iX,
+    accountwoord als heel naamdeel, boolean). De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde
+    exitcode en byte-gelijke uitvoer.
+
 - **Geheimen en accountgegevens weigeren: herstel na de review** (ADR-0018; stap S-P2-520):
   - Een tekst van alleen spaties, U+00A0, U+2003 of stuurtekens (U+001C, U+001F) is een waarde, geen lege tekst; het
     vangnet stopt alleen op spatie, tab en regeleinde.
