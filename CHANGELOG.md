@@ -2,6 +2,22 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Geheimen en accountgegevens weigeren: herstelronde 4** (ADR-0021; stap S-P2-520):
+  - Het pad van een melding wordt pas gemaakt als er een melding is. Eén verzoek met een sleutel van 65536 tekens boven
+    een lijst van 98 000 items vroeg gigabytes geheugen (MemoryError); nu blijft de piek onder 50 MiB, bij valideren en
+    bij vertalen.
+  - Een sleutel van meer dan 256 tekens staat in pad en melding als `<verborgen>`, en een pad van meer dan 1024 tekens
+    staat ingekort (het begin en `…`). Een melding blijft zo klein; een antwoord van honderden MiB onder één lange
+    sleutel is nu ongeveer 1 MiB.
+  - De uitzondering op de naamregels voor een parameter van type `boolean` geldt alleen zonder geheimmarkering: een
+    Hub-geheim van type `boolean` met een accountnaam geeft weer `account_gegevens_verboden`.
+  - Een parameter met een geheimmarkering op een plek met een accountwoord (`admin_pw` naar `ADMIN_PW`, `admin.pw`,
+    `admin: {param: init_value}`) geeft `account_gegevens_verboden`, ook zonder geheimwoord in de naam, en na het
+    invullen geen payload. `phpmyadmin.x` en een gewone parameter onder `admin` blijven geldig.
+  - `docs/MANIFESTSTANDAARD.md`: bij een accountnaam telt voor een sleutel met punten of `[n]` het laatste deel (zoals
+    bij een geheimnaam). De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde exitcode en
+    byte-gelijke uitvoer.
+
 - **Geheimen en accountgegevens weigeren: herstelronde 3** (ADR-0020; stap S-P2-520):
   - De vaste lijst van accountwoorden krijgt `ADMINISTRATOR`, `BEHEERDER`, `DIENSTACCOUNT`, `BEHEERACCOUNT`,
     `SUPERADMIN`, `ROOTUSER` en `ADMINUSER` erbij. Een geheim van de Hub onder `administrator`, `beheerder(s)`,
