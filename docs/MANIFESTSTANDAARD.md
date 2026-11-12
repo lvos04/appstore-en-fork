@@ -22,12 +22,14 @@ Of via de API: `POST /catalog/v1/validate` en `POST /catalog/v1/preview` (voert 
 
 **Hooguit 1000 meldingen per rapport (ADR-0022).** Een rapport verzamelt hooguit 1000 meldingen (`MAX_FINDINGS` in
 `apps/api/src/appstore/manifest/findings.py`). Komt er nog een bij, dan stopt het verzamelen: het rapport houdt de
-eerste 1000 meldingen en krijgt één vaste fout `te_veel_meldingen` (dus hooguit 1001 regels). Dat is fail-closed: het
-rapport is ongeldig, er is geen model en de vertaling heeft geen payload, `preview_hash` of `vault_refs`. Het geldt voor
-de validatie (`jl-manifest validate`, `POST /catalog/v1/validate` met het JSON-veld `manifest` of met `manifest_yaml`,
-en de catalogussynchronisatie, die daar alleen haar eigen controles op handtekening en bron aan toevoegt), voor de
-vertaling (`jl-manifest translate` en `POST /catalog/v1/preview`) en voor de conflictanalyse van de preview, elk als
-eigen rapport. De bestaande manifesten geven hooguit 23 meldingen. Zonder deze grens gaf één verzoek van 256 KiB van
+eerste 1000 meldingen en krijgt één vaste fout `te_veel_meldingen` (dus hooguit 1001 regels). Dat is fail-closed. Het
+geldt voor de validatie (`jl-manifest validate`, `POST /catalog/v1/validate` met het JSON-veld `manifest` of met
+`manifest_yaml`, en de catalogussynchronisatie, die daar alleen haar eigen controles op handtekening en bron aan
+toevoegt), voor de vertaling (`jl-manifest translate` en `POST /catalog/v1/preview`) en voor de conflictanalyse van de
+preview, elk als eigen rapport. Bij de validatie en de vertaling is het rapport dan ongeldig, zonder model, payload,
+`preview_hash` of `vault_refs`. Bij de conflictanalyse krijgt die analyse status `conflict` en is `ready_for_install`
+false; de vertaling in hetzelfde antwoord blijft zoals zij is (met haar eigen payload en `preview_hash` als zij geldig
+is). De bestaande manifesten geven hooguit 23 meldingen. Zonder deze grens gaf één verzoek van 256 KiB van
 de laagste rol 126 112 meldingen: een antwoord van 281 MiB en ongeveer 2 GiB extra geheugen.
 
 ## Opbouw in het kort
@@ -442,7 +444,7 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `signature_invalid` | Handtekening klopt niet. |
 | `app_id_claimed_by_other_source` | App-ID hoort bij een andere catalogusbron. |
 | `manifest_niet_verwerkt` | Een onverwachte fout bij dit manifest tijdens de synchronisatie: alleen dit manifest is geweigerd (fail-closed, ADR-0018). |
-| `te_veel_meldingen` | Meer dan 1000 meldingen in één rapport (validatie, vertaling of conflictanalyse): het verzamelen is gestopt na de eerste 1000 en het rapport is ongeldig, zonder payload (fail-closed, ADR-0022). |
+| `te_veel_meldingen` | Meer dan 1000 meldingen in één rapport (validatie, vertaling of conflictanalyse): het verzamelen is gestopt na de eerste 1000 (fail-closed, ADR-0022). Bij de validatie en de vertaling is het rapport ongeldig, zonder model, payload, `preview_hash` of `vault_refs`; bij de conflictanalyse is de status `conflict` en `ready_for_install` false (de vertaling in hetzelfde antwoord blijft zoals zij is). |
 | `parameter_value_missing` | Waarde voor een verplichte parameter ontbreekt. |
 | `parameter_value_invalid` | Waarde voor een parameter is ongeldig. |
 | `parameter_value_unknown` | Waarde opgegeven voor een onbekende parameter. |

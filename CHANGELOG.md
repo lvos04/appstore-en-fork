@@ -15,6 +15,8 @@
     `secret_in_form` alleen bij een geheim dat de Hub maakt te accepteren is, en noemt de grens op het aantal
     meldingen. De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde exitcode en byte-gelijke
     uitvoer.
+  - Commit `db73f7a` wijzigde naast de test ook ADR-0022, alinea "Vier bestaande tests zijn aangepast" (grens 1 MiB
+    in plaats van 4 MiB, de lange sleutel nergens in het antwoord); het commitbericht noemt alleen de test.
 
 - **Geheimen en accountgegevens weigeren: herstelronde 4** (ADR-0021; stap S-P2-520):
   - Het pad van een melding wordt pas gemaakt als er een melding is. Eén verzoek met een sleutel van 65536 tekens boven
