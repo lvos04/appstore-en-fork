@@ -2,6 +2,20 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Geheimen en accountgegevens weigeren: herstelronde 5** (ADR-0022; stap S-P2-520):
+  - Hooguit 1000 meldingen per rapport (validatie, vertaling en conflictanalyse van de preview, elk apart). Bij de
+    volgende stopt het verzamelen: het rapport houdt de eerste 1000 en krijgt de nieuwe vaste fout `te_veel_meldingen`
+    (fail-closed: ongeldig, geen payload). Eén verzoek van 256 KiB gaf eerst 126 112 meldingen en een antwoord van
+    281 MiB; nu 1001 meldingen, 2,2 MiB en een piek van 17 MiB. Ook 120 000 schemafouten, duizenden meldingen in de
+    vertaling en miljoenen conflicten in de preview zijn zo begrensd.
+  - Een parameter met een geheimmarkering waarvan de eigen naam een accountwoord als heel naamdeel heeft (`admin_pw`,
+    `root_key`, `beheer_code`) geeft `account_gegevens_verboden` op elke plek, ook onder een gewone naam, en na het
+    invullen geen payload. `phpmyadmin_pw`, `db_password` en `secret_key` blijven geldig.
+  - Een test voor T2 op de `default` en het `example` van een parameter; `docs/MANIFESTSTANDAARD.md` zegt nu dat
+    `secret_in_form` alleen bij een geheim dat de Hub maakt te accepteren is, en noemt de grens op het aantal
+    meldingen. De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde exitcode en byte-gelijke
+    uitvoer.
+
 - **Geheimen en accountgegevens weigeren: herstelronde 4** (ADR-0021; stap S-P2-520):
   - Het pad van een melding wordt pas gemaakt als er een melding is. Eén verzoek met een sleutel van 65536 tekens boven
     een lijst van 98 000 items vroeg gigabytes geheugen (MemoryError); nu blijft de piek onder 50 MiB, bij valideren en
