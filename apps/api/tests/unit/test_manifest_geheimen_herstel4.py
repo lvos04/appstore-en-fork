@@ -254,19 +254,23 @@ def test_a_key_longer_than_the_limit_is_shown_in_one_fixed_form() -> None:
 def test_answer_under_a_long_key_stays_small() -> None:
     """Vervolgpunt van R-VEILIG-8 (de grootte van het antwoord): een sleutel van 60 000 tekens met 3000 treffers
     eronder gaf een rapport plus tekst van 346 MiB, omdat elke melding het hele pad droeg. Nu staat de sleutel er als
-    ``<verborgen>``: rapport en tekst samen blijven onder 4 MiB en de piek onder 50 MiB. ADR-0022: sinds de grens van
-    1000 meldingen per rapport met 900 treffers (alle in het rapport); zonder ``<verborgen>`` is dat ruim 100 MiB."""
+    ``<verborgen>``: rapport en tekst samen blijven klein en de piek onder 50 MiB. ADR-0022: sinds de grens van 1000
+    meldingen per rapport met 900 treffers (alle in het rapport) en een strengere grens op het antwoord: met
+    ``<verborgen>`` is het ongeveer 0,7 MiB, met de sleutel voluit (dan alleen door de padgrens ingekort) ongeveer
+    2,5 MiB; daarom onder 1 MiB, en de sleutel staat nergens in rapport of tekst."""
     sleutel = "s" * 60_000
     data = met_waarden({sleutel: {f"a{i}": "credentialSecret=x" for i in range(900)}})
 
-    def werk() -> tuple[int, int]:
+    def werk() -> tuple[int, int, bool]:
         report, _ = validate_data(data)
         assert "te_veel_meldingen" not in report.codes()
-        return report.errors, len(report.model_dump_json()) + len(report.as_text())
+        json_tekst, tekst = report.model_dump_json(), report.as_text()
+        return report.errors, len(json_tekst) + len(tekst), "s" * 300 in json_tekst + tekst
 
-    piek, (fouten, grootte) = _piek_mib(werk)
+    piek, (fouten, grootte, sleutel_zichtbaar) = _piek_mib(werk)
     assert fouten >= 900
-    assert grootte < 4 * 2**20, f"antwoord {grootte / 2**20:.0f} MiB"
+    assert not sleutel_zichtbaar
+    assert grootte < 2**20, f"antwoord {grootte / 2**20:.1f} MiB"
     assert piek < PIEK_GRENS_MIB, f"piek {piek:.0f} MiB"
 
 

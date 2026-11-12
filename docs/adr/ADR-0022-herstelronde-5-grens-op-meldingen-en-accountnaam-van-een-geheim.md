@@ -117,8 +117,10 @@
   (accountwoord als deel van een woord, gewone parameter); W08 van R-TECH-12 is nu rood.
 - **Vier bestaande tests zijn aangepast**, omdat ze meer dan 1000 meldingen in één rapport verwachtten: in
   `test_manifest_geheimen_herstel4.py` meten `test_answer_under_a_long_key_stays_small` en
-  `test_a_long_path_is_shortened_in_a_finding` nu met 900 treffers (alle in het rapport; de grootte en het ingekorte
-  pad worden zo nog steeds getoetst), en meten `test_long_keys_with_many_findings_stay_fast` en (in
+  `test_a_long_path_is_shortened_in_a_finding` nu met 900 treffers (alle in het rapport). Bij de eerste is de grens op
+  het antwoord strenger (1 MiB in plaats van 4 MiB) en staat de lange sleutel nergens in het antwoord: met de sleutel
+  voluit (alleen door de padgrens ingekort) is het antwoord ongeveer 2,5 MiB, dus die mutatie blijft rood; bij de
+  tweede wordt elk ingekort pad nog steeds getoetst. Verder meten `test_long_keys_with_many_findings_stay_fast` en (in
   `test_manifest_geheimen_herstel2.py`) `test_long_keys_on_many_paths_stay_linear` de tijd van de regels zelf
   (`secret_text_findings` en `check_manifest`, zonder de grens per rapport) met hetzelfde aantal treffers als vroeger;
   daarnaast eisen ze dat `validate_data` op dezelfde invoer `te_veel_meldingen` geeft.
