@@ -5,9 +5,11 @@
 - **Geheimen en accountgegevens weigeren: herstelronde 5** (ADR-0022; stap S-P2-520):
   - Hooguit 1000 meldingen per rapport (validatie, vertaling en conflictanalyse van de preview, elk apart). Bij de
     volgende stopt het verzamelen: het rapport houdt de eerste 1000 en krijgt de nieuwe vaste fout `te_veel_meldingen`
-    (fail-closed: ongeldig, geen payload). Eén verzoek van 256 KiB gaf eerst 126 112 meldingen en een antwoord van
-    281 MiB; nu 1001 meldingen, 2,2 MiB en een piek van 17 MiB. Ook 120 000 schemafouten, duizenden meldingen in de
-    vertaling en miljoenen conflicten in de preview zijn zo begrensd.
+    (fail-closed). Bij de validatie en de vertaling is het rapport dan ongeldig, zonder model, payload,
+    `preview_hash` of `vault_refs`; bij de conflictanalyse is de status `conflict` en `ready_for_install` false, en
+    blijft de vertaling in hetzelfde antwoord zoals zij is. Eén verzoek van 256 KiB gaf eerst 126 112 meldingen en een
+    antwoord van 281 MiB; nu 1001 meldingen, 2,2 MiB en een piek van 17 MiB. Ook 120 000 schemafouten, duizenden
+    meldingen in de vertaling en miljoenen conflicten in de preview zijn zo begrensd.
   - Een parameter met een geheimmarkering waarvan de eigen naam een accountwoord als heel naamdeel heeft (`admin_pw`,
     `root_key`, `beheer_code`) geeft `account_gegevens_verboden` op elke plek, ook onder een gewone naam, en na het
     invullen geen payload. `phpmyadmin_pw`, `db_password` en `secret_key` blijven geldig.
