@@ -26,10 +26,10 @@ from ..errors import ApiError, validation_error
 from ..events import audit, emit, record_evidence
 from ..idempotency import run_idempotent
 from ..manifest.conflicts import Inventory, analyse
-from ..manifest.loader import MAX_MANIFEST_BYTES
+from ..manifest.loader import MAX_MANIFEST_BYTES, data_limit_findings
 from ..manifest.model import Manifest
 from ..manifest.translate import Target, translate
-from ..manifest.validator import schema, validate_data, validate_text
+from ..manifest.validator import build_report, schema, validate_data, validate_text
 from ..models import CatalogEntry, CatalogSource, ManifestVersion, SyncJob
 from ..timeutil import iso, utcnow
 from .common import check_limit, ctx, cursor_invalid, decode_cursor, encode_cursor, etag, get_db, require_if_match, tid
@@ -461,6 +461,8 @@ def validate(body: ValidateRequest, request: Request, db: DB, principal: Viewer)
         )
     if body.manifest_yaml is not None:
         report, _, _ = validate_text(body.manifest_yaml)
+    elif limits := data_limit_findings(body.manifest):  # ADR-0018: dezelfde grenzen als voor manifest_yaml
+        report = build_report(None, limits, None)
     else:
         report, _ = validate_data(body.manifest)
     evidence_id = record_evidence(

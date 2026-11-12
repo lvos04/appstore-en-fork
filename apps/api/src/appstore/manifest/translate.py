@@ -31,8 +31,10 @@ from .canonical import sha256_digest
 from .findings import Finding, Severity, error, warning
 from .model import CustomApp, Manifest, Parameter, ParamRef
 from .rules import (
+    _HUB_RESERVED,
     _INTERPOLATION,
     _PLACEHOLDER,
+    Place,
     catalog_value_findings,
     has_value,
     host_path_problem,
@@ -40,8 +42,10 @@ from .rules import (
     is_own_image,
     is_secret_name,
     name_value_pair,
+    render_shown,
     secret_text_finding,
     secret_text_reasons,
+    shown_key,
 )
 from .truenas import (
     IX_APP_CATALOG_APP,
@@ -248,13 +252,18 @@ class _Resolver:
         self.ref_at: dict[Segments, str] = {}
         #: Geheime parameters die de vertaling op een plek tegenkwam (een opgegeven waarde is dan al beoordeeld).
         self.secrets_seen: set[str] = set()
+        #: Plekken (de ``value`` van een omgevingsvariabele) waar de vertaling zelf een ``HUB_*``-naam zette, zoals
+        #: ``HUB_ENROLLMENT_TOKEN`` (``docs/MANIFESTSTANDAARD.md``, "Gereserveerde namen"). De vertaling doet dat nu
+        #: nooit; alleen op zo'n plek geldt de uitzondering van W3 (ADR-0018).
+        self.hub_at: set[Segments] = set()
         for name in supplied:
             if name not in self.params:
+                shown = shown_key(str(name))  # ADR-0018: een naam die een waarde kan dragen, staat er niet
                 self.findings.append(
                     error(
                         "parameter_value_unknown",
-                        f"parameters.{name}",
-                        f"Waarde opgegeven voor onbekende parameter {name!r}.",
+                        f"parameters.{shown}",
+                        f"Waarde opgegeven voor onbekende parameter {shown!r}.",
                     )
                 )
 
@@ -274,6 +283,27 @@ class _Resolver:
         param = self.params.get(ref.param)
         if param is None:  # door de validator al uitgesloten
             self.findings.append(error("unknown_parameter", path, f"Onbekende parameter {ref.param!r}."))
+            return None
+        # ADR-0018 (verdediging in de diepte; de validator weigert dit al): de naam van de parameter telt ook
+        if is_account_name(param.name):
+            self.findings.append(
+                error(
+                    "account_gegevens_verboden",
+                    path,
+                    f"Parameter {param.name!r} is de aanmelding van een beheerder of dienstaccount; die gaat nooit mee "
+                    "in de installatie, ook niet als vault-verwijzing (ADR-0018).",
+                )
+            )
+            return None
+        if is_secret_name(param.name) and not is_secret(param):
+            self.findings.append(
+                error(
+                    "secret_in_form",
+                    path,
+                    f"De gewone parameter {param.name!r} heeft een geheimnaam; zijn waarde zou in het formulier of de "
+                    "waarden komen (ADR-0018).",
+                )
+            )
             return None
         if is_secret(param):
             return self.secret(param, path, ref_at, hub_generated_only=hub_generated_only)
@@ -658,60 +688,93 @@ def _custom_app_values(
 
 
 #: De enige naam die W3 met een geheim laat staan: het eenmalige enrollment-token (contract 1.3 §3.1, de enige
-#: uitzondering op "geen geheimen in het formulier"). Precies deze naam; elke andere ``HUB_*``-naam niet.
+#: uitzondering op "geen geheimen in het formulier"). Precies deze naam; elke andere ``HUB_*``-naam niet. ADR-0018:
+#: alleen voor de geheimnaamregel en alleen op een plek waar de vertaling hem zelf zette (``_Resolver.hub_at``).
 ENROLLMENT_ENV = "HUB_ENROLLMENT_TOKEN"
 
 
-def _filled_place(name: str, value: Any, at: Segments, ref_at: dict[Segments, str]) -> Finding | None:
-    """W3 op één ingevulde plek: een accountnaam met een waarde (ook een vault-verwijzing), een tekst waarin T1 of T2
-    iets vindt, of een geheimnaam met een waarde die geen eigen vault-verwijzing van de vertaling is."""
-    if name == ENROLLMENT_ENV:
-        return None
+def finding_path(at: Segments) -> str:
+    """Pad voor een melding: zoals :func:`render_path`, maar een sleutel die een waarde kan dragen, staat er niet
+    (ADR-0018). Een vault-verwijzing (``vault_refs``) gebruikt altijd het echte pad."""
+    return render_shown(at)
+
+
+def _filled_place(
+    place: Place, value: Any, at: Segments, ref_at: dict[Segments, str], hub_at: frozenset[Segments]
+) -> Finding | None:
+    """W3 op één ingevulde plek: een accountplek met een waarde (ook een vault-verwijzing), een tekst waarin T1 of T2
+    iets vindt (altijd, ook onder ``HUB_ENROLLMENT_TOKEN``), of een geheimplek met een waarde die geen eigen
+    vault-verwijzing van de vertaling is. ``place`` erft van de voorouders van de plek (ADR-0018)."""
+    shown = shown_key(place.secret_name or place.name)
     own = isinstance(value, str) and ref_at.get(at) == value
-    path = render_path(at)
-    if is_account_name(name) and has_value(value):
+    path = finding_path(at)
+    if place.account and has_value(value):
         return error(
             "account_gegevens_verboden",
             path,
-            f"{name} is de aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook "
+            f"{shown} is de aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook "
             "niet als vault-verwijzing (ADR-0016 W3).",
         )
     if isinstance(value, str) and not own and (reasons := secret_text_reasons(value, settings=True)):
         return secret_text_finding(path, reasons)
-    if is_secret_name(name) and has_value(value) and not own:
+    enrollment = place.name == ENROLLMENT_ENV and at in hub_at
+    if place.secret and has_value(value) and not own and not enrollment:
         return error(
             "secret_in_form",
             path,
-            f"{name} lijkt een geheim en zou na het invullen in het formulier of de waarden staan; een geheim gaat "
+            f"{shown} lijkt een geheim en zou na het invullen in het formulier of de waarden staan; een geheim gaat "
             "alleen als vault-verwijzing van de vertaling mee (ADR-0016 W3).",
         )
     return None
 
 
-def filled_value_findings(values: Any, ref_at: dict[Segments, str], *, custom_app: bool) -> list[Finding]:
-    """W3 (ADR-0016): na het invullen van de parameters de omgevingswaarden van een Custom App (``values.envs``) of de
-    ``values`` van een catalogusapp opnieuw toetsen op geheimen en accountgegevens. ``ref_at`` noemt de plekken waar
-    de vertaling zelf een vault-verwijzing zette. De melding noemt het pad, nooit de waarde; bij een treffer is er
-    geen payload."""
+def _reserved(path: str) -> Finding:
+    return error(
+        "reserved_env",
+        path,
+        "HUB_* is gereserveerd: alleen de vertaling zelf zet zo'n naam als de Hub koppelt (§3.2); via een parameter "
+        "komt hij er nooit in (ADR-0018).",
+    )
+
+
+def filled_value_findings(
+    values: Any,
+    ref_at: dict[Segments, str],
+    *,
+    custom_app: bool,
+    hub_at: frozenset[Segments] = frozenset(),
+) -> list[Finding]:
+    """W3 (ADR-0016, ADR-0018): na het invullen van de parameters de omgevingswaarden van een Custom App
+    (``values.envs``) of de ``values`` van een catalogusapp opnieuw toetsen op geheimen en accountgegevens, en op een
+    ``HUB_*``-naam die de vertaling niet zelf zette (``reserved_env``). ``ref_at`` noemt de plekken waar de vertaling
+    zelf een vault-verwijzing zette, ``hub_at`` de plekken waar zij zelf een ``HUB_*``-naam zette. De melding noemt
+    het pad, nooit de waarde; bij een treffer is er geen payload."""
     out: list[Finding] = []
     if custom_app:
         envs = values.get("envs") if isinstance(values, dict) else None
         for idx, env in enumerate(envs if isinstance(envs, list) else []):
             at: Segments = ("values", "envs", idx, "value")
             if isinstance(env, dict) and isinstance(env.get("name"), str):
-                finding = _filled_place(env["name"], env.get("value"), at, ref_at)
+                if _HUB_RESERVED.match(env["name"]) and at not in hub_at:
+                    out.append(_reserved(finding_path(("values", "envs", idx, "name"))))
+                finding = _filled_place(Place().child(env["name"]), env.get("value"), at, ref_at, hub_at)
                 out.extend([finding] if finding is not None else [])
         return out
-    stack: list[tuple[Any, Segments, str]] = [(values, ("values",), "")]
+    stack: list[tuple[Any, Segments, Place]] = [(values, ("values",), Place())]
     while stack:
-        value, at, name = stack.pop()
+        value, at, place = stack.pop()
         if isinstance(value, dict):
             pair = name_value_pair(value)
+            name_field = value.get("name")  # zoals rules._hub_names_in_values: elk ``name``-veld, ook zonder ``value``
+            if isinstance(name_field, str) and _HUB_RESERVED.match(name_field) and (*at, "value") not in hub_at:
+                out.append(_reserved(finding_path((*at, "name"))))
             for key, sub in value.items():
-                stack.append((sub, (*at, key), pair if pair is not None and key == "value" else str(key)))
+                if isinstance(key, str) and _HUB_RESERVED.match(key):
+                    out.append(_reserved(finding_path((*at, key))))
+                stack.append((sub, (*at, key), place.child(pair if pair is not None and key == "value" else str(key))))
         elif isinstance(value, list):
-            stack.extend((sub, (*at, idx), name) for idx, sub in enumerate(value))
-        elif finding := _filled_place(name, value, at, ref_at):
+            stack.extend((sub, (*at, idx), place) for idx, sub in enumerate(value))
+        elif finding := _filled_place(place, value, at, ref_at, hub_at):
             out.append(finding)
     return sorted(out, key=lambda f: f.path)
 
@@ -720,7 +783,7 @@ def _substitute(value: Any, r: _Resolver, at: Segments) -> Any:
     """Vul de parameters in de ``values`` van een catalogusapp in; ``at`` is ook de plek in de payload."""
     if isinstance(value, dict):
         if set(value) == {"param"} and isinstance(value["param"], str):
-            return r.get(ParamRef(param=value["param"]), render_path(at), ref_at=at)
+            return r.get(ParamRef(param=value["param"]), finding_path(at), ref_at=at)
         return {k: _substitute(v, r, (*at, k)) for k, v in value.items()}
     if isinstance(value, list):
         return [_substitute(v, r, (*at, i)) for i, v in enumerate(value)]
@@ -746,7 +809,7 @@ def _unmarked_vault_refs(payload: AppCreatePayload, ref_at: dict[Segments, str])
     return [
         error(
             "vault_ref_not_allowed",
-            render_path(at),
+            finding_path(at),
             (
                 "In een sleutel van dit object staat een vault-verwijzing"
                 if is_key
@@ -801,7 +864,12 @@ def translate(
         if values is not None:
             # W3 (ADR-0016): de ingevulde omgevingswaarden opnieuw toetsen; een treffer blokkeert de payload
             resolver.findings.extend(
-                filled_value_findings(values.model_dump(mode="json"), resolver.ref_at, custom_app=True)
+                filled_value_findings(
+                    values.model_dump(mode="json"),
+                    resolver.ref_at,
+                    custom_app=True,
+                    hub_at=frozenset(resolver.hub_at),
+                )
             )
         if manifest.image.digest:
             readback = DigestReadback(
@@ -831,7 +899,9 @@ def translate(
             catalog_value_findings(values_any, host_network_reason=manifest.network.host_network_reason, resolved=True)
         )
         # W3 (ADR-0016): geheimen en accountgegevens opnieuw, na het invullen
-        resolver.findings.extend(filled_value_findings(values_any, resolver.ref_at, custom_app=False))
+        resolver.findings.extend(
+            filled_value_findings(values_any, resolver.ref_at, custom_app=False, hub_at=frozenset(resolver.hub_at))
+        )
         if not any(f.severity is Severity.ERROR for f in resolver.findings):
             payload = AppCreatePayload(
                 app_name=name,

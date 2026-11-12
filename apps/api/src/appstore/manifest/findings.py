@@ -138,6 +138,7 @@ CODES: dict[str, str] = {
     "signature_missing": "Handtekening ontbreekt terwijl de bron die vereist.",
     "signature_invalid": "Handtekening klopt niet.",
     "app_id_claimed_by_other_source": "App-ID hoort bij een andere catalogusbron.",
+    "manifest_niet_verwerkt": "Een onverwachte fout bij dit manifest: alleen dit manifest is geweigerd (fail-closed).",
     # vertaling naar TrueNAS (app.create)
     "parameter_value_missing": "Waarde voor een verplichte parameter ontbreekt.",
     "parameter_value_invalid": "Waarde voor een parameter is ongeldig.",

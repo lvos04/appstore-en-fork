@@ -297,6 +297,16 @@ NAAMPROEVEN: dict[str, tuple[dict[str, Any], dict[str, str]]] = {
     ),
 }
 
+#: Teksten die Python met ``str.strip()`` leeg maakt, maar die voor bash, ``nopt`` en de apps een waarde zijn
+#: (R-VEILIG-1 van S-P2-520; ADR-0018): spaties, U+00A0, U+2003 en de stuurtekens U+001C en U+001F.
+WITRUIMTE: dict[str, str] = {
+    "spaties": " " * 12,
+    "nbsp": " " * 12,
+    "em": " " * 12,
+    "fs": "\x1c" * 8,
+    "us": "\x1f" * 8,
+}
+
 #: Alle testwaarden die nooit in een melding of antwoord mogen staan.
 TESTWAARDEN: tuple[str, ...] = (
     PROEFSLEUTEL,

@@ -448,7 +448,9 @@ def test_hub_secret_vault_reference_still_translates() -> None:
 
 def test_w3_lets_only_the_enrollment_token_through() -> None:
     """Contract kop 3.1: alleen ``HUB_ENROLLMENT_TOKEN`` mag; ``HUB_TOKEN``, ``HUB_SECRET`` en elke andere geheimnaam
-    niet. De vertaling zet ``HUB_*`` (nog) niet zelf, dus de uitzondering wordt op een ingevulde ``envs``-lijst getoetst."""
+    niet. De vertaling zet ``HUB_*`` (nog) niet zelf, dus de uitzondering wordt op een ingevulde ``envs``-lijst getoetst.
+    ADR-0018: de uitzondering geldt alleen op een plek waar de vertaling de naam zelf zette (``hub_at``), en een
+    ``HUB_*``-naam die zij niet zette, geeft ``reserved_env``."""
     from appstore.manifest.translate import filled_value_findings
 
     envs = [
@@ -460,7 +462,8 @@ def test_w3_lets_only_the_enrollment_token_through() -> None:
         {"name": "HUB_KEY_FINGERPRINT", "value": "SHA256:proef"},
         {"name": "APP_TOKEN", "value": PROEFSLEUTEL},
     ]
-    findings = filled_value_findings({"envs": envs}, {}, custom_app=True)
+    gezet = frozenset(("values", "envs", idx, "value") for idx in range(len(envs)))
+    findings = filled_value_findings({"envs": envs}, {}, custom_app=True, hub_at=gezet)
     assert [(f.path, f.code) for f in findings] == [
         ("values.envs[1].value", "secret_in_form"),
         ("values.envs[2].value", "secret_in_form"),
@@ -468,8 +471,14 @@ def test_w3_lets_only_the_enrollment_token_through() -> None:
         ("values.envs[6].value", "secret_in_form"),
     ]
     _no_echo(json.dumps([f.model_dump() for f in findings]))
+    zelf_niet = filled_value_findings({"envs": envs}, {}, custom_app=True)
+    assert [f.path for f in zelf_niet if f.code == "reserved_env"] == [f"values.envs[{i}].name" for i in range(6)]
+    assert ("values.envs[0].value", "secret_in_form") in {(f.path, f.code) for f in zelf_niet}
     pairs = {"extra": [{"name": "HUB_ENROLLMENT_TOKEN", "value": PROEFSLEUTEL}, {"name": "HUB_SECRET", "value": "x"}]}
-    assert [f.path for f in filled_value_findings(pairs, {}, custom_app=False)] == ["values.extra[1].value"]
+    gezet_paar = frozenset({("values", "extra", 0, "value"), ("values", "extra", 1, "value")})
+    assert [f.path for f in filled_value_findings(pairs, {}, custom_app=False, hub_at=gezet_paar)] == [
+        "values.extra[1].value"
+    ]
 
 
 # ---------------------------------------------------------------------------------------------- jl-manifest

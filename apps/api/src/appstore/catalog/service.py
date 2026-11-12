@@ -276,7 +276,17 @@ def sync_source(
         return SyncOutcome(ok=False, error_code="source_unreachable", error_nl=msg)
     outcome = SyncOutcome(ok=True, revision=fetched.revision, not_modified=fetched.not_modified)
     for file in fetched.files:
-        status, version, report = record_manifest(db, source, file, fetched.revision, secrets, trace_id)
+        try:
+            # ADR-0018: fail-closed per manifest. Een onverwachte fout bij één manifest weigert alleen dat manifest
+            # (de savepoint draait zijn wijzigingen terug); de andere manifesten van de bron worden gewoon verwerkt.
+            with db.begin_nested():
+                status, version, report = record_manifest(db, source, file, fetched.revision, secrets, trace_id)
+        except Exception as exc:
+            log.error("manifest %s van bron %s niet verwerkt (%s)", file.path, source.name, type(exc).__name__)
+            outcome.rejected.append(
+                {"file": file.path, "app_id": None, "version_id": None, "codes": ["manifest_niet_verwerkt"]}
+            )
+            continue
         if status == "added":
             outcome.added.append(f"{report.app_id} {report.version}")
         elif status == "unchanged":

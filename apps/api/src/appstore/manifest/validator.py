@@ -25,7 +25,7 @@ from .canonical import canonical_json, sha256_digest
 from .findings import Finding, Severity, error
 from .loader import load_manifest_text
 from .model import Manifest
-from .rules import check_manifest, recognised_secret, secret_text_findings
+from .rules import check_manifest, recognised_secret, render_shown, secret_text_findings, shown_key
 
 SCHEMA_FILE = "manifest-v1.schema.json"
 _COMPOSE_KEYS = (
@@ -96,10 +96,8 @@ class ValidationReport(BaseModel):
 
 
 def _path(err: JsonSchemaError) -> str:
-    out = ""
-    for part in err.absolute_path:
-        out += f"[{part}]" if isinstance(part, int) else (f".{part}" if out else str(part))
-    return out
+    """Pad van een schemafout; een sleutel die een waarde kan dragen, staat er niet (ADR-0018, ``shown_key``)."""
+    return render_shown(tuple(p if isinstance(p, int) else str(p) for p in err.absolute_path))
 
 
 def _shown(data: dict[str, Any], err: JsonSchemaError) -> str:
@@ -133,11 +131,12 @@ def _schema_findings(data: dict[str, Any]) -> list[Finding]:
                 else []
             )
             for name in extra or ["?"]:
+                shown = shown_key(str(name))
                 findings.append(
                     error(
                         "unknown_field",
-                        f"{path}.{name}" if path else name,
-                        f"Onbekend veld {name!r}; controleer de spelling.",
+                        f"{path}.{shown}" if path else shown,
+                        f"Onbekend veld {shown!r}; controleer de spelling.",
                     )
                 )
         elif kw == "type":
@@ -204,17 +203,30 @@ def _compose_findings(data: dict[str, Any]) -> list[Finding]:
     return out
 
 
+def _header(data: dict[str, Any] | None, *segments: str, text_only: bool = True) -> str | None:
+    """Een kopveld van het rapport (``app_id``, ``version``, ``install.method``), maar niet als W2 de waarde herkent:
+    dan ``None`` (ADR-0018; de waarde staat dan niet in het rapport, de tekst, het antwoord of het bewijs).
+    ``text_only``: alleen een tekst telt (``app_id``, ``version``); anders elke niet-lege waarde, als tekst."""
+    node: Any = data
+    for segment in segments:
+        node = node.get(segment) if isinstance(node, dict) else None
+    if not isinstance(node, str) if text_only else not node:
+        return None
+    if recognised_secret(data, segments, node):
+        return None
+    return str(node)
+
+
 def build_report(data: dict[str, Any] | None, findings: list[Finding], manifest_sha: str | None) -> ValidationReport:
     findings = sorted(findings, key=lambda f: (f.severity is not Severity.ERROR, f.path, f.code))
     errors = sum(1 for f in findings if f.severity is Severity.ERROR)
     accepted = sum(1 for f in findings if f.severity is Severity.WARNING and f.accepted)
     open_warnings = len(findings) - errors - accepted
-    install = data.get("install") if isinstance(data, dict) else None
     return ValidationReport(
         valid=errors == 0,
-        app_id=str(data["app_id"]) if isinstance(data, dict) and isinstance(data.get("app_id"), str) else None,
-        version=str(data["version"]) if isinstance(data, dict) and isinstance(data.get("version"), str) else None,
-        install_method=str(install.get("method")) if isinstance(install, dict) and install.get("method") else None,
+        app_id=_header(data, "app_id"),
+        version=_header(data, "version"),
+        install_method=_header(data, "install", "method", text_only=False),
         manifest_sha256=manifest_sha,
         schema_sha256=schema_sha256(),
         validator_version=__version__,
