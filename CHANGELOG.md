@@ -2,6 +2,24 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Geheimen en accountgegevens weigeren: herstel na de review** (ADR-0018; stap S-P2-520):
+  - Een tekst van alleen spaties, U+00A0, U+2003 of stuurtekens (U+001C, U+001F) is een waarde, geen lege tekst; het
+    vangnet stopt alleen op spatie, tab en regeleinde.
+  - De tekstregels lopen in lineaire tijd; een tekst van meer dan 65536 tekens is fail-closed een fout.
+    `POST /catalog/v1/validate` past op het JSON-veld `manifest` dezelfde grenzen toe als op `manifest_yaml` (256 KiB,
+    32 niveaus).
+  - Een naam met `ß` (`paß`, `Reisepaß`) laat de validator niet meer crashen en is geen geheimnaam; een cijfer na het
+    geheimwoord telt wel (`DB_PASSWORD2`). Bij het synchroniseren weigert een onverwachte fout alleen dat ene manifest
+    (`manifest_niet_verwerkt`), de rest van de bron gaat door.
+  - `HUB_ENROLLMENT_TOKEN` mag alleen een geheim dragen als de vertaling hem zelf zette (nu nooit); T1 en T2 gelden
+    altijd, en een `HUB_*`-naam die via een parameter binnenkomt geeft na het invullen `reserved_env`.
+  - Wat onder een geheim- of accountnaam ligt, erft die naam; een voorouder-sleutel met een accountwoord
+    (`admin.password`) maakt een accountplek; de naam van de parameter telt ook (`admin_password` als geheim van de Hub
+    geeft `account_gegevens_verboden`, een gewone parameter `db_password` de fout `secret_in_form`).
+  - Een herkende waarde in `app_id`, `version` of `install.method` staat niet meer in het rapport; T1 geldt ook op
+    sleutels in `values`, en een sleutel met `=` of met een herkende waarde staat in pad en melding als `<verborgen>`.
+  - De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde exitcode en byte-gelijke uitvoer.
+
 - **Geheimen en accountgegevens overal geweigerd** (ADR-0016 W2 en W3, ADR-0017; stap S-P2-520):
   - Nieuwe foutcode `account_gegevens_verboden` (niet te accepteren): de naam van een beheerder of dienstaccount
     (zoals `GOTIFY_DEFAULTUSER_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`) krijgt nooit een waarde via `value_from` of
