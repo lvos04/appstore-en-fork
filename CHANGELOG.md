@@ -2,6 +2,25 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Geheimen en accountgegevens overal geweigerd** (ADR-0016 W2 en W3, ADR-0017; stap S-P2-520):
+  - Nieuwe foutcode `account_gegevens_verboden` (niet te accepteren): de naam van een beheerder of dienstaccount
+    (zoals `GOTIFY_DEFAULTUSER_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`) krijgt nooit een waarde via `value_from` of
+    `{param}`, ook niet van een geheim dat de Hub maakt (de vault-weg is dicht voor accounts); en geen tekst bevat een
+    wachtwoordhash, een geheime sleutel met waarde, een gebruikerslijst of instellingen uit een bestand (`FLOWS` van
+    Node-RED wordt gelezen zoals Node-RED het leest, zonder lijst van optievormen, met een vangnet op de tekst zelf).
+  - Een geheimnaam is breder: het woord mag overal in de naam staan (`APP_SECRET_KEY`), ook camelCase (`secretKey`),
+    en `WACHTWOORD` telt mee; `SECRETS_DIR`, `TOKENS` en `PASSWORDLESS` niet. Een letterlijke waarde onder zo'n naam
+    (ook in een naam/waarde-paar in `values` of als `default`/`example` van een parameter zonder geheimmarkering) geeft
+    `secret_literal_forbidden`; een waarde van een gewone parameter geeft de fout `secret_in_form`.
+  - ADR-0017: elke bcrypt-vorm die de bcrypt van Node-RED aanneemt (`$2x$`, zonder `$` vooraan, dubbele `$`, kosten
+    `+10` of `010`), en een kruisverwijzing (`[msg.…]`) of index in de sleutel van een instelling, geven ook
+    `account_gegevens_verboden`.
+  - De vertaling (`jl-manifest translate`, `POST /catalog/v1/preview`) toetst na het invullen opnieuw; alleen de naam
+    `HUB_ENROLLMENT_TOKEN` mag een geheim dragen. Bij een treffer is er geen payload. Geen nieuw veld in de uitvoer.
+  - Een schemafout (`invalid_format`, `invalid_value`) noemt een waarde niet meer als die regels haar herkennen.
+  - De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde exitcode en dezelfde meldingen. Repos die
+    een commit van deze repo pinnen, krijgen dit pas als zij hun pin verzetten.
+
 - **Geheimen in de vertaling: alleen een vault-verwijzing** (ADR-0015, C1.3-ASF-14):
   - Een geheime parameter (`source: generated`/`secret`, `type: secret_ref`, `secret: true`) wordt nooit ingevuld; op zijn
     plek komt `vault://app/<app_id>/<parameter>` (de vaste `app_id` uit het manifest, niet de gekozen appnaam). Dat

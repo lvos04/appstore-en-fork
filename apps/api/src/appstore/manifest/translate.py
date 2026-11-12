@@ -30,7 +30,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from .canonical import sha256_digest
 from .findings import Finding, Severity, error, warning
 from .model import CustomApp, Manifest, Parameter, ParamRef
-from .rules import _INTERPOLATION, _PLACEHOLDER, catalog_value_findings, host_path_problem, is_own_image
+from .rules import (
+    _INTERPOLATION,
+    _PLACEHOLDER,
+    catalog_value_findings,
+    has_value,
+    host_path_problem,
+    is_account_name,
+    is_own_image,
+    is_secret_name,
+    name_value_pair,
+    secret_text_finding,
+    secret_text_reasons,
+)
 from .truenas import (
     IX_APP_CATALOG_APP,
     IX_APP_MAX_EXCLUSIVE,
@@ -645,6 +657,65 @@ def _custom_app_values(
     )
 
 
+#: De enige naam die W3 met een geheim laat staan: het eenmalige enrollment-token (contract 1.3 §3.1, de enige
+#: uitzondering op "geen geheimen in het formulier"). Precies deze naam; elke andere ``HUB_*``-naam niet.
+ENROLLMENT_ENV = "HUB_ENROLLMENT_TOKEN"
+
+
+def _filled_place(name: str, value: Any, at: Segments, ref_at: dict[Segments, str]) -> Finding | None:
+    """W3 op één ingevulde plek: een accountnaam met een waarde (ook een vault-verwijzing), een tekst waarin T1 of T2
+    iets vindt, of een geheimnaam met een waarde die geen eigen vault-verwijzing van de vertaling is."""
+    if name == ENROLLMENT_ENV:
+        return None
+    own = isinstance(value, str) and ref_at.get(at) == value
+    path = render_path(at)
+    if is_account_name(name) and has_value(value):
+        return error(
+            "account_gegevens_verboden",
+            path,
+            f"{name} is de aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook "
+            "niet als vault-verwijzing (ADR-0016 W3).",
+        )
+    if isinstance(value, str) and not own and (reasons := secret_text_reasons(value, settings=True)):
+        return secret_text_finding(path, reasons)
+    if is_secret_name(name) and has_value(value) and not own:
+        return error(
+            "secret_in_form",
+            path,
+            f"{name} lijkt een geheim en zou na het invullen in het formulier of de waarden staan; een geheim gaat "
+            "alleen als vault-verwijzing van de vertaling mee (ADR-0016 W3).",
+        )
+    return None
+
+
+def filled_value_findings(values: Any, ref_at: dict[Segments, str], *, custom_app: bool) -> list[Finding]:
+    """W3 (ADR-0016): na het invullen van de parameters de omgevingswaarden van een Custom App (``values.envs``) of de
+    ``values`` van een catalogusapp opnieuw toetsen op geheimen en accountgegevens. ``ref_at`` noemt de plekken waar
+    de vertaling zelf een vault-verwijzing zette. De melding noemt het pad, nooit de waarde; bij een treffer is er
+    geen payload."""
+    out: list[Finding] = []
+    if custom_app:
+        envs = values.get("envs") if isinstance(values, dict) else None
+        for idx, env in enumerate(envs if isinstance(envs, list) else []):
+            at: Segments = ("values", "envs", idx, "value")
+            if isinstance(env, dict) and isinstance(env.get("name"), str):
+                finding = _filled_place(env["name"], env.get("value"), at, ref_at)
+                out.extend([finding] if finding is not None else [])
+        return out
+    stack: list[tuple[Any, Segments, str]] = [(values, ("values",), "")]
+    while stack:
+        value, at, name = stack.pop()
+        if isinstance(value, dict):
+            pair = name_value_pair(value)
+            for key, sub in value.items():
+                stack.append((sub, (*at, key), pair if pair is not None and key == "value" else str(key)))
+        elif isinstance(value, list):
+            stack.extend((sub, (*at, idx), name) for idx, sub in enumerate(value))
+        elif finding := _filled_place(name, value, at, ref_at):
+            out.append(finding)
+    return sorted(out, key=lambda f: f.path)
+
+
 def _substitute(value: Any, r: _Resolver, at: Segments) -> Any:
     """Vul de parameters in de ``values`` van een catalogusapp in; ``at`` is ook de plek in de payload."""
     if isinstance(value, dict):
@@ -727,6 +798,11 @@ def translate(
                 )
             )
         values = _custom_app_values(manifest, manifest.custom_app, resolver, manifest_sha, target)
+        if values is not None:
+            # W3 (ADR-0016): de ingevulde omgevingswaarden opnieuw toetsen; een treffer blokkeert de payload
+            resolver.findings.extend(
+                filled_value_findings(values.model_dump(mode="json"), resolver.ref_at, custom_app=True)
+            )
         if manifest.image.digest:
             readback = DigestReadback(
                 repository=manifest.image.repository,
@@ -754,6 +830,8 @@ def translate(
         resolver.findings.extend(
             catalog_value_findings(values_any, host_network_reason=manifest.network.host_network_reason, resolved=True)
         )
+        # W3 (ADR-0016): geheimen en accountgegevens opnieuw, na het invullen
+        resolver.findings.extend(filled_value_findings(values_any, resolver.ref_at, custom_app=False))
         if not any(f.severity is Severity.ERROR for f in resolver.findings):
             payload = AppCreatePayload(
                 app_name=name,

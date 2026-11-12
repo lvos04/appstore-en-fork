@@ -25,7 +25,7 @@ from .canonical import canonical_json, sha256_digest
 from .findings import Finding, Severity, error
 from .loader import load_manifest_text
 from .model import Manifest
-from .rules import check_manifest
+from .rules import check_manifest, recognised_secret, secret_text_findings
 
 SCHEMA_FILE = "manifest-v1.schema.json"
 _COMPOSE_KEYS = (
@@ -102,6 +102,15 @@ def _path(err: JsonSchemaError) -> str:
     return out
 
 
+def _shown(data: dict[str, Any], err: JsonSchemaError) -> str:
+    """De waarde voor een melding, of een vaste tekst als W2 haar als geheim of accountgegeven herkent (ADR-0016 W2:
+    een schemafout noemt zo'n waarde niet)."""
+    segments = tuple(p if isinstance(p, int) else str(p) for p in err.absolute_path)
+    if recognised_secret(data, segments, err.instance):
+        return "(waarde niet getoond: mogelijk een geheim of accountgegeven)"
+    return repr(err.instance)
+
+
 def _schema_findings(data: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
     errors = sorted(_validator().iter_errors(data), key=lambda e: (list(map(str, e.absolute_path)), e.validator))
@@ -139,11 +148,11 @@ def _schema_findings(data: dict[str, Any]) -> list[Finding]:
                 error(
                     "invalid_value",
                     path,
-                    f"Ongeldige waarde {err.instance!r}; toegestaan: {', '.join(map(repr, allowed))}.",
+                    f"Ongeldige waarde {_shown(data, err)}; toegestaan: {', '.join(map(repr, allowed))}.",
                 )
             )
         elif kw in ("pattern", "format"):
-            findings.append(error("invalid_format", path, f"Ongeldig formaat: {err.instance!r}."))
+            findings.append(error("invalid_format", path, f"Ongeldig formaat: {_shown(data, err)}."))
         elif kw in ("minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems", "exclusiveMinimum"):
             findings.append(error("out_of_range", path, f"Waarde buiten bereik ({kw} {err.validator_value})."))
         elif kw == "uniqueItems":
@@ -259,8 +268,12 @@ def validate_data(data: Any) -> tuple[ValidationReport, Manifest | None]:
         ), None
     findings = _compose_findings(data)
     findings.extend(_schema_findings(data))
+    # ADR-0016 W2: tekstregels op de ruwe gegevens, zodat de melding er ook is als het schema faalt; ze houden de
+    # semantische regels niet tegen (op hetzelfde pad kan bv. ook interpolation_forbidden staan)
+    text_findings = secret_text_findings(data)
     if any(f.severity is Severity.ERROR for f in findings):
-        return build_report(data, findings, manifest_sha), None
+        return build_report(data, findings + text_findings, manifest_sha), None
+    findings.extend(text_findings)
     try:
         manifest = Manifest.model_validate(data)
     except PydanticError as exc:  # schema en model horen gelijk te oordelen; zo niet: fout, nooit stil doorlaten

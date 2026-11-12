@@ -4,7 +4,9 @@ Normatief: [`schemas/manifest-v1.schema.json`](../schemas/manifest-v1.schema.jso
 regels in `apps/api/src/appstore/manifest/rules.py`; controlelijsten zonder installatie:
 [`schemas/checklist-v1.schema.json`](../schemas/checklist-v1.schema.json). Keuzes en redenen: [ADR-0002](adr/ADR-0002-manifeststandaard-v1.md),
 vertaling naar TrueNAS: [ADR-0004](adr/ADR-0004-truenas-vertaling.md), geheimen in de vertaling:
-[ADR-0015](adr/ADR-0015-vault-verwijzing-geheimen-in-de-vertaling.md) en [TRUENAS_APP_VALUES.md](TRUENAS_APP_VALUES.md).
+[ADR-0015](adr/ADR-0015-vault-verwijzing-geheimen-in-de-vertaling.md) en [TRUENAS_APP_VALUES.md](TRUENAS_APP_VALUES.md),
+geheimen en accountgegevens weigeren: [ADR-0016](adr/ADR-0016-beheerder-en-dienstaccount-zonder-geheim-in-het-formulier.md)
+(W2, W3) en [ADR-0017](adr/ADR-0017-kruisverwijzing-en-bcrypt-vormen-weigeren.md).
 Voorbeeld: [`deploy/manifest/appstore-en-fork.manifest.yaml`](../deploy/manifest/appstore-en-fork.manifest.yaml).
 
 ## Valideren
@@ -71,7 +73,8 @@ Oude manifesten blijven tijdens de overgang **geldig**; de nieuwe eisen geven wa
   `HUB_KEY_FINGERPRINT` zet de vertaling zelf als de Hub koppelt.
 - **Geheimen die de Hub maakt:** `source: generated` + `secret: true` (contract 1.3 §3.1 a). De waarde staat nooit in
   het manifest (geen `default` of `example`, anders `secret_literal_forbidden`); in het formulier of de `values` geeft
-  dat de **waarschuwing** `secret_in_form` (te accepteren) in plaats van een fout. `secret: true` met een andere
+  dat de **waarschuwing** `secret_in_form` (te accepteren) in plaats van een fout, behalve onder de naam van een
+  beheerder of dienstaccount (dan de fout `account_gegevens_verboden`, zie hieronder). `secret: true` met een andere
   `source` dan `generated`/`secret` → `secret_param_invalid`. De vertaling zet voor een geheim alleen een verwijzing
   naar de vault van de Hub, nooit een waarde (P2, C1.3-ASF-14; zie "Geheimen in de vertaling" hieronder).
 - **`accepted_findings: [{code, reden_nl}]`** — alleen `backup_db_export_none`, `secret_in_form` (alleen bij een
@@ -126,6 +129,69 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
 - **Alleen de vertaling maakt een verwijzing:** een letterlijke `vault://`-tekst (ook in een sleutel) in de `values` of
   in `custom_app.env[].value` → `vault_ref_not_allowed` (geen payload); de controle vergelijkt de echte plek, niet het
   pad als tekst. Een gewone parameter met `vault://` in de waarde → `parameter_value_invalid`.
+- **Opnieuw getoetst na het invullen (ADR-0016 W3):** de vertaling toetst de ingevulde omgevingswaarden
+  (`values.envs` van een Custom App) en de `values` van een catalogusapp opnieuw met de regels hieronder. Een geheimnaam
+  met een waarde die geen eigen vault-verwijzing van de vertaling is → `secret_in_form`; de naam van een beheerder of
+  dienstaccount met een waarde, ook een vault-verwijzing → `account_gegevens_verboden`; T1 en T2 op elke ingevulde
+  tekst (bijvoorbeeld een wachtwoordhash uit de wizard) → `account_gegevens_verboden`. Dan is er geen payload; de
+  melding noemt het pad, nooit de waarde. Alleen precies de naam `HUB_ENROLLMENT_TOKEN` mag een geheim dragen (het
+  eenmalige enrollment-token, contract 1.3 §3.1); `HUB_TOKEN`, `HUB_SECRET` en elke andere geheimnaam niet. Er komt geen
+  veld bij in de uitvoer van `translate` of `preview`.
+
+## Geheimen en accountgegevens weigeren (ADR-0016 W2, ADR-0017)
+
+Een account (beheerder of dienstaccount) gaat nooit door het manifest, het formulier of Git (ADR-0016, besluit 1).
+Daarom weigert de validator geheimen en accountgegevens overal, ook als het manifest geen `accounts` heeft. De melding
+noemt het pad en de reden, nooit de waarde; ook een schemafout (`invalid_format`, `invalid_value`) noemt een waarde
+niet als deze regels haar herkennen.
+
+- **Geheimnaam:** een naam waarin `PASS`, `PASSWD`, `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `APIKEY`, `PRIVATE_KEY`,
+  `PRIVATEKEY`, `CREDENTIAL`, `AUTH_KEY`, `SALT` of `WACHTWOORD` staat, gevolgd door het einde van de naam of door `_`,
+  `-` of `.` (hoofdletterongevoelig), of door een hoofdletter na een kleine letter (camelCase: `secretKey`,
+  `passwordHash`, `apiKeyValue`). Niet: `SECRETS_DIR`, `TOKENS`, `PASSWORDLESS`. Bij een sleutel met punten of `[n]`
+  telt het laatste deel (`adminAuth.users[0].password` → `password`). Een naam als `BYPASS_…` telt ook (fail-closed:
+  kies dan een andere naam).
+- **Accountnaam:** een geheimnaam waarin ook `BOOTSTRAP`, `DEFAULTUSER`, `DEFAULT_USER`, `ADMIN`, `ROOT`,
+  `SUPERUSER`, `OWNER`, `INITIAL`, `SETUP`, `BEHEER`, `SERVICE_ACCOUNT`, `SERVICEACCOUNT` of `DIENST` staat (vaste lijst),
+  bijvoorbeeld `GOTIFY_DEFAULTUSER_PASS` of `AUTHENTIK_BOOTSTRAP_PASSWORD`.
+- **Plek met een naam:** `custom_app.env[]` (`name`), een sleutel in `values`, een naam/waarde-paar in `values` (een
+  object met `name` en `value`, zoals `additional_envs`) en een parameter (`name`). Een **gewone parameter** heeft geen
+  geheimmarkering (niet `secret: true`, niet `type: secret_ref`, niet `source: secret` of `generated`).
+- **Niet-lege waarde:** tekst met inhoud, een getal, of een niet-lege lijst of object; ja/nee en `null` tellen niet.
+
+Naamregels (per plek één code):
+
+| Code | Wanneer |
+|---|---|
+| `secret_literal_forbidden` (N1) | een geheimnaam met een letterlijke waarde, ook een accountnaam: `custom_app.env[].value`, een sleutel of naam/waarde-paar in `values`, en een parameter met een geheimnaam zonder geheimmarkering met een `default` of `example` |
+| `secret_in_form` (N2, fout) | een geheimnaam die geen accountnaam is en zijn waarde krijgt via `value_from` of `{param}` van een gewone parameter |
+| `account_gegevens_verboden` (N3, fout, niet te accepteren) | een accountnaam die zijn waarde krijgt via `value_from` of `{param}`, van welke parameter ook, dus ook van een geheim dat de Hub maakt; op dat pad geen `secret_in_form` |
+
+Geen fout: een geheimnaam die geen accountnaam is, naar een geheim dat de Hub maakt (zoals `db_password` en
+`secret_key` van Authentik); daar blijft de te accepteren waarschuwing `secret_in_form`.
+
+Tekstregels (`account_gegevens_verboden`, fout; een sleutel is geen tekst):
+
+- **T1, op elke tekst** (ook `description_nl` en `beschrijving_nl`): een wachtwoordhash. bcrypt in elke vorm die de
+  bcrypt van Node-RED aanneemt: `$2a$`, `$2b$`, `$2y$` en `$2x$`, ook zonder `$` vooraan, met dubbele `$` en met kosten
+  als `+10` of `010`, gevolgd door 53 tekens (ADR-0017); en hashes in PHC-vorm (`$argon2…`, `$scrypt$`, `$pbkdf2…`).
+- **T2, op `custom_app.env[].value`, elke tekst in `values` en de `default` of `example` van een parameter:** de tekst
+  wordt gelezen zoals Node-RED `FLOWS` leest, zonder lijst van optievormen. Splitsen op spatie, tab en regeleinde; het
+  deel na de eerste `=` van een woord met `-` vooraan, en elk woord zonder `-` met een `=`, telt als instelling
+  `sleutel=waarde` (ook een los woord, fail-closed); de waarde gaat door JSON (escapes opgelost). Fout is: een sleutel
+  met een geheimnaam en een waarde, een sleutel `users` of `gebruikers` met inhoud, een hash volgens T1, instellingen uit
+  een bestand (`@`), en (ADR-0017) een kruisverwijzing (`[msg.…]`, `[msg[…]]`) of een index (`[0]`, `["0"]`, `.0`) in de
+  sleutel. Daarnaast een **vangnet** op de tekst zelf en op dezelfde tekst met alle JSON-escapes opgelost: een
+  JSON-sleutel met een geheimnaam en een waarde, een JSON-sleutel `users`/`gebruikers` met inhoud, elke `naam=` met een
+  waarde waarin `naam` een geheimnaam is, elk pad met een deel `users`/`gebruikers` vóór een `=` met een waarde, en een
+  hash volgens T1.
+- De regels van `nopt` waarop T2 steunt, zijn gemeten op de gepinde Node-RED-digest (ADR-0016, "Context"); de
+  kandidaatvormen c01 tot en met c15 staan met die digest in `apps/api/tests/geheimen_proeven.py`. Bij een nieuwe digest
+  meet jelly-leon-platform ze opnieuw.
+- `interpolation_forbidden` blijft zoals het was; op hetzelfde pad kunnen beide codes staan, elk met een eigen reden.
+
+Wat de validator niet ziet: een gecodeerde of gesplitste hash, en een geheim onder een naam zonder geheimwoord. Dan
+blijft de review van het manifest de controle (ADR-0016, "Wat dit ontwerp niet bewijst").
 
 ## Adoptiemanifest van een bestaande app (B08-002, ADR-0010)
 
@@ -232,6 +298,7 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `example_value_as_real` | Voorbeeldwaarde gebruikt als echte waarde. |
 | `secret_literal_forbidden` | Geheim als letterlijke waarde in het manifest. |
 | `secret_in_form` | Geheim zou in het Custom App-formulier terechtkomen. |
+| `account_gegevens_verboden` | Aanmelding van een beheerder of dienstaccount, wachtwoordhash, geheime sleutel of gebruikerslijst in het manifest of de vertaling. |
 | `secret_param_invalid` | secret: true alleen bij source generated (de Hub maakt hem) of secret. |
 | `reserved_env` | HUB_* is gereserveerd voor het koppelen en geen parameter of omgevingsvariabele. |
 | `interpolation_forbidden` | Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan. |

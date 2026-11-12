@@ -114,6 +114,7 @@ CODES: dict[str, str] = {
     "example_value_as_real": "Voorbeeldwaarde gebruikt als echte waarde.",
     "secret_literal_forbidden": "Geheim als letterlijke waarde in het manifest.",
     "secret_in_form": "Geheim zou in het Custom App-formulier terechtkomen.",
+    "account_gegevens_verboden": "Aanmelding van een beheerder of dienstaccount, wachtwoordhash, geheime sleutel of gebruikerslijst in het manifest of de vertaling.",
     "secret_param_invalid": "secret: true alleen bij source generated (de Hub maakt hem) of secret.",
     "reserved_env": "HUB_* is gereserveerd voor het koppelen en geen parameter of omgevingsvariabele.",
     "interpolation_forbidden": "Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan.",
