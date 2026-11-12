@@ -581,6 +581,9 @@ SECRET_WORDS: tuple[str, ...] = (
     "WACHTWOORD",
 )
 #: Woorden die van een geheimnaam een accountnaam maken (vaste lijst; een uitbreiding is een wijziging van de standaard).
+#: ADR-0020 (besluit BN-1 van de regisseur, aanvulling op ADR-0019) voegt de samenstellingen vanaf ``ADMINISTRATOR`` toe:
+#: als heel naamdeel in een voorouder tellen ze dan weer (``administrator``, ``beheerders``, ``rootuser``). De lijst
+#: blijft open: een nieuwe samenstelling (``sysadmin``) telt pas na een nieuwe uitbreiding.
 ACCOUNT_WORDS: tuple[str, ...] = (
     "BOOTSTRAP",
     "DEFAULTUSER",
@@ -595,6 +598,13 @@ ACCOUNT_WORDS: tuple[str, ...] = (
     "SERVICE_ACCOUNT",
     "SERVICEACCOUNT",
     "DIENST",
+    "ADMINISTRATOR",
+    "BEHEERDER",
+    "DIENSTACCOUNT",
+    "BEHEERACCOUNT",
+    "SUPERADMIN",
+    "ROOTUSER",
+    "ADMINUSER",
 )
 #: Sleutels van een gebruikerslijst: ``users`` (users.js van Node-RED) en de Nederlandse vorm.
 USER_LIST_KEYS = frozenset({"users", "gebruikers"})

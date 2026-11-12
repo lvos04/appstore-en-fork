@@ -169,15 +169,17 @@ en een herkende waarde in `app_id`, `version` of `install.method` staat niet in 
   telt het laatste deel (`adminAuth.users[0].password` → `password`). Een naam als `BYPASS_…` telt ook (fail-closed:
   kies dan een andere naam).
 - **Accountnaam:** een geheimnaam waarin ook `BOOTSTRAP`, `DEFAULTUSER`, `DEFAULT_USER`, `ADMIN`, `ROOT`,
-  `SUPERUSER`, `OWNER`, `INITIAL`, `SETUP`, `BEHEER`, `SERVICE_ACCOUNT`, `SERVICEACCOUNT` of `DIENST` staat (vaste lijst),
-  ergens in de naam, bijvoorbeeld `GOTIFY_DEFAULTUSER_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`, `ADMINISTRATOR_PASSWORD`
-  of `beheerwachtwoord`.
+  `SUPERUSER`, `OWNER`, `INITIAL`, `SETUP`, `BEHEER`, `SERVICE_ACCOUNT`, `SERVICEACCOUNT` of `DIENST` staat, of
+  (ADR-0020) `ADMINISTRATOR`, `BEHEERDER`, `DIENSTACCOUNT`, `BEHEERACCOUNT`, `SUPERADMIN`, `ROOTUSER` of `ADMINUSER`
+  (vaste lijst), ergens in de naam, bijvoorbeeld `GOTIFY_DEFAULTUSER_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`,
+  `ADMINISTRATOR_PASSWORD` of `beheerwachtwoord`.
 - **Accountwoord als heel naamdeel (ADR-0019):** in een voorouder-sleutel, en in een naam zonder geheimwoord (een
   sleutel, de `name` van een naam/waarde-paar of van een omgevingsvariabele), telt een woord uit die lijst alleen als
   heel naamdeel: de naam wordt gesplitst op elk teken dat geen letter of cijfer is (`_`, `-`, `.`, spatie), op een
   camelCase-grens en tussen letter en cijfer; een meervouds-`s` mag erachter. Dus `admin`, `Admin_ui`, `adminUser`,
-  `root user`, `beheer`, `setup`, `initialSync`, `admins` en `admin2` wel; `phpmyadmin`, `rootless`, `groot`,
-  `administration` en `webroot` niet.
+  `root user`, `beheer`, `setup`, `initialSync`, `admins` en `admin2` wel, en door de woorden van ADR-0020 ook
+  `administrator`, `beheerders`, `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` en `adminuser`;
+  `phpmyadmin`, `rootless`, `groot`, `administration` en `webroot` niet.
 - **Plek met een naam:** `custom_app.env[]` (`name`), een sleutel in `values`, een naam/waarde-paar in `values` (een
   object met `name` en `value`, zoals `additional_envs`) en een parameter (`name`). Een **gewone parameter** heeft geen
   geheimmarkering (niet `secret: true`, niet `type: secret_ref`, niet `source: secret` of `generated`).
@@ -234,9 +236,12 @@ krijgt daarnaast T1):
 - `interpolation_forbidden` blijft zoals het was; op hetzelfde pad kunnen beide codes staan, elk met een eigen reden.
 
 Wat de validator niet ziet: een gecodeerde of gesplitste hash, een geheim onder een naam zonder geheimwoord, en
-(ADR-0019) een accountwoord dat in een voorouder aan een ander woord vastzit (`administrator`, `beheerder`,
-`dienstaccount`, `superadmin`): een geheim van de Hub daaronder geeft de te accepteren waarschuwing `secret_in_form`.
-Dan blijft de review van het manifest de controle (ADR-0016, "Wat dit ontwerp niet bewijst").
+(ADR-0019, ADR-0020) een accountwoord dat in een voorouder aan een ander woord vastzit en zelf niet in de vaste lijst
+staat. De samenstellingen `administrator`, `beheerder`, `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` en
+`adminuser` staan sinds ADR-0020 in de lijst en tellen weer. De lijst blijft open voor nieuwe samenstellingen: een
+geheim van de Hub onder bijvoorbeeld `sysadmin`, `webadmin` of `rootaccount` geeft de te accepteren waarschuwing
+`secret_in_form`, tot de lijst met een nieuwe ADR is uitgebreid. Dan blijft de review van het manifest de controle
+(ADR-0016, "Wat dit ontwerp niet bewijst").
 
 Bekende valse treffers (fail-closed; de regels gelden voor elke app, niet alleen voor Node-RED). Kies dan een andere
 naam, of buiten een geheimplek een parameter; er is geen uitzondering (ADR-0018, ADR-0019):
