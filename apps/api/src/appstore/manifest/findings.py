@@ -28,12 +28,25 @@ class Finding(BaseModel):
         return f"{label:<7}{self.path:<40} {self.code}: {self.message}"
 
 
+#: ADR-0021: een pad in een melding is hooguit zoveel tekens. Een langer pad (veel geneste sleutels van elk hooguit 256
+#: tekens) staat er ingekort: het begin en :data:`PATH_CUT`. Zo is een melding begrensd, hoeveel meldingen een manifest
+#: ook geeft. De paden van de bestaande manifesten zijn hooguit enkele tientallen tekens.
+MAX_SHOWN_PATH = 1024
+PATH_CUT = "…"
+
+
+def _shown(path: str) -> str:
+    if len(path) > MAX_SHOWN_PATH:
+        return path[:MAX_SHOWN_PATH] + PATH_CUT
+    return path or "(root)"
+
+
 def error(code: str, path: str, message: str) -> Finding:
-    return Finding(code=code, severity=Severity.ERROR, path=path or "(root)", message=message)
+    return Finding(code=code, severity=Severity.ERROR, path=_shown(path), message=message)
 
 
 def warning(code: str, path: str, message: str) -> Finding:
-    return Finding(code=code, severity=Severity.WARNING, path=path or "(root)", message=message)
+    return Finding(code=code, severity=Severity.WARNING, path=_shown(path), message=message)
 
 
 #: Alle codes die de validator kan geven (documentatie + test op volledigheid).

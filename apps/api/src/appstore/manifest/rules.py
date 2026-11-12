@@ -664,10 +664,15 @@ _ACCOUNT_WORD_AT = tuple((word, re.compile(f"(?={re.escape(word)})", re.IGNORECA
 
 
 #: ADR-0019: alleen een naam van hooguit zoveel tekens gaat in de cache van :func:`is_secret_name` en :func:`shown_key`
-#: (elk hooguit 4096 namen); een langere naam wordt direct getoetst. Een cache op tekst van willekeurige lengte hield
-#: elke sleutel uit een verzoek vast, tot honderden MiB, tot de dienst herstartte. Elke doorloop toetst en toont elke
-#: naam één keer (paden en de getoonde naam van een plek gaan mee), zodat ook een lange naam lineair blijft.
+#: (elk hooguit 4096 namen); een langere naam wordt door :func:`is_secret_name` direct getoetst. Een cache op tekst van
+#: willekeurige lengte hield elke sleutel uit een verzoek vast, tot honderden MiB, tot de dienst herstartte. Elke
+#: doorloop toetst elke naam één keer (de getoonde naam van een plek gaat mee), zodat ook een lange naam lineair blijft.
 CACHED_NAME_MAX = 256
+#: ADR-0021: een sleutel van meer dan zoveel tekens staat in een pad of melding in één vaste vorm, :data:`HIDDEN_KEY`
+#: (zie :func:`shown_key`). Zo draagt geen melding een sleutel van tienduizenden tekens (één verzoek gaf een antwoord
+#: van honderden MiB), en is het tonen van een lange sleutel geen rekenwerk. Gelijk aan :data:`CACHED_NAME_MAX`: elke
+#: sleutel die wel getoond wordt, past in de cache. De regels zelf (geheimnaam, accountwoord, T1) lezen de hele sleutel.
+SHOWN_KEY_MAX = CACHED_NAME_MAX
 
 
 def is_secret_name(name: str) -> bool:
@@ -738,15 +743,19 @@ def _account_word_inside(name: str) -> bool:
 
 def is_account_name(name: str) -> bool:
     """Accountnaam (ADR-0016 W2): een geheimnaam waarin ook een van :data:`ACCOUNT_WORDS` staat, ergens in de naam
-    (``ADMINISTRATOR_PASSWORD``, ``beheerwachtwoord``). ADR-0019 versmalt dit niet: alleen een accountwoord in een
-    voorouder of in een naam zonder geheimwoord moet een heel naamdeel zijn (:func:`has_account_word`)."""
+    (``ADMINISTRATOR_PASSWORD``, ``beheerwachtwoord``); bij een sleutel met punten of ``[n]`` in het laatste deel, zoals
+    bij een geheimnaam (ADR-0021: ``phpmyadmin.password`` is geen accountnaam). ADR-0019 versmalt dit niet: alleen een
+    accountwoord in een voorouder of in een naam zonder geheimwoord moet een heel naamdeel zijn
+    (:func:`has_account_word`)."""
     return is_secret_name(name) and _account_word_inside(_last_part(name))
 
 
 def param_name_counts(param: Parameter) -> bool:
-    """Gelden de naamregels voor de naam van deze parameter? Niet voor type ``boolean`` (ADR-0019; uitleg (a): een
-    geheim is nooit een boolean). De regels voor de plek zelf gelden wel."""
-    return param.type != "boolean"
+    """Gelden de naamregels voor de naam van deze parameter? Niet voor type ``boolean`` zonder geheimmarkering
+    (ADR-0019; uitleg (a): een geheim is nooit een boolean). Een boolean die zelf als geheim is gemarkeerd
+    (:func:`is_marked_secret`) valt er wel onder (ADR-0021): het manifest noemt hem een geheim. De regels voor de plek
+    zelf gelden altijd."""
+    return param.type != "boolean" or is_marked_secret(param)
 
 
 class Place(NamedTuple):
@@ -755,8 +764,8 @@ class Place(NamedTuple):
     net als een lijst), en een **accountplek** als zij een geheimplek is en haar eigen naam een accountnaam is of haar
     eigen naam of een voorouder een accountwoord als heel naamdeel heeft (``admin.password``, ``adminUser.password``,
     ``admin_password.x``; ADR-0019). De naam is een sleutel, of bij de ``value`` van een naam/waarde-paar de tekst
-    onder ``name``. Elke naam wordt één keer getoetst en één keer getoond (lineair, ook voor een naam die te lang is
-    voor de cache; ADR-0019)."""
+    onder ``name``. Elke naam wordt één keer getoetst (lineair, ook voor een naam die te lang is voor de cache;
+    ADR-0019); een naam van meer dan :data:`SHOWN_KEY_MAX` tekens wordt nooit getoond (ADR-0021)."""
 
     #: de eigen naam van de plek
     name: str = ""
@@ -786,18 +795,15 @@ class Place(NamedTuple):
 
 
 def shown_key(key: str) -> str:
-    """Een sleutel zoals hij in een pad of melding staat (ADR-0018): met een ``=`` of met iets dat T1 of T2 herkent,
-    staat er :data:`HIDDEN_KEY`, want zo'n sleutel kan zelf een waarde dragen. Een korte sleutel komt uit de cache
-    (ADR-0019, :data:`CACHED_NAME_MAX`)."""
-    return _shown_key_cached(key) if len(key) <= CACHED_NAME_MAX else _shown_key(key)
+    """Een sleutel zoals hij in een pad of melding staat. Met een ``=`` of met iets dat T1 of T2 herkent, staat er
+    :data:`HIDDEN_KEY`, want zo'n sleutel kan zelf een waarde dragen (ADR-0018). Een sleutel van meer dan
+    :data:`SHOWN_KEY_MAX` tekens staat er ook als :data:`HIDDEN_KEY` (ADR-0021: één vaste vorm, zonder de sleutel te
+    lezen). Elke andere sleutel komt uit de cache (ADR-0019)."""
+    return _shown_key_cached(key) if len(key) <= SHOWN_KEY_MAX else HIDDEN_KEY
 
 
 @lru_cache(maxsize=4096)
 def _shown_key_cached(key: str) -> str:
-    return _shown_key(key)
-
-
-def _shown_key(key: str) -> str:
     return HIDDEN_KEY if "=" in key or secret_text_reasons(key, settings=True) else key
 
 
@@ -1041,12 +1047,55 @@ def secret_text_finding(path: str, reasons: list[str]) -> Finding:
 
 
 def render_shown(segments: tuple[str | int, ...]) -> str:
-    """Pad voor een melding, bv. ``values.voorbeeld.x``; een sleutel die een waarde kan dragen, staat er als
-    :data:`HIDDEN_KEY` (:func:`shown_key`, ADR-0018)."""
+    """Pad voor een melding, bv. ``values.voorbeeld.x``; een sleutel die een waarde kan dragen of te lang is, staat er
+    als :data:`HIDDEN_KEY` (:func:`shown_key`, ADR-0018, ADR-0021)."""
     out = ""
     for s in segments:
         out += f"[{s}]" if isinstance(s, int) else (f".{shown_key(s)}" if out else shown_key(s))
     return out
+
+
+class PathNode(NamedTuple):
+    """Eén stap van een pad als gelinkte keten (ADR-0021): de ouder en het eigen segment. Een doorloop zet zo per
+    knooppunt alleen deze twee verwijzingen op de stapel, geen kopie van het hele pad; de tekst van het pad
+    (:func:`shown_path`) en de plek als reeks (:func:`path_segments`) worden pas gemaakt als ze nodig zijn (bij een
+    melding of bij het opzoeken van een plek). ``None`` is de wortel."""
+
+    parent: PathNode | None
+    #: een sleutel van een object, of de positie in een lijst
+    segment: Any
+    #: ``True`` voor een positie in een lijst (``[3]``), ``False`` voor een sleutel (``.naam``)
+    in_list: bool = False
+
+
+def path_segments(node: PathNode | None) -> tuple[Any, ...]:
+    """De plek als reeks sleutels en lijstposities, van de wortel naar ``node``."""
+    out: list[Any] = []
+    while node is not None:
+        out.append(node.segment)
+        node = node.parent
+    out.reverse()
+    return tuple(out)
+
+
+def shown_path(node: PathNode | None) -> str:
+    """Pad voor een melding, zoals :func:`render_shown`: elke sleutel via :func:`shown_key`. Alleen aanroepen als er
+    een melding is (ADR-0021); het pad is dan hooguit zo lang als de diepte keer :data:`SHOWN_KEY_MAX`."""
+    chain: list[PathNode] = []
+    while node is not None:
+        chain.append(node)
+        node = node.parent
+    parts: list[str] = []
+    filled = False  # staat er al tekst? Dan komt er een punt vóór een sleutel (zoals in :func:`render_shown`)
+    for step in reversed(chain):
+        if step.in_list:
+            part = f"[{step.segment}]"
+        else:
+            key = shown_key(str(step.segment))
+            part = f".{key}" if filled else key
+        filled = filled or part != ""
+        parts.append(part)
+    return "".join(parts)
 
 
 def _settings_place(segments: tuple[str | int, ...]) -> bool:
@@ -1059,30 +1108,48 @@ def _settings_place(segments: tuple[str | int, ...]) -> bool:
     return len(segments) == 3 and segments[0] == "parameters" and segments[2] in ("default", "example")
 
 
+def _text_children(
+    value: dict[Any, Any] | list[Any], node: PathNode | None, depth: int, in_values: bool
+) -> Iterator[tuple[Any, PathNode, int, bool]]:
+    """De kinderen van een object of lijst, van achter naar voren (de volgorde waarin :func:`secret_text_findings` ze
+    altijd al las), elk met een eigen :class:`PathNode`. Lui: er staat nooit meer dan één kind per niveau klaar."""
+    if isinstance(value, dict):
+        for key, sub in reversed(value.items()):
+            yield sub, PathNode(node, str(key)), depth + 1, in_values or (depth == 0 and str(key) == "values")
+    else:
+        for idx in range(len(value) - 1, -1, -1):
+            yield value[idx], PathNode(node, idx, True), depth + 1, in_values
+
+
 def secret_text_findings(data: Any) -> list[Finding]:
     """Tekstregels T1 en T2 van ADR-0016 W2 (``account_gegevens_verboden``) op de ruwe gegevens, net als
     ``validator._compose_findings``, zodat de melding er ook is als het schema al faalt. Een sleutel valt onder de
     naamregels; alleen op een sleutel in ``values`` geldt daarnaast T1 (ADR-0018). Elke tekst geeft hooguit één
-    melding, met het pad en de reden, nooit de waarde. Het getoonde pad gaat mee in de doorloop: elke sleutel wordt één
-    keer getoond (ADR-0019: lineair, ook voor een lange sleutel buiten de cache)."""
+    melding, met het pad en de reden, nooit de waarde. ADR-0021: de doorloop houdt per niveau één rij kinderen bij en
+    per knooppunt alleen de ouder en het segment (:class:`PathNode`); het getoonde pad wordt pas bij een melding
+    gemaakt. Geheugen en rekentijd hangen zo niet af van de lengte van het pad keer het aantal knooppunten."""
     out: list[Finding] = []
-    stack: list[tuple[Any, tuple[str | int, ...], str]] = [(data, (), "")]
+    first: list[tuple[Any, PathNode | None, int, bool]] = [(data, None, 0, False)]
+    stack: list[Iterator[tuple[Any, PathNode | None, int, bool]]] = [iter(first)]
     while stack:
-        value, segments, shown = stack.pop()
+        item = next(stack[-1], None)
+        if item is None:
+            stack.pop()
+            continue
+        value, node, depth, in_values = item
         if isinstance(value, dict):
-            for key, sub in value.items():
-                at = (*segments, str(key))
-                key_shown = shown_key(str(key))
-                sub_shown = f"{shown}.{key_shown}" if shown else key_shown
-                if segments[:1] == ("values",) and (reasons := secret_text_reasons(str(key), settings=False)):
-                    out.append(secret_text_finding(sub_shown, reasons))
-                stack.append((sub, at, sub_shown))
+            if in_values:
+                for key in value:
+                    if reasons := secret_text_reasons(str(key), settings=False):
+                        out.append(secret_text_finding(shown_path(PathNode(node, str(key))), reasons))
+            stack.append(_text_children(value, node, depth, in_values))
         elif isinstance(value, list):
-            stack.extend((sub, (*segments, idx), f"{shown}[{idx}]") for idx, sub in enumerate(value))
+            stack.append(_text_children(value, node, depth, in_values))
         elif isinstance(value, str):
-            reasons = secret_text_reasons(value, settings=_settings_place(segments))
-            if reasons:
-                out.append(secret_text_finding(shown, reasons))
+            # buiten ``values`` geldt T2 alleen op een plek van 3 of 4 segmenten diep (:func:`_settings_place`)
+            settings = in_values or (depth in (3, 4) and _settings_place(path_segments(node)))
+            if reasons := secret_text_reasons(value, settings=settings):
+                out.append(secret_text_finding(shown_path(node), reasons))
     return out
 
 
@@ -1144,10 +1211,10 @@ class _Rules:
         self.out.append(warning(code, path, msg))
 
     def account_value(self, path: str, shown: str) -> None:
-        """N3 (ADR-0016 W2, ADR-0018, ADR-0019): een accountplek krijgt haar waarde via ``value_from`` of ``{param}``,
-        van welke parameter ook, of een parameter met een accountnaam wordt gebruikt, of een parameter met een
-        geheimnaam komt op een plek met een accountwoord. Niet te accepteren; op dit pad geen ``secret_in_form``.
-        ``shown`` is de naam zoals hij in de melding staat (:func:`shown_key`)."""
+        """N3 (ADR-0016 W2, ADR-0018, ADR-0019, ADR-0021): een accountplek krijgt haar waarde via ``value_from`` of
+        ``{param}``, van welke parameter ook, of een parameter met een accountnaam wordt gebruikt, of een parameter met
+        een geheimnaam of een geheimmarkering komt op een plek met een accountwoord. Niet te accepteren; op dit pad
+        geen ``secret_in_form``. ``shown`` is de naam zoals hij in de melding staat (:func:`shown_key`)."""
         self.err(
             "account_gegevens_verboden",
             path,
@@ -1173,8 +1240,8 @@ class _Rules:
 
     def param_name_rules(self, path: str, param: Parameter) -> bool:
         """ADR-0018: de naam van een gebruikte parameter telt ook. Een accountnaam geeft N3 (ook bij een geheim dat de
-        Hub maakt); een geheimnaam zonder geheimmarkering geeft N2. Niet bij type ``boolean`` (ADR-0019). Geeft
-        ``True`` als er een fout is gemeld."""
+        Hub maakt); een geheimnaam zonder geheimmarkering geeft N2. Niet bij type ``boolean`` zonder geheimmarkering
+        (ADR-0019, ADR-0021). Geeft ``True`` als er een fout is gemeld."""
         if not param_name_counts(param):
             return False
         if is_account_name(param.name):
@@ -1544,13 +1611,16 @@ class _Rules:
                     f"Omgevingsvariabele {env.name}",
                     name_rules=False,  # per plek één code: de naam van de plek en die van de parameter samen
                 )
-                names = param is not None and param_name_counts(param)  # ADR-0019: niet bij type boolean
+                names = param is not None and param_name_counts(param)  # ADR-0019: niet bij een gewone boolean
                 if is_account_name(env.name):
                     self.account_value(path, shown_key(env.name))
                 elif param is not None and names and is_account_name(param.name):
                     self.account_value(path, shown_key(param.name))
                 elif param is not None and names and is_secret_name(param.name) and has_account_word(env.name):
                     # ADR-0019: een parameter met een geheimnaam op een plek met een accountwoord (ADMIN_PW)
+                    self.account_value(path, shown_key(param.name))
+                elif param is not None and is_marked_secret(param) and has_account_word(env.name):
+                    # ADR-0021: ook een parameter met een geheimmarkering zonder geheimwoord in de naam (admin_pw)
                     self.account_value(path, shown_key(param.name))
                 elif param is not None and param.hub_generated_secret:
                     # contract 1.3 §3.1 a: de Hub maakt het geheim (vault) en geeft het alleen in de values mee
@@ -1638,13 +1708,16 @@ class _Rules:
         for path, name, key, where in _param_refs(m.values, "values"):
             param = self.params.get(name)
             self.used_params.add(name)
-            names = param is not None and param_name_counts(param)  # ADR-0019: niet bij type boolean
+            names = param is not None and param_name_counts(param)  # ADR-0019: niet bij een gewone boolean
             # ADR-0018: een accountplek (ook via een voorouder) of een parameter met een accountnaam; ADR-0019: ook een
-            # parameter met een geheimnaam op een plek waarvan de eigen naam of een voorouder een accountwoord heeft
+            # parameter met een geheimnaam op een plek waarvan de eigen naam of een voorouder een accountwoord heeft;
+            # ADR-0021: op zo'n plek ook een parameter met een geheimmarkering zonder geheimwoord in de naam
             account = where.account or (
                 param is not None
-                and names
-                and (is_account_name(param.name) or (is_secret_name(param.name) and where.account_word))
+                and (
+                    (names and is_account_name(param.name))
+                    or (where.account_word and ((names and is_secret_name(param.name)) or is_marked_secret(param)))
+                )
             )
             if account:
                 self.account_value(path, where.shown_secret if where.account else shown_key(name))

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import re
 import zoneinfo
+from collections.abc import Callable, Iterator
+from functools import partial
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -35,6 +37,7 @@ from .rules import (
     _HUB_RESERVED,
     _INTERPOLATION,
     _PLACEHOLDER,
+    PathNode,
     Place,
     catalog_value_findings,
     has_value,
@@ -44,10 +47,12 @@ from .rules import (
     is_secret_name,
     name_value_pair,
     param_name_counts,
+    path_segments,
     render_shown,
     secret_text_finding,
     secret_text_reasons,
     shown_key,
+    shown_path,
 )
 from .truenas import (
     IX_APP_CATALOG_APP,
@@ -312,7 +317,7 @@ class _Resolver:
         if param is None:  # door de validator al uitgesloten
             self.findings.append(error("unknown_parameter", path, f"Onbekende parameter {ref.param!r}."))
             return None
-        names = param_name_counts(param)  # ADR-0019: geen naamregel voor een parameter van type boolean
+        names = param_name_counts(param)  # ADR-0019, ADR-0021: geen naamregel voor een gewone boolean
         # ADR-0018 (verdediging in de diepte; de validator weigert dit al): de naam van de parameter telt ook
         if names and is_account_name(param.name):
             self.findings.append(
@@ -734,45 +739,43 @@ def _filled_place(
     place: Place,
     value: Any,
     at: Segments,
-    path: str,
+    path: Callable[[], str],
     ref_at: dict[Segments, str],
     hub_at: frozenset[Segments],
     param: Parameter | None,
 ) -> Finding | None:
     """W3 op één ingevulde plek: een accountplek met een waarde (ook een vault-verwijzing), een parameter met een
-    geheimnaam op een plek met een accountwoord (ADR-0019), een tekst waarin T1 of T2 iets vindt (altijd, ook onder
-    ``HUB_ENROLLMENT_TOKEN``), of een geheimplek met een waarde die geen eigen vault-verwijzing van de vertaling is.
-    ``place`` erft van de voorouders van de plek (ADR-0018); ``path`` is het getoonde pad; ``param`` is de parameter die
-    de plek vulde (of ``None``)."""
+    geheimnaam of een geheimmarkering op een plek met een accountwoord (ADR-0019, ADR-0021), een tekst waarin T1 of T2
+    iets vindt (altijd, ook onder ``HUB_ENROLLMENT_TOKEN``), of een geheimplek met een waarde die geen eigen
+    vault-verwijzing van de vertaling is. ``place`` erft van de voorouders van de plek (ADR-0018); ``path`` geeft het
+    getoonde pad en wordt alleen bij een melding aangeroepen (ADR-0021); ``param`` is de parameter die de plek vulde
+    (of ``None``)."""
     own = isinstance(value, str) and ref_at.get(at) == value
     if place.account and has_value(value):
         return error(
             "account_gegevens_verboden",
-            path,
+            path(),
             f"{place.shown_secret} is de aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de "
             "installatie, ook niet als vault-verwijzing (ADR-0016 W3).",
         )
-    if (
-        param is not None
-        and param_name_counts(param)
-        and is_secret_name(param.name)
-        and place.account_word
-        and has_value(value)
-    ):
-        return error(
-            "account_gegevens_verboden",
-            path,
-            f"{shown_key(param.name)} heeft een geheimnaam en staat op een plek met een accountwoord: dat is de "
-            "aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook niet als "
-            "vault-verwijzing (ADR-0019).",
-        )
+    if param is not None and place.account_word and has_value(value):
+        named = param_name_counts(param) and is_secret_name(param.name)
+        if named or is_secret(param):
+            what = "heeft een geheimnaam" if named else "is een geheim"
+            return error(
+                "account_gegevens_verboden",
+                path(),
+                f"{shown_key(param.name)} {what} en staat op een plek met een accountwoord: dat is de aanmelding van "
+                "een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook niet als vault-verwijzing "
+                f"({'ADR-0019' if named else 'ADR-0021'}).",
+            )
     if isinstance(value, str) and not own and (reasons := secret_text_reasons(value, settings=True)):
-        return secret_text_finding(path, reasons)
+        return secret_text_finding(path(), reasons)
     enrollment = place.name == ENROLLMENT_ENV and at in hub_at
     if place.secret and has_value(value) and not own and not enrollment:
         return error(
             "secret_in_form",
-            path,
+            path(),
             f"{place.shown_secret} lijkt een geheim en zou na het invullen in het formulier of de waarden staan; een "
             "geheim gaat alleen als vault-verwijzing van de vertaling mee (ADR-0016 W3).",
         )
@@ -788,6 +791,21 @@ def _reserved(path: str) -> Finding:
     )
 
 
+def _filled_children(
+    value: dict[Any, Any] | list[Any], node: PathNode, place: Place
+) -> Iterator[tuple[Any, PathNode, Place]]:
+    """De kinderen van een object of lijst in de ingevulde ``values``, van achter naar voren (de volgorde waarin
+    :func:`filled_value_findings` ze altijd al las), elk met een eigen :class:`~.rules.PathNode` en plek. Lui: er staat
+    nooit meer dan één kind per niveau klaar (ADR-0021)."""
+    if isinstance(value, dict):
+        pair = name_value_pair(value)
+        for key, sub in reversed(value.items()):
+            yield sub, PathNode(node, key), place.child(pair if pair is not None and key == "value" else str(key))
+    else:
+        for idx in range(len(value) - 1, -1, -1):
+            yield value[idx], PathNode(node, idx, True), place
+
+
 def filled_value_findings(
     values: Any,
     ref_at: dict[Segments, str],
@@ -800,8 +818,9 @@ def filled_value_findings(
     (``values.envs``) of de ``values`` van een catalogusapp opnieuw toetsen op geheimen en accountgegevens, en op een
     ``HUB_*``-naam die de vertaling niet zelf zette (``reserved_env``). ``ref_at`` noemt de plekken waar de vertaling
     zelf een vault-verwijzing zette, ``hub_at`` de plekken waar zij zelf een ``HUB_*``-naam zette, ``param_at`` per plek
-    de parameter die haar vulde. De melding noemt het pad, nooit de waarde; bij een treffer is er geen payload. Het
-    getoonde pad gaat mee in de doorloop (lineair, ADR-0019)."""
+    de parameter die haar vulde. De melding noemt het pad, nooit de waarde; bij een treffer is er geen payload. De
+    doorloop houdt per knooppunt alleen de ouder en het segment bij; het getoonde pad wordt pas bij een melding gemaakt
+    (ADR-0021: geheugen en rekentijd hangen niet af van de lengte van het pad keer het aantal knooppunten)."""
     out: list[Finding] = []
     filled_by = param_at or {}
     if custom_app:
@@ -815,59 +834,71 @@ def filled_value_findings(
                     Place().child(env["name"]),
                     env.get("value"),
                     at,
-                    finding_path(at),
+                    partial(finding_path, at),
                     ref_at,
                     hub_at,
                     filled_by.get(at),
                 )
                 out.extend([finding] if finding is not None else [])
         return out
-    stack: list[tuple[Any, Segments, Place, str]] = [(values, ("values",), Place(), "values")]
+    first: list[tuple[Any, PathNode, Place]] = [(values, PathNode(None, "values"), Place())]
+    stack: list[Iterator[tuple[Any, PathNode, Place]]] = [iter(first)]
     while stack:
-        value, at, place, shown = stack.pop()
+        item = next(stack[-1], None)
+        if item is None:
+            stack.pop()
+            continue
+        value, node, place = item
         if isinstance(value, dict):
-            pair = name_value_pair(value)
             name_field = value.get("name")  # zoals rules._hub_names_in_values: elk ``name``-veld, ook zonder ``value``
-            if isinstance(name_field, str) and _HUB_RESERVED.match(name_field) and (*at, "value") not in hub_at:
-                out.append(_reserved(f"{shown}.name"))
-            for key, sub in value.items():
-                sub_shown = f"{shown}.{shown_key(str(key))}"
+            if (
+                isinstance(name_field, str)
+                and _HUB_RESERVED.match(name_field)
+                and (*path_segments(node), "value") not in hub_at
+            ):
+                out.append(_reserved(f"{shown_path(node)}.name"))
+            for key in value:
                 if isinstance(key, str) and _HUB_RESERVED.match(key):
-                    out.append(_reserved(sub_shown))
-                child = place.child(pair if pair is not None and key == "value" else str(key))
-                stack.append((sub, (*at, key), child, sub_shown))
+                    out.append(_reserved(shown_path(PathNode(node, key))))
+            stack.append(_filled_children(value, node, place))
         elif isinstance(value, list):
-            stack.extend((sub, (*at, idx), place, f"{shown}[{idx}]") for idx, sub in enumerate(value))
-        elif finding := _filled_place(place, value, at, shown, ref_at, hub_at, filled_by.get(at)):
-            out.append(finding)
+            stack.append(_filled_children(value, node, place))
+        else:
+            where = path_segments(node)
+            if finding := _filled_place(
+                place, value, where, partial(shown_path, node), ref_at, hub_at, filled_by.get(where)
+            ):
+                out.append(finding)
     return sorted(out, key=lambda f: f.path)
 
 
-def _substitute(value: Any, r: _Resolver, at: Segments, shown: str) -> Any:
-    """Vul de parameters in de ``values`` van een catalogusapp in; ``at`` is ook de plek in de payload en ``shown`` het
-    getoonde pad (het gaat mee in de doorloop: lineair, ADR-0019)."""
+def _substitute(value: Any, r: _Resolver, node: PathNode) -> Any:
+    """Vul de parameters in de ``values`` van een catalogusapp in; ``node`` is de plek (ook die in de payload). Het
+    getoonde pad en de plek als reeks worden alleen gemaakt waar een parameter staat (ADR-0021)."""
     if isinstance(value, dict):
         if set(value) == {"param"} and isinstance(value["param"], str):
-            return r.get(ParamRef(param=value["param"]), shown, ref_at=at)
-        return {k: _substitute(v, r, (*at, k), f"{shown}.{shown_key(str(k))}") for k, v in value.items()}
+            return r.get(ParamRef(param=value["param"]), shown_path(node), ref_at=path_segments(node))
+        return {k: _substitute(v, r, PathNode(node, k)) for k, v in value.items()}
     if isinstance(value, list):
-        return [_substitute(v, r, (*at, i), f"{shown}[{i}]") for i, v in enumerate(value)]
+        return [_substitute(v, r, PathNode(node, i, True)) for i, v in enumerate(value)]
     return value
 
 
-def _texts(value: Any, at: Segments, shown: str) -> list[tuple[Segments, str, str, bool]]:
-    """(plek, getoond pad, tekst, is_sleutel) voor elke tekstwaarde en elke tekstsleutel in de payload. Bij een sleutel
-    is de plek die van het object waarin de sleutel staat."""
+def _texts(value: Any, node: PathNode | None) -> Iterator[tuple[PathNode | None, str, bool]]:
+    """(plek, tekst, is_sleutel) voor elke tekstwaarde en elke tekstsleutel in de payload, lui en in de volgorde van de
+    payload. Bij een sleutel is de plek die van het object waarin de sleutel staat. De plek is een
+    :class:`~.rules.PathNode`: het pad wordt alleen gemaakt voor een tekst met een vault-verwijzing (ADR-0021)."""
     if isinstance(value, dict):
-        keys = [(at, shown, k, True) for k in value if isinstance(k, str)]
-        return keys + [
-            t
-            for k, v in value.items()
-            for t in _texts(v, (*at, k), f"{shown}.{shown_key(str(k))}" if shown else shown_key(str(k)))
-        ]
-    if isinstance(value, list):
-        return [t for i, v in enumerate(value) for t in _texts(v, (*at, i), f"{shown}[{i}]")]
-    return [(at, shown, value, False)] if isinstance(value, str) else []
+        for k in value:
+            if isinstance(k, str):
+                yield node, k, True
+        for k, v in value.items():
+            yield from _texts(v, PathNode(node, k))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from _texts(v, PathNode(node, i, True))
+    elif isinstance(value, str):
+        yield node, value, False
 
 
 def _unmarked_vault_refs(payload: AppCreatePayload, ref_at: dict[Segments, str]) -> list[Finding]:
@@ -878,7 +909,7 @@ def _unmarked_vault_refs(payload: AppCreatePayload, ref_at: dict[Segments, str])
     return [
         error(
             "vault_ref_not_allowed",
-            shown,
+            shown_path(node),
             (
                 "In een sleutel van dit object staat een vault-verwijzing"
                 if is_key
@@ -887,8 +918,8 @@ def _unmarked_vault_refs(payload: AppCreatePayload, ref_at: dict[Segments, str])
             + "; alleen een geheime parameter krijgt een verwijzing naar de vault van de Hub, en alleen voor de eigen "
             "app.",
         )
-        for at, shown, text, is_key in _texts(payload.model_dump(mode="json"), (), "")
-        if _VAULT_MARK.search(text) and (is_key or ref_at.get(at) != text)
+        for node, text, is_key in _texts(payload.model_dump(mode="json"), None)
+        if _VAULT_MARK.search(text) and (is_key or ref_at.get(path_segments(node)) != text)
     ]
 
 
@@ -963,7 +994,7 @@ def translate(
             )
     else:
         assert manifest.catalog is not None and manifest.values is not None
-        values_any = _substitute(manifest.values, resolver, ("values",), "values")
+        values_any = _substitute(manifest.values, resolver, PathNode(None, "values"))
         # verdediging in de diepte: de ingevulde waarden opnieuw controleren (een parameter smokkelt niets binnen)
         resolver.findings.extend(
             catalog_value_findings(values_any, host_network_reason=manifest.network.host_network_reason, resolved=True)

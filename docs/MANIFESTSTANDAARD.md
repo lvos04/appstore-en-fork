@@ -139,7 +139,8 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
   `account_gegevens_verboden`; een parameter met een accountnaam, of een gewone parameter met een geheimnaam, wordt niet
   ingevuld (`account_gegevens_verboden` of `secret_in_form`); een parameter met een geheimnaam op een plek waarvan de
   eigen naam of een voorouder een accountwoord heeft (`admin: {param: db_password}`, ook als vault-verwijzing) →
-  `account_gegevens_verboden` (ADR-0019); een `HUB_*`-naam die de vertaling niet zelf zette →
+  `account_gegevens_verboden` (ADR-0019), net als een parameter met een geheimmarkering op zo'n plek (`admin.pw` naar
+  `init_value`; ADR-0021); een `HUB_*`-naam die de vertaling niet zelf zette →
   `reserved_env`. Dan is er geen payload; de melding noemt het pad, nooit de waarde. Alleen de naam
   `HUB_ENROLLMENT_TOKEN` mag een geheim dragen (het eenmalige enrollment-token, contract 1.3 §3.1), en alleen als de
   vertaling hem zelf op die plek zette (dat doet zij nu nooit); T1 en T2 gelden ook daar. `HUB_TOKEN`, `HUB_SECRET` en
@@ -149,7 +150,7 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
   `vertaling_te_groot`, zonder payload (fail-closed); na de 256e plek vult de vertaling niets meer in. De bestaande
   manifesten hebben hooguit 11 plekken en een payload van een paar KiB.
 
-## Geheimen en accountgegevens weigeren (ADR-0016 W2, ADR-0017, ADR-0018)
+## Geheimen en accountgegevens weigeren (ADR-0016 W2, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021)
 
 Een account (beheerder of dienstaccount) gaat nooit door het manifest, het formulier of Git (ADR-0016, besluit 1).
 Daarom weigert de validator geheimen en accountgegevens overal, ook als het manifest geen `accounts` heeft. De melding
@@ -159,6 +160,9 @@ schemafout verbergt een waarde alleen onder een plek met een geheimnaam (of onde
 herkent (ADR-0018). Een
 sleutel met een `=` of met iets dat T1/T2 herkent, staat in pad en melding als `<verborgen>` (ook bij `unknown_field`),
 en een herkende waarde in `app_id`, `version` of `install.method` staat niet in het rapport (het veld is dan leeg).
+Een sleutel van meer dan 256 tekens staat in pad en melding ook als `<verborgen>` (één vaste vorm; de regels zelf
+lezen de hele sleutel), en een pad van meer dan 1024 tekens staat ingekort in de melding: de eerste 1024 tekens en dan
+`…` (ADR-0021). Zo blijft een melding klein, hoe lang een sleutel ook is en hoeveel meldingen er ook zijn.
 
 - **Geheimnaam:** een naam waarin `PASS`, `PASSWD`, `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `APIKEY`, `PRIVATE_KEY`,
   `PRIVATEKEY`, `CREDENTIAL`, `AUTH_KEY`, `SALT` of `WACHTWOORD` staat, gevolgd door het einde van de naam of door `_`,
@@ -171,8 +175,10 @@ en een herkende waarde in `app_id`, `version` of `install.method` staat niet in 
 - **Accountnaam:** een geheimnaam waarin ook `BOOTSTRAP`, `DEFAULTUSER`, `DEFAULT_USER`, `ADMIN`, `ROOT`,
   `SUPERUSER`, `OWNER`, `INITIAL`, `SETUP`, `BEHEER`, `SERVICE_ACCOUNT`, `SERVICEACCOUNT` of `DIENST` staat, of
   (ADR-0020) `ADMINISTRATOR`, `BEHEERDER`, `DIENSTACCOUNT`, `BEHEERACCOUNT`, `SUPERADMIN`, `ROOTUSER` of `ADMINUSER`
-  (vaste lijst), ergens in de naam, bijvoorbeeld `GOTIFY_DEFAULTUSER_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`,
-  `ADMINISTRATOR_PASSWORD` of `beheerwachtwoord`.
+  (vaste lijst), ergens in de naam (bij een sleutel met punten of `[n]` in het laatste deel, zoals bij Geheimnaam),
+  bijvoorbeeld `GOTIFY_DEFAULTUSER_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`, `ADMINISTRATOR_PASSWORD` of
+  `beheerwachtwoord`. De sleutel `phpmyadmin.password` (één sleutel met een punt) is dus geen accountnaam: het laatste
+  deel is `password` (ADR-0021); `phpmyadmin_password` is het wel.
 - **Accountwoord als heel naamdeel (ADR-0019):** in een voorouder-sleutel, en in een naam zonder geheimwoord (een
   sleutel, de `name` van een naam/waarde-paar of van een omgevingsvariabele), telt een woord uit die lijst alleen als
   heel naamdeel: de naam wordt gesplitst op elk teken dat geen letter of cijfer is (`_`, `-`, `.`, spatie), op een
@@ -183,7 +189,7 @@ en een herkende waarde in `app_id`, `version` of `install.method` staat niet in 
 - **Plek met een naam:** `custom_app.env[]` (`name`), een sleutel in `values`, een naam/waarde-paar in `values` (een
   object met `name` en `value`, zoals `additional_envs`) en een parameter (`name`). Een **gewone parameter** heeft geen
   geheimmarkering (niet `secret: true`, niet `type: secret_ref`, niet `source: secret` of `generated`).
-- **Geheimplek en accountplek (ADR-0018, ADR-0019):** wat onder een geheim- of accountnaam ligt, erft die naam (een
+- **Geheimplek en accountplek (ADR-0018, ADR-0019, ADR-0021):** wat onder een geheim- of accountnaam ligt, erft die naam (een
   object net als een lijst: `admin_password: {x: …}` is een geheim onder `admin_password`). Een geheimplek is een
   accountplek als haar eigen naam een accountnaam is, of als haar eigen naam of een voorouder-sleutel een accountwoord
   als heel naamdeel heeft (`admin.password`, `adminUser.password`). De naam van de parameter telt ook: een gebruikte
@@ -191,8 +197,13 @@ en een herkende waarde in `app_id`, `version` of `install.method` staat niet in 
   accepteren), net als een parameter met een geheimnaam op een plek waarvan de eigen naam of een voorouder een
   accountwoord heeft (`admin: {param: db_password}`, `admin.credentials`, `adminUser.pw`, een paar of
   omgevingsvariabele met de naam `ADMIN_PW`; ADR-0019); en een gewone parameter met een geheimnaam die ergens wordt
-  gebruikt, geeft de fout `secret_in_form`. Deze regels voor de naam van de parameter gelden niet voor een parameter
-  van type `boolean` (uitleg (a): een geheim is nooit een boolean; ADR-0019); de regels voor de plek zelf wel.
+  gebruikt, geeft de fout `secret_in_form`. Op een plek waarvan de eigen naam of een voorouder een accountwoord heeft,
+  telt ook de geheimmarkering van de parameter: een parameter met `secret: true`, `type: secret_ref` of `source:
+  secret`/`generated` geeft daar `account_gegevens_verboden`, ook als zijn naam geen geheimwoord heeft (`admin_pw` naar
+  de omgevingsvariabele `ADMIN_PW`, `admin.pw` of `admin: {param: init_value}`; ADR-0021, binnen besluit C-12). De
+  regels voor de naam van de parameter gelden niet voor een parameter van type `boolean` zonder geheimmarkering (uitleg
+  (a): een geheim is nooit een boolean; ADR-0019); een boolean met een geheimmarkering valt er wel onder (ADR-0021).
+  De regels voor de plek zelf gelden altijd.
 - **Niet-lege waarde:** elke tekst behalve de lege tekst, dus ook een tekst van alleen spaties, U+00A0, U+2003 of
   stuurtekens zoals U+001C en U+001F (bash, `nopt` en de apps zien die als waarde; ADR-0018), een getal, of een
   niet-lege lijst of object; ja/nee en `null` tellen niet.
@@ -203,10 +214,11 @@ Naamregels (per plek één code):
 |---|---|
 | `secret_literal_forbidden` (N1) | een geheimplek met een letterlijke waarde, ook een accountplek: `custom_app.env[].value`, een sleutel of naam/waarde-paar in `values` (ook wat eronder ligt), en een parameter met een geheimnaam zonder geheimmarkering met een `default` of `example` |
 | `secret_in_form` (N2, fout) | een geheimplek die geen accountplek is en haar waarde krijgt via `value_from` of `{param}` van een gewone parameter, of een gewone parameter met een geheimnaam die ergens wordt gebruikt |
-| `account_gegevens_verboden` (N3, fout, niet te accepteren) | een accountplek (ook via een voorouder) die haar waarde krijgt via `value_from` of `{param}`, van welke parameter ook, dus ook van een geheim dat de Hub maakt, of een gebruikte parameter met een accountnaam, of een parameter met een geheimnaam op een plek waarvan de eigen naam of een voorouder een accountwoord heeft (ADR-0019); op dat pad geen `secret_in_form` |
+| `account_gegevens_verboden` (N3, fout, niet te accepteren) | een accountplek (ook via een voorouder) die haar waarde krijgt via `value_from` of `{param}`, van welke parameter ook, dus ook van een geheim dat de Hub maakt, of een gebruikte parameter met een accountnaam, of een parameter met een geheimnaam (ADR-0019) of met een geheimmarkering (ADR-0021) op een plek waarvan de eigen naam of een voorouder een accountwoord heeft; op dat pad geen `secret_in_form` |
 
 Geen fout: een geheimnaam die geen accountnaam is, naar een geheim dat de Hub maakt (zoals `db_password` en
-`secret_key` van Authentik); daar blijft de te accepteren waarschuwing `secret_in_form`.
+`secret_key` van Authentik), op een plek zonder accountwoord in de eigen naam of een voorouder; daar blijft de te
+accepteren waarschuwing `secret_in_form`.
 
 Tekstregels (`account_gegevens_verboden`, fout; een sleutel valt onder de naamregels, alleen een sleutel in `values`
 krijgt daarnaast T1):
@@ -228,6 +240,8 @@ krijgt daarnaast T1):
   stuurteken na een `=` of binnen een JSON-tekst is een waarde (ADR-0018).
 - **Lengte en rekentijd (ADR-0018):** de tekstregels lopen in lineaire tijd. Een tekst langer dan 65536 tekens toetsen
   ze niet: die is fail-closed een fout (`account_gegevens_verboden`, "te lang om op geheimen te toetsen").
+  Het pad van een melding wordt pas gemaakt als er een melding is (ADR-0021): het geheugen en de rekentijd hangen niet
+  af van de lengte van een sleutel keer het aantal waarden eronder.
   `POST /catalog/v1/validate` past op het JSON-veld `manifest` dezelfde grenzen toe als op `manifest_yaml`
   (256 KiB als compacte JSON en 32 niveaus: `manifest_too_large`, `yaml_too_deep`).
 - De regels van `nopt` waarop T2 steunt, zijn gemeten op de gepinde Node-RED-digest (ADR-0016, "Context"); de
@@ -235,9 +249,11 @@ krijgt daarnaast T1):
   meet jelly-leon-platform ze opnieuw.
 - `interpolation_forbidden` blijft zoals het was; op hetzelfde pad kunnen beide codes staan, elk met een eigen reden.
 
-Wat de validator niet ziet: een gecodeerde of gesplitste hash, een geheim onder een naam zonder geheimwoord, en
-(ADR-0019, ADR-0020) een accountwoord dat in een voorouder aan een ander woord vastzit en zelf niet in de vaste lijst
-staat. De samenstellingen `administrator`, `beheerder`, `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` en
+Wat de validator niet ziet: een gecodeerde of gesplitste hash, een geheim onder een naam zonder geheimwoord dat via
+een gewone parameter (zonder geheimmarkering) of letterlijk in het manifest staat, en (ADR-0019, ADR-0020) een
+accountwoord dat in een voorouder aan een ander woord vastzit en zelf niet in de vaste lijst staat. Een parameter met
+een geheimmarkering ziet de validator wel: op een plek met een accountwoord is dat een fout (ADR-0021), elders de te
+accepteren waarschuwing `secret_in_form`. De samenstellingen `administrator`, `beheerder`, `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` en
 `adminuser` staan sinds ADR-0020 in de lijst en tellen weer. De lijst blijft open voor nieuwe samenstellingen: een
 geheim van de Hub onder bijvoorbeeld `sysadmin`, `webadmin` of `rootaccount` geeft de te accepteren waarschuwing
 `secret_in_form`, tot de lijst met een nieuwe ADR is uitgebreid. Dan blijft de review van het manifest de controle
@@ -258,13 +274,15 @@ naam, of buiten een geheimplek een parameter; er is geen uitzondering (ADR-0018,
   `secret_in_form`). Dit is een geheimwoord, geen accountwoord, en het blijft strikt (ADR-0019);
 - een accountwoord als heel naamdeel in een voorouder telt altijd (`setup`, `initialSync`, `admin_ui`): een geheim
   onder `setup.database.password`, `initialSync.api_key` of `admin_ui.db_password` is een accountplek
-  (`account_gegevens_verboden`). Als deel van een woord (`phpmyadmin`, `rootless`, `groot`, `administration`) telt het
+  (`account_gegevens_verboden`). Sinds ADR-0021 geldt dat ook voor een parameter met een geheimmarkering zonder
+  geheimwoord in de naam of op de plek (`setup.sleutel`, `owner.id` of de omgevingsvariabele `SETUP_KEY` naar een
+  geheim dat de Hub maakt). Als deel van een woord (`phpmyadmin`, `rootless`, `groot`, `administration`) telt het
   sinds ADR-0019 niet meer: `phpmyadmin.db_password`, `rootless.cache.secret`, `groot.password` en
   `administration.db.password` naar een geheim dat de Hub maakt, geven weer de te accepteren waarschuwing
   `secret_in_form`;
 - een parameter van type poort of getal met een geheimwoord in de naam (`token_poort`, `password_min_length`) valt
   onder de naamregels (`secret_in_form` waar hij wordt gebruikt); kies een andere naam. Een parameter van type
-  `boolean` niet (`password_login`; ADR-0019);
+  `boolean` zonder geheimmarkering niet (`password_login`; ADR-0019, ADR-0021);
 - bij een catalogusapp legt de app van iX de sleutels in `values` vast: "kies een andere naam" kan daar niet, en een
   parameter onder een geheimnaam geeft ook een fout. Zo'n app vraagt een besluit of een nieuwe ADR, geen uitzondering
   in het manifest.

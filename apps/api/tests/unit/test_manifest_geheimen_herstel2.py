@@ -195,12 +195,16 @@ def test_secret_parameter_name_under_an_account_word_in_a_custom_app() -> None:
     assert ("values.envs[2].value", CODE) in {(f.path, f.code) for f in result.blocking()}
 
 
-def test_parameter_without_a_secret_name_under_an_account_word_keeps_the_existing_rules() -> None:
-    """Grens van de regel: een geheim van de Hub zonder geheimnaam onder ``admin`` blijft de te accepteren
-    waarschuwing (ADR-0016, "Wat dit ontwerp niet bewijst": een geheim onder een naam zonder geheimwoord)."""
-    report, _ = validate_data(met_waarden({"admin": {"param": "sleutel_a"}}, hub_geheim("sleutel_a")))
+def test_parameter_without_a_secret_name_under_an_account_word_follows_its_marking() -> None:
+    """Grens van de regel. Tot ADR-0021 bleef een geheim van de Hub zonder geheimnaam onder ``admin`` de te accepteren
+    waarschuwing; sinds ADR-0021 (R-TECH-9, binnen C-12 "strikt zonder") telt de geheimmarkering van de parameter op
+    zo'n plek net als een geheimnaam: ``account_gegevens_verboden``. Een gewone parameter (zonder geheimmarkering en
+    zonder geheimnaam) onder ``admin`` blijft geldig, zonder melding op die plek."""
+    errors = _refused(met_waarden({"admin": {"param": "sleutel_a"}}, hub_geheim("sleutel_a")))
+    assert _secret_codes(errors, "values.voorbeeld.admin") == [CODE]
+    report, _ = validate_data(met_waarden({"admin": {"param": "naam_a"}}, wizard("naam_a")))
     assert report.valid, report.as_text()
-    assert _at(report.findings, "values.voorbeeld.admin") == ["secret_in_form"]
+    assert _at(report.findings, "values.voorbeeld.admin") == []
 
 
 # ---------------------------------------------------------------------------------------------- R-TECH-7
