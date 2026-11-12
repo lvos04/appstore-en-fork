@@ -2,6 +2,14 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Geheimen en accountgegevens weigeren: herstelronde 3** (ADR-0020; stap S-P2-520):
+  - De vaste lijst van accountwoorden krijgt `ADMINISTRATOR`, `BEHEERDER`, `DIENSTACCOUNT`, `BEHEERACCOUNT`,
+    `SUPERADMIN`, `ROOTUSER` en `ADMINUSER` erbij. Een geheim van de Hub onder `administrator`, `beheerder(s)`,
+    `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` of `adminuser` geeft weer `account_gegevens_verboden`;
+    `phpmyadmin`, `rootless`, `groot` en `administration` blijven geldig. De lijst blijft open voor nieuwe
+    samenstellingen. De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde exitcode en byte-gelijke
+    uitvoer.
+
 - **Geheimen en accountgegevens weigeren: herstelronde 2** (ADR-0019; stap S-P2-520):
   - De cache van de naamregels bewaart alleen namen tot 256 tekens; een lange sleutel uit een verzoek blijft niet meer
     in het geheugen staan. Paden en meldingen blijven ook zonder cache lineair.
