@@ -146,6 +146,7 @@ CODES: dict[str, str] = {
     "parameter_value_not_allowed": "Deze parameter mag niet via de installatie worden meegegeven.",
     "vault_ref_not_allowed": "Vault-verwijzing die de vertaling niet zelf heeft gemaakt (alleen voor een geheime parameter).",
     "manifest_invalid": "Het manifest is niet geldig; vertalen is geweigerd.",
+    "vertaling_te_groot": "De vertaling is te groot (te veel ingevulde plekken of een te grote payload); geweigerd (fail-closed).",
     "ix_app_version_unknown": "Versie van de TrueNAS-catalogusapp ix-app is onbekend.",
     "ix_app_version_unsupported": "Versie van ix-app wordt niet ondersteund.",
     "ix_app_version_unverified": "Waardenstructuur van deze ix-app-versie is niet geverifieerd.",

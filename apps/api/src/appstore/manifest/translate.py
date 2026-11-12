@@ -27,8 +27,9 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .canonical import sha256_digest
+from .canonical import canonical_json, sha256_digest
 from .findings import Finding, Severity, error, warning
+from .loader import MAX_MANIFEST_BYTES
 from .model import CustomApp, Manifest, Parameter, ParamRef
 from .rules import (
     _HUB_RESERVED,
@@ -42,6 +43,7 @@ from .rules import (
     is_own_image,
     is_secret_name,
     name_value_pair,
+    param_name_counts,
     render_shown,
     secret_text_finding,
     secret_text_reasons,
@@ -98,6 +100,15 @@ _NO_TEXT_PLACE = (
 )
 #: Alle stuurtekens, ook tab/newline/CR: een parameterwaarde is altijd één regel.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f\u0085\u2028\u2029]")
+
+
+#: ADR-0019 (vervolgpunt R-VEILIG-2): hooguit zoveel plekken krijgen een parameterwaarde. De bestaande manifesten hebben
+#: er hooguit 11 (gemeten 2026-11-12); een parameterwaarde is hooguit 4096 tekens. Daarboven: ``vertaling_te_groot``.
+MAX_FILLED_PLACES = 256
+#: ADR-0019: de payload (canonieke JSON, zoals voor ``preview_hash``) is niet groter dan het grootste manifest dat de
+#: lader aanneemt (``loader.MAX_MANIFEST_BYTES``, 256 KiB). Daarboven: ``vertaling_te_groot``.
+MAX_PAYLOAD_BYTES = MAX_MANIFEST_BYTES
+_TE_GROOT = "vertaling_te_groot"
 
 
 def vault_ref(app_id: str, parameter: str) -> str:
@@ -256,6 +267,11 @@ class _Resolver:
         #: ``HUB_ENROLLMENT_TOKEN`` (``docs/MANIFESTSTANDAARD.md``, "Gereserveerde namen"). De vertaling doet dat nu
         #: nooit; alleen op zo'n plek geldt de uitzondering van W3 (ADR-0018).
         self.hub_at: set[Segments] = set()
+        #: Per plek in de payload (tekst in ``values`` of een omgevingsvariabele): de parameter die haar vulde. W3 kijkt
+        #: daarmee ook naar de naam van de parameter (ADR-0019).
+        self.param_at: dict[Segments, Parameter] = {}
+        #: Aantal plekken met een parameter (ADR-0019: hooguit ``MAX_FILLED_PLACES``).
+        self.places = 0
         for name in supplied:
             if name not in self.params:
                 shown = shown_key(str(name))  # ADR-0018: een naam die een waarde kan dragen, staat er niet
@@ -280,12 +296,25 @@ class _Resolver:
         catalogusapp of in een omgevingsvariabele); zonder ``ref_at`` wordt een geheime parameter geweigerd.
         ``hub_generated_only``: alleen een geheim dat de Hub maakt (``source: generated`` + ``secret: true``).
         """
+        self.places += 1
+        if self.places > MAX_FILLED_PLACES:  # ADR-0019: fail-closed; daarna wordt niets meer ingevuld
+            if self.places == MAX_FILLED_PLACES + 1:
+                self.findings.append(
+                    error(
+                        _TE_GROOT,
+                        "parameters",
+                        f"Meer dan {MAX_FILLED_PLACES} plekken krijgen een parameterwaarde; de vertaling is geweigerd "
+                        "(fail-closed, ADR-0019).",
+                    )
+                )
+            return None
         param = self.params.get(ref.param)
         if param is None:  # door de validator al uitgesloten
             self.findings.append(error("unknown_parameter", path, f"Onbekende parameter {ref.param!r}."))
             return None
+        names = param_name_counts(param)  # ADR-0019: geen naamregel voor een parameter van type boolean
         # ADR-0018 (verdediging in de diepte; de validator weigert dit al): de naam van de parameter telt ook
-        if is_account_name(param.name):
+        if names and is_account_name(param.name):
             self.findings.append(
                 error(
                     "account_gegevens_verboden",
@@ -295,7 +324,7 @@ class _Resolver:
                 )
             )
             return None
-        if is_secret_name(param.name) and not is_secret(param):
+        if names and is_secret_name(param.name) and not is_secret(param):
             self.findings.append(
                 error(
                     "secret_in_form",
@@ -305,6 +334,8 @@ class _Resolver:
                 )
             )
             return None
+        if ref_at is not None:
+            self.param_at[ref_at] = param
         if is_secret(param):
             return self.secret(param, path, ref_at, hub_generated_only=hub_generated_only)
         if ref.param in self.supplied:
@@ -700,20 +731,40 @@ def finding_path(at: Segments) -> str:
 
 
 def _filled_place(
-    place: Place, value: Any, at: Segments, ref_at: dict[Segments, str], hub_at: frozenset[Segments]
+    place: Place,
+    value: Any,
+    at: Segments,
+    path: str,
+    ref_at: dict[Segments, str],
+    hub_at: frozenset[Segments],
+    param: Parameter | None,
 ) -> Finding | None:
-    """W3 op één ingevulde plek: een accountplek met een waarde (ook een vault-verwijzing), een tekst waarin T1 of T2
-    iets vindt (altijd, ook onder ``HUB_ENROLLMENT_TOKEN``), of een geheimplek met een waarde die geen eigen
-    vault-verwijzing van de vertaling is. ``place`` erft van de voorouders van de plek (ADR-0018)."""
-    shown = shown_key(place.secret_name or place.name)
+    """W3 op één ingevulde plek: een accountplek met een waarde (ook een vault-verwijzing), een parameter met een
+    geheimnaam op een plek met een accountwoord (ADR-0019), een tekst waarin T1 of T2 iets vindt (altijd, ook onder
+    ``HUB_ENROLLMENT_TOKEN``), of een geheimplek met een waarde die geen eigen vault-verwijzing van de vertaling is.
+    ``place`` erft van de voorouders van de plek (ADR-0018); ``path`` is het getoonde pad; ``param`` is de parameter die
+    de plek vulde (of ``None``)."""
     own = isinstance(value, str) and ref_at.get(at) == value
-    path = finding_path(at)
     if place.account and has_value(value):
         return error(
             "account_gegevens_verboden",
             path,
-            f"{shown} is de aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook "
-            "niet als vault-verwijzing (ADR-0016 W3).",
+            f"{place.shown_secret} is de aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de "
+            "installatie, ook niet als vault-verwijzing (ADR-0016 W3).",
+        )
+    if (
+        param is not None
+        and param_name_counts(param)
+        and is_secret_name(param.name)
+        and place.account_word
+        and has_value(value)
+    ):
+        return error(
+            "account_gegevens_verboden",
+            path,
+            f"{shown_key(param.name)} heeft een geheimnaam en staat op een plek met een accountwoord: dat is de "
+            "aanmelding van een beheerder of dienstaccount; die gaat nooit mee in de installatie, ook niet als "
+            "vault-verwijzing (ADR-0019).",
         )
     if isinstance(value, str) and not own and (reasons := secret_text_reasons(value, settings=True)):
         return secret_text_finding(path, reasons)
@@ -722,8 +773,8 @@ def _filled_place(
         return error(
             "secret_in_form",
             path,
-            f"{shown} lijkt een geheim en zou na het invullen in het formulier of de waarden staan; een geheim gaat "
-            "alleen als vault-verwijzing van de vertaling mee (ADR-0016 W3).",
+            f"{place.shown_secret} lijkt een geheim en zou na het invullen in het formulier of de waarden staan; een "
+            "geheim gaat alleen als vault-verwijzing van de vertaling mee (ADR-0016 W3).",
         )
     return None
 
@@ -743,13 +794,16 @@ def filled_value_findings(
     *,
     custom_app: bool,
     hub_at: frozenset[Segments] = frozenset(),
+    param_at: dict[Segments, Parameter] | None = None,
 ) -> list[Finding]:
-    """W3 (ADR-0016, ADR-0018): na het invullen van de parameters de omgevingswaarden van een Custom App
+    """W3 (ADR-0016, ADR-0018, ADR-0019): na het invullen van de parameters de omgevingswaarden van een Custom App
     (``values.envs``) of de ``values`` van een catalogusapp opnieuw toetsen op geheimen en accountgegevens, en op een
     ``HUB_*``-naam die de vertaling niet zelf zette (``reserved_env``). ``ref_at`` noemt de plekken waar de vertaling
-    zelf een vault-verwijzing zette, ``hub_at`` de plekken waar zij zelf een ``HUB_*``-naam zette. De melding noemt
-    het pad, nooit de waarde; bij een treffer is er geen payload."""
+    zelf een vault-verwijzing zette, ``hub_at`` de plekken waar zij zelf een ``HUB_*``-naam zette, ``param_at`` per plek
+    de parameter die haar vulde. De melding noemt het pad, nooit de waarde; bij een treffer is er geen payload. Het
+    getoonde pad gaat mee in de doorloop (lineair, ADR-0019)."""
     out: list[Finding] = []
+    filled_by = param_at or {}
     if custom_app:
         envs = values.get("envs") if isinstance(values, dict) else None
         for idx, env in enumerate(envs if isinstance(envs, list) else []):
@@ -757,48 +811,63 @@ def filled_value_findings(
             if isinstance(env, dict) and isinstance(env.get("name"), str):
                 if _HUB_RESERVED.match(env["name"]) and at not in hub_at:
                     out.append(_reserved(finding_path(("values", "envs", idx, "name"))))
-                finding = _filled_place(Place().child(env["name"]), env.get("value"), at, ref_at, hub_at)
+                finding = _filled_place(
+                    Place().child(env["name"]),
+                    env.get("value"),
+                    at,
+                    finding_path(at),
+                    ref_at,
+                    hub_at,
+                    filled_by.get(at),
+                )
                 out.extend([finding] if finding is not None else [])
         return out
-    stack: list[tuple[Any, Segments, Place]] = [(values, ("values",), Place())]
+    stack: list[tuple[Any, Segments, Place, str]] = [(values, ("values",), Place(), "values")]
     while stack:
-        value, at, place = stack.pop()
+        value, at, place, shown = stack.pop()
         if isinstance(value, dict):
             pair = name_value_pair(value)
             name_field = value.get("name")  # zoals rules._hub_names_in_values: elk ``name``-veld, ook zonder ``value``
             if isinstance(name_field, str) and _HUB_RESERVED.match(name_field) and (*at, "value") not in hub_at:
-                out.append(_reserved(finding_path((*at, "name"))))
+                out.append(_reserved(f"{shown}.name"))
             for key, sub in value.items():
+                sub_shown = f"{shown}.{shown_key(str(key))}"
                 if isinstance(key, str) and _HUB_RESERVED.match(key):
-                    out.append(_reserved(finding_path((*at, key))))
-                stack.append((sub, (*at, key), place.child(pair if pair is not None and key == "value" else str(key))))
+                    out.append(_reserved(sub_shown))
+                child = place.child(pair if pair is not None and key == "value" else str(key))
+                stack.append((sub, (*at, key), child, sub_shown))
         elif isinstance(value, list):
-            stack.extend((sub, (*at, idx), place) for idx, sub in enumerate(value))
-        elif finding := _filled_place(place, value, at, ref_at, hub_at):
+            stack.extend((sub, (*at, idx), place, f"{shown}[{idx}]") for idx, sub in enumerate(value))
+        elif finding := _filled_place(place, value, at, shown, ref_at, hub_at, filled_by.get(at)):
             out.append(finding)
     return sorted(out, key=lambda f: f.path)
 
 
-def _substitute(value: Any, r: _Resolver, at: Segments) -> Any:
-    """Vul de parameters in de ``values`` van een catalogusapp in; ``at`` is ook de plek in de payload."""
+def _substitute(value: Any, r: _Resolver, at: Segments, shown: str) -> Any:
+    """Vul de parameters in de ``values`` van een catalogusapp in; ``at`` is ook de plek in de payload en ``shown`` het
+    getoonde pad (het gaat mee in de doorloop: lineair, ADR-0019)."""
     if isinstance(value, dict):
         if set(value) == {"param"} and isinstance(value["param"], str):
-            return r.get(ParamRef(param=value["param"]), finding_path(at), ref_at=at)
-        return {k: _substitute(v, r, (*at, k)) for k, v in value.items()}
+            return r.get(ParamRef(param=value["param"]), shown, ref_at=at)
+        return {k: _substitute(v, r, (*at, k), f"{shown}.{shown_key(str(k))}") for k, v in value.items()}
     if isinstance(value, list):
-        return [_substitute(v, r, (*at, i)) for i, v in enumerate(value)]
+        return [_substitute(v, r, (*at, i), f"{shown}[{i}]") for i, v in enumerate(value)]
     return value
 
 
-def _texts(value: Any, at: Segments) -> list[tuple[Segments, str, bool]]:
-    """(plek, tekst, is_sleutel) voor elke tekstwaarde en elke tekstsleutel in de payload. Bij een sleutel is de plek
-    die van het object waarin de sleutel staat."""
+def _texts(value: Any, at: Segments, shown: str) -> list[tuple[Segments, str, str, bool]]:
+    """(plek, getoond pad, tekst, is_sleutel) voor elke tekstwaarde en elke tekstsleutel in de payload. Bij een sleutel
+    is de plek die van het object waarin de sleutel staat."""
     if isinstance(value, dict):
-        keys = [(at, k, True) for k in value if isinstance(k, str)]
-        return keys + [t for k, v in value.items() for t in _texts(v, (*at, k))]
+        keys = [(at, shown, k, True) for k in value if isinstance(k, str)]
+        return keys + [
+            t
+            for k, v in value.items()
+            for t in _texts(v, (*at, k), f"{shown}.{shown_key(str(k))}" if shown else shown_key(str(k)))
+        ]
     if isinstance(value, list):
-        return [t for i, v in enumerate(value) for t in _texts(v, (*at, i))]
-    return [(at, value, False)] if isinstance(value, str) else []
+        return [t for i, v in enumerate(value) for t in _texts(v, (*at, i), f"{shown}[{i}]")]
+    return [(at, shown, value, False)] if isinstance(value, str) else []
 
 
 def _unmarked_vault_refs(payload: AppCreatePayload, ref_at: dict[Segments, str]) -> list[Finding]:
@@ -809,7 +878,7 @@ def _unmarked_vault_refs(payload: AppCreatePayload, ref_at: dict[Segments, str])
     return [
         error(
             "vault_ref_not_allowed",
-            finding_path(at),
+            shown,
             (
                 "In een sleutel van dit object staat een vault-verwijzing"
                 if is_key
@@ -818,7 +887,7 @@ def _unmarked_vault_refs(payload: AppCreatePayload, ref_at: dict[Segments, str])
             + "; alleen een geheime parameter krijgt een verwijzing naar de vault van de Hub, en alleen voor de eigen "
             "app.",
         )
-        for at, text, is_key in _texts(payload.model_dump(mode="json"), ())
+        for at, shown, text, is_key in _texts(payload.model_dump(mode="json"), (), "")
         if _VAULT_MARK.search(text) and (is_key or ref_at.get(at) != text)
     ]
 
@@ -869,6 +938,7 @@ def translate(
                     resolver.ref_at,
                     custom_app=True,
                     hub_at=frozenset(resolver.hub_at),
+                    param_at=resolver.param_at,
                 )
             )
         if manifest.image.digest:
@@ -893,14 +963,20 @@ def translate(
             )
     else:
         assert manifest.catalog is not None and manifest.values is not None
-        values_any = _substitute(manifest.values, resolver, ("values",))
+        values_any = _substitute(manifest.values, resolver, ("values",), "values")
         # verdediging in de diepte: de ingevulde waarden opnieuw controleren (een parameter smokkelt niets binnen)
         resolver.findings.extend(
             catalog_value_findings(values_any, host_network_reason=manifest.network.host_network_reason, resolved=True)
         )
         # W3 (ADR-0016): geheimen en accountgegevens opnieuw, na het invullen
         resolver.findings.extend(
-            filled_value_findings(values_any, resolver.ref_at, custom_app=False, hub_at=frozenset(resolver.hub_at))
+            filled_value_findings(
+                values_any,
+                resolver.ref_at,
+                custom_app=False,
+                hub_at=frozenset(resolver.hub_at),
+                param_at=resolver.param_at,
+            )
         )
         if not any(f.severity is Severity.ERROR for f in resolver.findings):
             payload = AppCreatePayload(
@@ -917,6 +993,16 @@ def translate(
     if payload is not None and (unmarked := _unmarked_vault_refs(payload, resolver.ref_at)):
         findings += unmarked
         payload = None  # nooit een payload met een verwijzing die niet gemarkeerd is
+    if payload is not None and len(canonical_json(payload.model_dump(mode="json"))) > MAX_PAYLOAD_BYTES:
+        findings.append(
+            error(
+                _TE_GROOT,
+                "payload",
+                f"De payload is groter dan {MAX_PAYLOAD_BYTES} bytes (canonieke JSON); de vertaling is geweigerd "
+                "(fail-closed, ADR-0019).",
+            )
+        )
+        payload = None
     blocking = any(f.severity is Severity.ERROR for f in findings)
     preview_hash = sha256_digest(payload.model_dump(mode="json")) if payload is not None else None
     return TranslationResult(
