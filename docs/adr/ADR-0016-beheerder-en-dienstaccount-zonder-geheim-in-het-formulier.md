@@ -7,6 +7,10 @@
   is niets gebouwd; de bouw volgt in de
   stappen onder "Gevolgen per repo" (een herstelstap van de validator vóór S-P3-490, daarna S-P3-490, S-P3-445 en
   S-P3-360).
+- **Aanvulling (2026-11-13):** de herstelstap van de validator is gebouwd als stap S-P2-520 (W2 en W3, met
+  [ADR-0017](ADR-0017-kruisverwijzing-en-bcrypt-vormen-weigeren.md) tot en met
+  [ADR-0022](ADR-0022-herstelronde-5-grens-op-meldingen-en-accountnaam-van-een-geheim.md); eind-commit `db73f7a`).
+  W1 (veld `accounts`) volgt in S-P3-490. De tekst hierboven blijft staan zoals hij bij het ontwerp was.
 - **Bron:** `docs/platform-v2/PLATFORM_CONTRACTEN.md` (`contracts 1.3`), koppen "1. Vaste keuzes (van de gebruiker)",
   "3.1 Uitgangspunten", "3.2 Overzicht enrollment (eigen nieuwe diensten)", "3.10 Credentials van andere apps" en
   "9. Manifeststandaard (B08-001, eigenaar `appstore-en-fork`)"; [ADR-0002](ADR-0002-manifeststandaard-v1.md) besluit 4;
@@ -648,7 +652,7 @@ Voorgestelde volgorde. De stap-ID's bestaan al in
    - back-up (`02_BOUWPLANNEN/B12_BACKUP_HERSTEL.md`): een snapshot of offsite-kopie van de Node-RED-dataset bevat de
      sleutel en de versleutelde credentials samen en geldt dus als geheim (eis 9): offsite alleen versleuteld, met een
      sleutel die er niet naast staat. Geen stap-ID; melden aan de regisseur.
-2. **appstore-en-fork: herstelstap van de validator vóór S-P3-490 (nog geen stap-ID; de regisseur plant hem).** De
+2. **appstore-en-fork: herstelstap van de validator vóór S-P3-490 (nog geen stap-ID; de regisseur plant hem; aanvulling 2026-11-13: gebouwd als S-P2-520, zie de statusregel).** De
    huidige validator laat al door wat contract kop 9 (EX47: "een geheime waarde in een manifest") en kop 3.1 weigeren.
    Gemeten op 2026-11-11 door R-VEILIG van deze stap en opnieuw in het herstel, op proefmanifesten buiten de repo
    (afgeleid van de manifesten van Gotify, Authentik en Node-RED in jelly-leon-platform, alleen testwaarden):
