@@ -36,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings.from_env()
     logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    from .logfilter import install_log_filter, uvicorn_log_config
+
+    install_log_filter()  # KLEIN-34: vangnet tegen de DETAIL-regel van PostgreSQL (API, worker en andere commando's)
     logging.getLogger("alembic").setLevel(logging.WARNING)
 
     if args.cmd == "serve":
@@ -50,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
             proxy_headers=False,
             server_header=False,
             log_level=settings.log_level,
+            log_config=uvicorn_log_config(),
         )
         return 0
     if args.cmd == "worker":

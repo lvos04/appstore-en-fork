@@ -2,6 +2,7 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Databasefout zonder DETAIL in de log** (KLEIN-34): API en worker loggen een databasefout met alleen soort, sqlstate, constraint en tabel; een logfilter haalt de DETAIL-regel van PostgreSQL ook elders weg.
 - **Databasefout zonder parameterwaarden** (V-094): de engines van API, worker en migraties staan op
   `hide_parameters=True`; een databasefout noemt geen parameterwaarden meer in fout of log.
 - **Geheimen en accountgegevens weigeren: herstelronde 5** (ADR-0022; stap S-P2-520):

@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import delete, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import heartbeat
@@ -31,6 +32,7 @@ from .db import make_engine, make_sessionmaker
 from .events import envelope, envelope_problems
 from .hublink import HubLinkClient, ensure_link_file
 from .hublink_store import HubLinkStore
+from .logfilter import db_error_text
 from .models import CatalogSource, IdempotencyRecord, OutboxEvent, SyncJob
 from .secrets_store import Secrets, ensure_secrets
 from .timeutil import utcnow
@@ -87,7 +89,10 @@ def process_one_job(c: AppContext) -> bool:
             outcome = sync_source(db, source, c.settings, c.secrets, c.http_factory, trace)
         except Exception as exc:  # nooit als succes loggen; taak eerlijk laten mislukken
             db.rollback()
-            log.exception("synchronisatie mislukt")
+            if isinstance(exc, DBAPIError):  # KLEIN-34: zonder de DETAIL-regel van PostgreSQL
+                log.error("synchronisatie mislukt: %s", db_error_text(exc))
+            else:
+                log.exception("synchronisatie mislukt")
             job = db.get(SyncJob, job_id)
             assert job is not None
             job.status, job.finished_at, job.error = "failed", utcnow(), f"Interne fout ({type(exc).__name__})."
@@ -257,6 +262,8 @@ def main(settings: Settings | None = None) -> None:
                 periodic_import(c)
             if tick % 1800 == 0:
                 purge(c)
+        except DBAPIError as exc:  # KLEIN-34: zonder de DETAIL-regel van PostgreSQL
+            log.error("fout in de worker-lus; volgende ronde gaat door: %s", db_error_text(exc))
         except Exception:
             log.exception("fout in de worker-lus; volgende ronde gaat door")
         tick += 1
