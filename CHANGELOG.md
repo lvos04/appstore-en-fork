@@ -2,6 +2,8 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Databasefout zonder parameterwaarden** (V-094): de engines van API, worker en migraties staan op
+  `hide_parameters=True`; een databasefout noemt geen parameterwaarden meer in fout of log.
 - **Geheimen en accountgegevens weigeren: herstelronde 5** (ADR-0022; stap S-P2-520):
   - Hooguit 1000 meldingen per rapport (validatie, vertaling en conflictanalyse van de preview, elk apart). Bij de
     volgende stopt het verzamelen: het rapport houdt de eerste 1000 en krijgt de nieuwe vaste fout `te_veel_meldingen`

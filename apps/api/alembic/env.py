@@ -24,7 +24,8 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    engine = create_engine(_url(), poolclass=pool.NullPool)
+    # hide_parameters: een databasefout noemt geen parameterwaarden in fout of log (V-094)
+    engine = create_engine(_url(), poolclass=pool.NullPool, hide_parameters=True)
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():

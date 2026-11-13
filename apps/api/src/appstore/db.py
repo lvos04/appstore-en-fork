@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 def make_engine(url: str) -> Engine:
-    return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5, future=True)
+    # hide_parameters: een databasefout noemt geen parameterwaarden (mogelijk geheimen) in fout of log (V-094)
+    return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5, future=True, hide_parameters=True)
 
 
 def make_sessionmaker(engine: Engine) -> sessionmaker[Session]:
