@@ -130,6 +130,104 @@ def test_container_mount_bypass_refused(custom_manifest: dict[str, Any], mount: 
     assert "forbidden_mount_path" in _errors(custom_manifest)
 
 
+# KLEIN-82: het koppelpad is gelijk aan de regel van de Hub (ai-server-manager, asm_policy.params: CONTAINERPAD_RE en
+# _mount_path_problem, KLEIN-80 en KLEIN-81). Alles wat de Hub als mount_path weigert, is hier al forbidden_mount_path,
+# zodat de appstore geen manifest goedkeurt waarvan de Hub de payload weigert. Vroeger lieten mount_path_problem en
+# daarmee de catalogus-waarden ":", ",", "=", een spatie, niet-ASCII en een afsluitende "/" door, en was storage.mount
+# "/data/" geldig (het schema weigert de andere tekens daar al).
+HUB_MOUNT_ONGELDIG = [
+    "/cache:exec,mode=1777,=",
+    "/cache:exec,suid,dev,mode=4777,uid=0,gid=0,=",
+    "/cache,exec",
+    "/proc:=",
+    "/sys:=",
+    "/dev:exec,dev,mode=0777,=",
+    "/data:rw,z",
+    "/proc/.",
+    "/./proc",
+    "/sys/.",
+    "/dev/.",
+    "/a/./b",
+    "/a/../proc",
+    "/..",
+    "//proc",
+    "/a//b",
+    "/data/",
+    "/da ta",
+    "/data=x",
+    "/data\x00",
+    "/data\n",
+    "/dаta",  # Cyrillische a
+    "data",
+    "/",
+    "/proc",
+    "/var/run/docker.sock",
+    "",
+    "/data~",
+    "/data#x",
+    "/café",
+    "/proc/sys",
+    "/proc/sys/kernel",
+    "/proc/1",
+    "/sys/fs/cgroup",
+    "/sys/kernel",
+    "/dev/shm",
+    "/dev/mqueue",
+    "/dev/pts",
+    "/var/run/docker.sock/x",
+    "/run/docker.sock/x",
+]
+#: Geldig bij de Hub en hier: alle koppelpaden uit de manifesten van de repos en de tegenproeven van de Hub. Niet hier:
+#: /run en /var/run, die deze validator strenger al weigert (FORBIDDEN_MOUNT_PATHS).
+HUB_MOUNT_GELDIG = [
+    "/app/data", "/appdata", "/beszel_data", "/cache", "/certs", "/config", "/data", "/media", "/templates",
+    "/var/lib/beszel-agent", "/var/lib/postgresql", "/media/films", "/groot", "/data_1", "/x-y", "/a.b", "/a@b+c",
+    "/procfs", "/devices", "/system", "/dev2/x", "/host", "/process", "/procfs/sys", "/proc_data", "/devices/shm",
+    "/dev2/shm", "/sysadmin", "/systeem/fs", "/PROC", "/PROC/sys", "/Proc/sys", "/DEV/shm", "/Sys/fs/cgroup",
+    "/var/run/docker", "/var/lib/proc", "/data/dev/shm", "/.verborgen", "/a..b",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("mount", HUB_MOUNT_ONGELDIG)
+def test_mount_path_problem_weigert_wat_de_hub_weigert(mount: str) -> None:
+    assert mount_path_problem(mount) is not None
+
+
+@pytest.mark.parametrize("mount", HUB_MOUNT_GELDIG)
+def test_mount_path_problem_laat_door_wat_de_hub_doorlaat(mount: str) -> None:
+    assert mount_path_problem(mount) is None
+
+
+@pytest.mark.parametrize("mount", ["/data/", "/config/", "/var/lib/postgresql/"])
+def test_storage_mount_met_afsluitende_schuine_streep_geweigerd(custom_manifest: dict[str, Any], mount: str) -> None:
+    custom_manifest["storage"][0]["mount"] = mount
+    assert "forbidden_mount_path" in _errors(custom_manifest)
+
+
+@pytest.mark.parametrize("mount", ["/cache:exec,mode=1777,=", "/cache,exec", "/da ta", "/data=x", "/data/", "/café"])
+@pytest.mark.parametrize("key", ["mount_path", "mountPath"])
+def test_catalogus_koppelpad_gelijk_aan_de_hub(catalog_manifest: dict[str, Any], key: str, mount: str) -> None:
+    catalog_manifest["values"] = {**catalog_manifest["values"], "extra": {key: mount}}
+    assert "forbidden_mount_path" in _errors(catalog_manifest)
+
+
+def test_geldige_koppelpaden_blijven_geldig_in_manifest_en_catalogus(
+    custom_manifest: dict[str, Any], catalog_manifest: dict[str, Any]
+) -> None:
+    """Tegenproef: de koppelpaden die het schema toestaat, blijven als storage.mount en als catalogus-waarde geldig."""
+    other_mounts = {decl["mount"] for decl in custom_manifest["storage"][1:]}
+    for mount in HUB_MOUNT_GELDIG:
+        if "@" in mount or "+" in mount or mount in other_mounts:
+            continue  # het schema van storage.mount laat "@" en "+" niet toe (strenger dan de Hub); geen dubbel pad
+        data = copy.deepcopy(custom_manifest)
+        data["storage"][0]["mount"] = mount
+        assert _errors(data) == set(), mount
+    for mount in HUB_MOUNT_GELDIG:
+        data = copy.deepcopy(catalog_manifest)
+        data["values"] = {**data["values"], "extra": {"mount_path": mount}}
+        assert _errors(data) == set(), mount
+
+
 # ---------------------------------------------------------------------------------------------- apparaten
 BAD_DEVICES = [
     "/dev/./sda",

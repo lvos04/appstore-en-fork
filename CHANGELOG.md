@@ -2,6 +2,7 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Koppelpad gelijk aan de Hub** (KLEIN-82): `storage[].mount` en een `mount_path`/`mountPath` in catalogus-waarden zijn alleen een strikt containerpad zoals in de policy van de Hub (`/` met delen van ASCII-letters, cijfers en `. _ @ + -`, geen `.`/`..`-deel, geen `/` aan het eind); anders `forbidden_mount_path`. Alle manifesten van de repos blijven geldig.
 - **Databasefout zonder DETAIL in de log** (KLEIN-34): API en worker loggen een databasefout met alleen soort, sqlstate, constraint en tabel; een logfilter haalt de DETAIL-regel van PostgreSQL ook elders weg.
 - **Databasefout zonder parameterwaarden** (V-094): de engines van API, worker en migraties staan op
   `hide_parameters=True`; een databasefout noemt geen parameterwaarden meer in fout of log.

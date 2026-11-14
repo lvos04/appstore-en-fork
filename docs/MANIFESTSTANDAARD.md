@@ -332,6 +332,9 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
   segment. Een hostpad moet onder `/mnt/<pool>/<dataset>` liggen; verborgen mappen (`.zfs`, `.system`, `.ix-apps`) en
   TrueNAS-systeemdatasets (`ix-applications`, `ix-apps`, `ix-virt`) zijn verboden, hoofdletterongevoelig vergeleken.
   Dezelfde controle geldt bij het invullen van een `path`-parameter (datasetkiezer) in `translate`/`preview`.
+  Een koppelpad in de container (`storage[].mount`, `mount_path`/`mountPath` in catalogus-waarden) is bovendien een
+  strikt containerpad, gelijk aan de policy van de Hub: `/` met delen van ASCII-letters, cijfers en `. _ @ + -`,
+  gescheiden door één `/`, zonder `/` aan het eind (dus geen `:`, `,`, `=` of spatie); anders `forbidden_mount_path`.
 - **Apparaten**: alleen een allowlist, met `privilege_reason`: `/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/ttyAMA*`,
   `/dev/serial/by-id|by-path/…`, `/dev/video*`, `/dev/dvb/adapterN/…`, `/dev/apex_N`. GPU gaat via `gpu: intel_render`.
 - **Capabilities**: `NET_ADMIN` samen met `host_network` is verboden.

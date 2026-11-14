@@ -131,6 +131,11 @@ FORBIDDEN_MOUNT_PATHS: tuple[str, ...] = (
     "/lib",
     "/lib64",
 )
+#: Strikt koppelpad in de container, gelijk aan de Hub (KLEIN-82; ai-server-manager ``asm_policy.params``,
+#: ``CONTAINERPAD_RE``): "/" gevolgd door delen van ASCII-letters, cijfers en ``. _ @ + -``, gescheiden door één "/";
+#: geen "/" aan het eind. TrueNAS plakt de tmpfs-opties als ``"<mount_path>:<opties>"`` achter het pad, dus ":" en ","
+#: mogen er nooit in. Altijd met ``fullmatch``.
+CONTAINERPAD_RE = re.compile(r"/[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*")
 _SOCKET_MARKERS = ("docker.sock", "containerd.sock", "podman.sock", "crio.sock", "dockershim.sock", "buildkitd.sock")
 
 #: Linux-capabilities (man 7 capabilities). ``ALL`` is nooit toegestaan.
@@ -341,6 +346,13 @@ def host_path_problem(path: str) -> tuple[str, str] | None:
 
 
 def mount_path_problem(path: str) -> str | None:
+    """Controleer een koppelpad in de container (``storage[].mount`` en ``mount_path``/``mountPath`` in de waarden).
+
+    Gelijk aan de Hub (KLEIN-82; ai-server-manager ``asm_policy.params``: ``CONTAINERPAD_RE`` en
+    ``_mount_path_problem``): geen ``.``- of ``..``-deel (:func:`normalize_abs_path`), geen runtime-socket, geen
+    :data:`FORBIDDEN_MOUNT_PATHS` of iets onder ``/proc``, ``/sys`` of ``/dev`` (strenger dan de Hub), en alleen een
+    strikt containerpad (:data:`CONTAINERPAD_RE`).
+    """
     norm = normalize_abs_path(path)
     if norm is None:
         return f"Koppelpad {path!r} is geen genormaliseerd absoluut pad."
@@ -348,6 +360,11 @@ def mount_path_problem(path: str) -> str | None:
         return f"Koppelpad {path!r} is een container-runtime-socket."
     if norm in FORBIDDEN_MOUNT_PATHS or norm.startswith(("/proc/", "/sys/", "/dev/")):
         return f"Koppelpad {norm!r} overschrijft een systeemmap in de container."
+    if not CONTAINERPAD_RE.fullmatch(path):
+        return (
+            f"Koppelpad {path!r} is geen strikt containerpad: '/' gevolgd door delen van letters, cijfers en "
+            "'. _ @ + -' (ASCII), gescheiden door één '/', zonder '/' aan het eind."
+        )
     return None
 
 
