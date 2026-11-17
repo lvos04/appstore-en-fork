@@ -45,7 +45,7 @@ Gemeten stand vóór deze ronde: `fc682e5` (zoals de conformiteitslijst). Alleen
 
 | Punt | Vóór (stand `fc682e5`) | Nu | Validatie |
 |---|---|---|---|
-| ALG-01 kopieën + drifttest | kopie 1.2 | byte-gelijke kopie 1.3 + conformiteitslijst 1.3 op bron-commit `02b119c`, pin in `CONTRACT_HERKOMST.json`, controle offline (unit-test) en online (CI, `tools/contract_kopie.py`) | Unit-getest |
+| ALG-01 kopieën + drifttest | kopie 1.2 | contractkopie 1.3 + conformiteitslijst 1.3 byte-gelijk aan `ai-server-manager@e88a290` (aanvulling C-12, blijft contracts 1.3), pin in `CONTRACT_HERKOMST.json`, controle offline (unit-test) en online (CI, `tools/contract_kopie.py`) | Unit-getest |
 | ALG-02 EVIDENCE §11 (1.3) | 1.2-regels | `Niet getest`, geen lege `validatie`, NIET GEVALIDEERD uit `blokkade` ook in `validatie`, ID's `C1.3-ASF-…`/`REVIEW-…`; negatieve tests | Unit-getest |
 | ALG-05 Peil 1.1.1 | kopie 1.1.0 | kopie 1.1.1 (pinregel E08), renderer in één doorgang, nieuwe toestanden en tonen | Unit-getest; Sim-getest (Chromium) |
 | ASF-01 healthcheck | als root, zonder wissel | exec-vorm `python -I -S`, eerst bounding set leeg + 568 + no_new_privs, `--controle`; bewaker stopt als de bounding set niet leeg is; image-E2E per proces in de boom van PID 1 en de healthcheck apart | Docker-E2E; NIET GEVALIDEERD (echte NAS) |
