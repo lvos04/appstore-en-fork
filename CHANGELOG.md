@@ -2,6 +2,25 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Beheerder en dienstaccount zonder geheim in het formulier** (ADR-0023; stap S-P3-490; besluit C-12, C1.3-ASF-15):
+  - Nieuw optioneel veld `accounts` in manifest v1 (ADR-0016 W1): welke beheerder of welk dienstaccount er moet komen,
+    met rol, aanmaakwijze, afnemer, rechten en controle, nooit een waarde. Nieuwe fouten `account_ongeldig`,
+    `account_controle_ontbreekt` en `account_controle_te_lang`; een dubbele id is `duplicate_name`. `accounts` komt
+    niet in de vertaling, de eisen of een antwoordmodel.
+  - De accountwoorden krijgen `INIT`, `LOGIN` en `BASIC_AUTH`; `JUPYTER_TOKEN` en `PASSWORD` zijn een accountnaam als
+    hele naam van een omgevingsvariabele, een naam/waarde-paar of een parameter. Een geheim van de Hub onder zo'n naam
+    is `account_gegevens_verboden` (eerst de te accepteren waarschuwing `secret_in_form`).
+  - Een kluisverwijzing (`vault://`) in een manifest is nu ook in `jl-manifest validate` de fout
+    `vault_ref_not_allowed`.
+  - Een geheim van de Hub in een omgevingsvariabele van een Custom App mag alleen onder een geheimnaam die geen
+    accountnaam is; anders de fout `secret_in_form` (in validate en in de vertaling).
+  - `validatie_nu` van een controlelijst kent `NIET GEVALIDEERD (echte Hub)` (contract §11, C12-6).
+  - De 22 bestaande manifesten en fixtures valideren vóór en na met dezelfde exitcode en hetzelfde rapport (alleen
+    `schema_sha256` verandert). Bestaande tests met namen die nu onder een nieuwe regel vallen, zijn aangepast zodat ze
+    dezelfde grens blijven toetsen (zie de commits).
+  - Andere repos houden het oude gedrag tot zij hun pin naar deze validator verzetten (een oudere validator weigert
+    een manifest met `accounts`).
+
 - **Koppelpad gelijk aan de Hub** (KLEIN-82): `storage[].mount` en een `mount_path`/`mountPath` in catalogus-waarden zijn alleen een strikt containerpad zoals in de policy van de Hub (`/` met delen van ASCII-letters, cijfers en `. _ @ + -`, geen `.`/`..`-deel, geen `/` aan het eind); anders `forbidden_mount_path`. Alle manifesten van de repos blijven geldig.
 - **Databasefout zonder DETAIL in de log** (KLEIN-34): API en worker loggen een databasefout met alleen soort, sqlstate, constraint en tabel; een logfilter haalt de DETAIL-regel van PostgreSQL ook elders weg.
 - **Databasefout zonder parameterwaarden** (V-094): de engines van API, worker en migraties staan op
