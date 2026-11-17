@@ -7,6 +7,7 @@ EVIDENCE.json:
   ``opmerking``. ``Niet getest`` alleen bij status ``Niet gestart`` (nieuw in 1.3).
 - Testmatrix-ID's (``EX..``) gebruiken ``Sim-geslaagd``/``Sim-mislukt`` (naast ``NIET GEVALIDEERD (…)``).
 - Elke ``NIET GEVALIDEERD (…)`` die in ``blokkade`` staat, staat ook in ``validatie`` (nieuw in 1.3).
+- De vaste lijst is precies de tabel van §11 (sinds de aanvulling C-12 met ``NIET GEVALIDEERD (echte Hub)``, C12-6).
 - Naast Excel-ID's mogen contractpunten (``C1.3-ASF-<nn>``, ``C1.2-<code>``) en reviews (``REVIEW-appstore-en-fork-…``)
   een eigen regel hebben, met de statussen van het blad Werkpakketten.
 
@@ -30,11 +31,11 @@ EVIDENCE = DOCS / "EVIDENCE.json"
 CONTRACT = DOCS / "PLATFORM_CONTRACTEN.md"
 CONFORMITY = DOCS / "CONTRACT_1.3_CONFORMITEIT.md"
 #: bron-commit in lvos04/ai-server-manager (branch ccr-c133d7a0-kuz1cv) waarop beide kopieën zijn genomen
-SOURCE_COMMIT = "02b119cb84be9a307a88532f6692ea8a4bcb12f1"
+SOURCE_COMMIT = "e88a290c9ad5fef4acf498d05ad3414395a4fcb5"
 #: sha256 van docs/platform-v2/PLATFORM_CONTRACTEN.md (contracts 1.3) op SOURCE_COMMIT
-CONTRACT_SHA256 = "15b30cf17f91b606451ef9c41f02327076ef76ce655ee94e40e3538106962310"
+CONTRACT_SHA256 = "4712dd62c837c2f2594fa4152a925464f6f7481e898473660f09607cc113c511"
 #: sha256 van docs/platform-v2/CONTRACT_1.3_CONFORMITEIT.md op SOURCE_COMMIT
-CONFORMITY_SHA256 = "f0a2352ddb27088ae668013501c62a1eaaf879efe742a2d4422ffe8d33b43466"
+CONFORMITY_SHA256 = "b5ebba073a8fe8beb715d58e6760feae38e33ad445956d107e64840133dd7924"
 
 STATUS_WORK = {"Niet gestart", "Bezig", "Geblokkeerd", "N.v.t."}  # 'Gereed' nooit in deze bouwomgeving
 STATUS_TEST = {"Niet gestart", "Bezig", "Mislukt", "Geblokkeerd", "N.v.t."}  # 'Geslaagd' nooit
@@ -44,6 +45,7 @@ NOT_VALIDATED = {
     "NIET GEVALIDEERD (hardware)",
     "NIET GEVALIDEERD (account)",
     "NIET GEVALIDEERD (Mac/Xcode)",
+    "NIET GEVALIDEERD (echte Hub)",
 }
 VALIDATION_WORK = {"Sim-getest", "Unit-getest", "Intel-iGPU-getest (ontwikkelmachine)", "Niet getest", *NOT_VALIDATED}
 VALIDATION_TEST = {"Sim-geslaagd", "Sim-mislukt", "Niet getest", *NOT_VALIDATED}
@@ -161,6 +163,31 @@ def test_test_matrix_ids_use_sim_results() -> None:
     assert check_item({**item, "validatie": "Sim-geslaagd"}) == []
 
 
+def test_fixed_validation_list_is_the_table_of_section_11() -> None:
+    """De vaste lijst volgt het contract: een waarde erbij of eraf zonder contracttekst is rood (C12-6: echte Hub)."""
+    text = CONTRACT.read_text(encoding="utf-8")
+    begin = text.index("## 11. Bewijs en Excel")
+    section = text[begin : text.index("## 12.", begin)]
+    in_table: set[str] = set()
+    for raw in section.splitlines():
+        line = raw.strip()
+        if line.startswith("| `"):
+            in_table.update(re.findall(r"`([^`]+)`", line.split(" | ")[0]))
+    fixed = VALIDATION_WORK | VALIDATION_TEST
+    assert in_table == fixed, f"verschil met §11: {sorted(in_table ^ fixed)}"
+    item = {
+        "id": "C1.3-ASF-01",
+        "status": "Bezig",
+        "validatie": "Unit-getest; NIET GEVALIDEERD (echte Hub)",
+        "bewijs": "x",
+        "blokkade": "NIET GEVALIDEERD (echte Hub): alleen met de Hub-simulator beproefd",
+        "opmerking": "",
+        "repo": "appstore-en-fork",
+        "bijgewerkt": "2026-11-17",
+    }
+    assert check_item(item) == []
+
+
 def test_contract_copy_is_version_1_3_and_byte_equal_to_the_source() -> None:
     data = CONTRACT.read_bytes()
     assert b"Versie: `contracts 1.3`" in data
@@ -180,7 +207,7 @@ def test_conformity_list_copy_is_byte_equal_to_the_source() -> None:
 def test_conformity_list_names_this_repo() -> None:
     text = CONFORMITY.read_text(encoding="utf-8")
     assert "## 3. appstore-en-fork" in text
-    for n in range(1, 15):
+    for n in range(1, 16):
         assert f"C1.3-ASF-{n:02d}" in text
 
 

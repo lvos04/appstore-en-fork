@@ -405,9 +405,9 @@
   "validatie": "Unit-getest",
   "bewijs": "commits 9c973ef, edf0849, f29216a; test_manifest_schema.py::test_own_manifest_is_strict_valid_with_only_accepted_pending_digest, test_release_manifest.py, test_evidence_contract.py; GitHub Actions ci-run 42782660861 op commit 9fba129: jobs python (719 unit + 2 overgeslagen zonder checkout van ai-server-manager ernaast, 249 integratie, 6 dienst-E2E, contract- en Peil-drift online, manifest --strict, pip-audit), statuspagina-ui (28 Playwright-tests + live review 18/18 runs, waaronder de negatieve herkomstgevallen) en image (9 image-E2E) geslaagd",
   "blokkade": "",
-  "opmerking": "",
+  "opmerking": "kopie aanvulling C-12, bron e88a290",
   "repo": "appstore-en-fork",
-  "bijgewerkt": "2026-11-10"
+  "bijgewerkt": "2026-11-17"
  },
  {
   "id": "C1.3-ASF-14",
