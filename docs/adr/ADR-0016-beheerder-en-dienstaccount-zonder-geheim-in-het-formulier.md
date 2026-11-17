@@ -11,6 +11,12 @@
   [ADR-0017](ADR-0017-kruisverwijzing-en-bcrypt-vormen-weigeren.md) tot en met
   [ADR-0022](ADR-0022-herstelronde-5-grens-op-meldingen-en-accountnaam-van-een-geheim.md); eind-commit `db73f7a`).
   W1 (veld `accounts`) volgt in S-P3-490. De tekst hierboven blijft staan zoals hij bij het ontwerp was.
+- **Aanvulling (2026-11-17):** [ADR-0023](ADR-0023-accounts-en-aanvulling-c12-asf-15.md) (stap S-P3-490) bouwt W1 en
+  de aanvulling C-12 van het contract (C1.3-ASF-15): de woorden `INIT`, `LOGIN` en `BASIC_AUTH` en de aanmeldnamen
+  `JUPYTER_TOKEN` en `PASSWORD`, een kluisverwijzing in een manifest ook in `validate` een fout, en een geheim van de Hub
+  in een omgevingsvariabele van een Custom App alleen onder een geheimnaam. De woorden "enige uitzondering" in eis 1,
+  besluit 9 en W3 zijn verouderd tegenover contract kop 3.1 (tweede uitzondering, C12-3); ADR-0023 besluit 5 zegt hoe
+  ze nu te lezen zijn. De tekst van dit ADR blijft verder staan.
 - **Bron:** `docs/platform-v2/PLATFORM_CONTRACTEN.md` (`contracts 1.3`), koppen "1. Vaste keuzes (van de gebruiker)",
   "3.1 Uitgangspunten", "3.2 Overzicht enrollment (eigen nieuwe diensten)", "3.10 Credentials van andere apps" en
   "9. Manifeststandaard (B08-001, eigenaar `appstore-en-fork`)"; [ADR-0002](ADR-0002-manifeststandaard-v1.md) besluit 4;
