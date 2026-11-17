@@ -1,4 +1,4 @@
-"""Integratietests tegen echte PostgreSQL (database ``appstore_test_<pid>``) met een gesimuleerde Hub."""
+"""Integratietests tegen echte PostgreSQL (database ``appstore_test_<pid>_<willekeurig>``) met een gesimuleerde Hub."""
 
 from __future__ import annotations
 
@@ -27,13 +27,16 @@ from tests.fakehub import FakeHub
 ADMIN_URL = os.environ.get("APPSTORE_TEST_DATABASE_URL", "postgresql+psycopg://postgres@127.0.0.1:5432/postgres")
 
 
+def _database_name() -> str:
+    return f"appstore_test_{os.getpid()}_{uuid.uuid4().hex}"
+
+
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
-    name = f"appstore_test_{os.getpid()}"
+    name = _database_name()
     admin = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as conn:
-            conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
             conn.execute(text(f'CREATE DATABASE "{name}"'))
     except Exception as exc:  # pragma: no cover
         # in CI (of met APPSTORE_REQUIRE_DB=1) is een ontbrekende database een fout, nooit een stille 'skip'
@@ -41,12 +44,14 @@ def database_url() -> Iterator[str]:
             pytest.fail(f"PostgreSQL vereist maar niet beschikbaar: {exc}")
         pytest.skip(f"PostgreSQL niet beschikbaar: {exc}")
     url = make_url(ADMIN_URL).set(database=name).render_as_string(hide_password=False)
-    migrations.upgrade(url)
-    yield url
-    with admin.connect() as conn:
-        conn.execute(text(f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{name}'"))
-        conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
-    admin.dispose()
+    try:
+        migrations.upgrade(url)
+        yield url
+    finally:
+        with admin.connect() as conn:
+            conn.execute(text(f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{name}'"))
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+        admin.dispose()
 
 
 @pytest.fixture(autouse=True)
