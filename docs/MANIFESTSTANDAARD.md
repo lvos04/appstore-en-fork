@@ -172,7 +172,10 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
   `{"path": "values.envs[2].value", "parameter": "api_key", "ref": "vault://app/<app_id>/api_key"}`. Zonder payload is de
   lijst leeg. De `preview_hash` gaat over de payload met de verwijzingen. `path` is eenduidig: elk deel tussen de punten
   is een sleutel zonder `.`, `[` of `]`, `[i]` is een lijstpositie.
-- **Alleen de vertaling maakt een verwijzing:** een letterlijke `vault://`-tekst (ook in een sleutel) in de `values` of
+- **Alleen de vertaling maakt een verwijzing:** een manifest bevat nooit een kluisverwijzing (contract §3.1). Sinds
+  ADR-0023 weigert ook `jl-manifest validate` elke tekst in het manifest en elke sleutel in `values` waarin `vault://`
+  staat (hoofdletterongevoelig) → `vault_ref_not_allowed` (fout; het pad, nooit de tekst; bij een sleutel het pad van
+  het object). De vertaling toetst het opnieuw: een letterlijke `vault://`-tekst (ook in een sleutel) in de `values` of
   in `custom_app.env[].value` → `vault_ref_not_allowed` (geen payload); de controle vergelijkt de echte plek, niet het
   pad als tekst. Een gewone parameter met `vault://` in de waarde → `parameter_value_invalid`.
 - **Opnieuw getoetst na het invullen (ADR-0016 W3, ADR-0018):** de vertaling toetst de ingevulde omgevingswaarden
@@ -496,7 +499,7 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `parameter_value_invalid` | Waarde voor een parameter is ongeldig. |
 | `parameter_value_unknown` | Waarde opgegeven voor een onbekende parameter. |
 | `parameter_value_not_allowed` | Deze parameter mag niet via de installatie worden meegegeven. |
-| `vault_ref_not_allowed` | Vault-verwijzing die de vertaling niet zelf heeft gemaakt (alleen voor een geheime parameter). |
+| `vault_ref_not_allowed` | Kluisverwijzing (`vault://`) in het manifest (validator, ADR-0023), of een vault-verwijzing in de vertaling die zij niet zelf heeft gemaakt (alleen voor een geheime parameter). |
 | `manifest_invalid` | Het manifest is niet geldig; vertalen is geweigerd. |
 | `vertaling_te_groot` | De vertaling is te groot: meer dan 256 plekken krijgen een parameterwaarde, of de payload is groter dan 256 KiB (canonieke JSON); geweigerd, zonder payload (fail-closed, ADR-0019). |
 | `ix_app_version_unknown` | Versie van de TrueNAS-catalogusapp ix-app is onbekend. |

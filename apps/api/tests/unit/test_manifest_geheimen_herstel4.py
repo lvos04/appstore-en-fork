@@ -528,7 +528,14 @@ def test_vault_ref_finding_hides_a_key_that_can_carry_a_value() -> None:
     """R-TECH-11 (4): ``vault_ref_not_allowed`` onder een sleutel met een ``=`` toont ``<verborgen>`` in het pad, voor
     een waarde en voor een sleutel met een vault-verwijzing."""
     data = met_waarden({"a=b": {"x": "vault://app/andere-app/sleutel", "y": {"vault://app/andere-app/z": 1}}})
-    result = translate(_model(data), CATALOG_PARAMS, CATALOG_TARGET, trusted_app_id=True)
+    # ADR-0023 besluit 3: de validator weigert het al, met dezelfde verborgen paden
+    report, _ = validate_data(copy.deepcopy(data))
+    assert sorted(f.path for f in report.findings if f.code == "vault_ref_not_allowed") == [
+        f"values.voorbeeld.{VERBORGEN}.x",
+        f"values.voorbeeld.{VERBORGEN}.y",
+    ]
+    assert "a=b" not in report.model_dump_json() and "andere-app" not in report.model_dump_json()
+    result = translate(Manifest.model_validate(data), CATALOG_PARAMS, CATALOG_TARGET, trusted_app_id=True)
     assert result.payload is None and result.vault_refs == []
     paden = sorted(f.path for f in result.blocking() if f.code == "vault_ref_not_allowed")
     assert paden == [f"values.voorbeeld.{VERBORGEN}.x", f"values.voorbeeld.{VERBORGEN}.y"]

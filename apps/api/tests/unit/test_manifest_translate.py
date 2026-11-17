@@ -32,6 +32,14 @@ def _model(data: dict[str, Any]) -> Manifest:
     return model
 
 
+def _vault_model(data: dict[str, Any]) -> Manifest:
+    """ADR-0023 besluit 3: de validator weigert een letterlijke kluisverwijzing al (``vault_ref_not_allowed``); de
+    vertaling toetst hetzelfde zelf (verdediging in de diepte) en wordt hier buiten de validator om getoetst."""
+    report, model = validate_data(data)
+    assert model is None and "vault_ref_not_allowed" in report.codes(), report.as_text()
+    return Manifest.model_validate(data)
+
+
 def _flatten(value: Any, path: str = "") -> list[tuple[str, Any]]:
     out: list[tuple[str, Any]] = []
     if isinstance(value, dict):
@@ -495,7 +503,7 @@ def test_literal_vault_reference_in_catalog_values_is_refused(literal: str) -> N
     een andere app laten invullen."""
     data = _catalog_13()
     data["values"]["voorbeeld"]["andere"] = literal
-    result = translate(_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET, trusted_app_id=True)
+    result = translate(_vault_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET, trusted_app_id=True)
     assert result.payload is None and not result.ready_for_install and result.vault_refs == []
     refused = [f for f in result.findings if f.code == "vault_ref_not_allowed"]
     assert [f.path for f in refused] == ["values.voorbeeld.andere"]
@@ -504,7 +512,7 @@ def test_literal_vault_reference_in_catalog_values_is_refused(literal: str) -> N
 
 def test_literal_vault_reference_in_custom_app_env_is_refused(custom_manifest: dict[str, Any]) -> None:
     custom_manifest["custom_app"]["env"].append({"name": "OTHER", "value": "vault://app/andere-app/db_password"})
-    result = translate(_model(custom_manifest), PARAMS, TARGET)
+    result = translate(_vault_model(custom_manifest), PARAMS, TARGET)
     assert result.payload is None and result.vault_refs == []
     assert [f.path for f in result.findings if f.code == "vault_ref_not_allowed"] == ["values.envs[2].value"]
 
@@ -619,7 +627,7 @@ def test_literal_reference_under_a_key_that_looks_like_the_marked_path_is_refuse
     listed["values"]["lijst"] = [{"param": "db_password"}]
     listed["values"]["lijst[0]"] = OWN_REF
     for data in (flat, listed):
-        result = translate(_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET, trusted_app_id=True)
+        result = translate(_vault_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET, trusted_app_id=True)
         assert result.payload is None and not result.ready_for_install and result.vault_refs == []
         assert [f.code for f in result.blocking()] == ["vault_ref_not_allowed"]
 
@@ -668,7 +676,7 @@ def test_vault_reference_in_a_key_is_refused() -> None:
     """R-MANIFEST-1: ook een sleutel met ``vault://`` in de values wordt geweigerd, zonder de sleutel te herhalen."""
     data = _catalog_13()
     data["values"]["voorbeeld"]["vault://app/andere-app/x"] = "y"
-    result = translate(_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET, trusted_app_id=True)
+    result = translate(_vault_model(data), CATALOG_13_PARAMS, CATALOG_13_TARGET, trusted_app_id=True)
     assert result.payload is None and result.vault_refs == []
     (refused,) = [f for f in result.findings if f.code == "vault_ref_not_allowed"]
     assert refused.path == "values.voorbeeld" and "andere-app" not in refused.message

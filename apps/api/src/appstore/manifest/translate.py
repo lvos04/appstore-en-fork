@@ -37,6 +37,7 @@ from .rules import (
     _HUB_RESERVED,
     _INTERPOLATION,
     _PLACEHOLDER,
+    _VAULT_MARK,
     PathNode,
     Place,
     catalog_value_findings,
@@ -89,8 +90,6 @@ _TZ = re.compile(r"^(UTC|Etc/UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+){1,2})$")
 #: Vorm van een vault-verwijzing (contract 1.3 §3.1 a; CONTRACT_1.3_CONFORMITEIT, rij C1.3-ASM-18). Gelijk aan
 #: ``VAULT_REF_RE`` van de policy van de Hub (ai-server-manager ``apps/policy/src/asm_policy/params.py``).
 _VAULT_REF = re.compile(r"vault://app/(?P<app_id>[a-z0-9][a-z0-9_-]{0,63})/(?P<parameter>[a-z0-9_.-]{1,128})")
-#: Alles wat op een vault-verwijzing lijkt (ook met hoofdletters of midden in een tekst).
-_VAULT_MARK = re.compile(r"vault://", re.IGNORECASE)
 #: Alleen deze parametertypen kunnen een verwijzing (tekst) krijgen; de Hub maakt tekstgeheimen (§3.1 a).
 _VAULT_REF_TYPES = ("string", "secret_ref")
 #: Een sleutel met een van deze tekens maakt het pad van een verwijzing dubbelzinnig (``a.b`` naast ``a`` → ``b``).

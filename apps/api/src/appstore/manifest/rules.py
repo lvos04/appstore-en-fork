@@ -666,6 +666,9 @@ _PATH_STOP = re.compile(r"[= \t\n]")
 _ANY_WS = re.compile(r"\s*")
 _JSON_WS = re.compile(r"[ \t\n\r]*")
 _IFS_CHARS = " \t\n"
+#: Alles wat op een vault-verwijzing lijkt (ook met hoofdletters of midden in een tekst). Een manifest bevat er nooit
+#: een (contract §3.1, ADR-0023 besluit 3); alleen de vertaling zet een verwijzing.
+_VAULT_MARK = re.compile(r"vault://", re.IGNORECASE)
 #: ADR-0018: een tekst die langer is dan dit, toetsen T1 en T2 niet; hij is fail-closed een fout.
 MAX_SECRET_TEXT = 64 * 1024
 #: ADR-0018: hoe een sleutel in een pad of melding staat als hij een ``=`` heeft of als T1/T2 hem herkent.
@@ -1172,11 +1175,23 @@ def _text_children(
             yield value[idx], PathNode(node, idx, True), depth + 1, in_values
 
 
+def vault_ref_finding(path: str, *, key: bool) -> Finding:
+    """ADR-0023 besluit 3: een kluisverwijzing in het manifest; de melding noemt het pad, nooit de tekst."""
+    return error(
+        "vault_ref_not_allowed",
+        path,
+        ("In een sleutel van dit object staat" if key else "Hier staat")
+        + " een kluisverwijzing (vault://). Een manifest noemt alleen de parameter; de verwijzing zet alleen de "
+        "vertaling, voor een geheime parameter van de eigen app (contract §3.1, ADR-0023).",
+    )
+
+
 def secret_text_findings(data: Any) -> list[Finding]:
     """Tekstregels T1 en T2 van ADR-0016 W2 (``account_gegevens_verboden``) op de ruwe gegevens, net als
     ``validator._compose_findings``, zodat de melding er ook is als het schema al faalt. Een sleutel valt onder de
     naamregels; alleen op een sleutel in ``values`` geldt daarnaast T1 (ADR-0018). Elke tekst geeft hooguit één
-    melding, met het pad en de reden, nooit de waarde. ADR-0021: de doorloop houdt per niveau één rij kinderen bij en
+    melding, met het pad en de reden, nooit de waarde. ADR-0023 besluit 3: een kluisverwijzing in een tekst of in een
+    sleutel in ``values`` geeft daarnaast ``vault_ref_not_allowed``. ADR-0021: de doorloop houdt per niveau één rij kinderen bij en
     per knooppunt alleen de ouder en het segment (:class:`PathNode`); het getoonde pad wordt pas bij een melding
     gemaakt. Geheugen en rekentijd hangen zo niet af van de lengte van het pad keer het aantal knooppunten."""
     out: list[Finding] = []
@@ -1193,6 +1208,8 @@ def secret_text_findings(data: Any) -> list[Finding]:
                 for key in value:
                     if reasons := secret_text_reasons(str(key), settings=False):
                         out.append(secret_text_finding(shown_path(PathNode(node, str(key))), reasons))
+                    if _VAULT_MARK.search(str(key)):
+                        out.append(vault_ref_finding(shown_path(node), key=True))
             stack.append(_text_children(value, node, depth, in_values))
         elif isinstance(value, list):
             stack.append(_text_children(value, node, depth, in_values))
@@ -1201,6 +1218,8 @@ def secret_text_findings(data: Any) -> list[Finding]:
             settings = in_values or (depth in (3, 4) and _settings_place(path_segments(node)))
             if reasons := secret_text_reasons(value, settings=settings):
                 out.append(secret_text_finding(shown_path(node), reasons))
+            if _VAULT_MARK.search(value):
+                out.append(vault_ref_finding(shown_path(node), key=False))
     return out
 
 

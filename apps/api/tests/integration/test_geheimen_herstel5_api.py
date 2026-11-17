@@ -128,10 +128,11 @@ def test_validate_as_viewer_with_manifest_yaml_stops_at_the_maximum(linked: Test
     assert len(resp.content) < ANTWOORD_GRENS, len(resp.content)
 
 
-def test_preview_as_operator_stops_the_translation_at_the_maximum(linked: TestClient, hub: FakeHub) -> None:
-    """``POST /catalog/v1/preview`` (rol operator) met een geldig los manifest zonder geheimen en 3000 letterlijke
-    vault-teksten in ``values``: de vertaling geeft de eerste 1000 meldingen en ``te_veel_meldingen``, zonder payload
-    en zonder ``preview_hash``; installeren is geweigerd."""
+def test_preview_as_operator_stops_at_the_maximum(linked: TestClient, hub: FakeHub) -> None:
+    """``POST /catalog/v1/preview`` (rol operator) met een los manifest zonder geheimen en 3000 letterlijke
+    vault-teksten in ``values``. Sinds ADR-0023 (besluit 3) weigert de validator het al: het rapport geeft de eerste
+    1000 meldingen (``vault_ref_not_allowed``) en ``te_veel_meldingen``, zonder vertaling; installeren is geweigerd. De
+    grens van de vertaling zelf toetst ``tests/unit/test_manifest_geheimen_herstel5.py`` buiten de validator om."""
     data = load_fixture("valid-catalog.manifest.yaml")
     data["values"]["l"] = ["vault://x"] * 3000
     body = {
@@ -143,11 +144,10 @@ def test_preview_as_operator_stops_the_translation_at_the_maximum(linked: TestCl
         resp = linked.post("/catalog/v1/preview", json=body, headers=hub.auth(roles=["operator"]))
     assert resp.status_code == 200, resp.text[:300]
     out = resp.json()
-    assert out["validation"]["valid"] is True
-    assert out["ready_for_install"] is False and out["executed"] is False
-    translation = out["translation"]
-    _begrensd(translation["findings"])
-    assert translation["payload"] is None and translation["preview_hash"] is None and translation["vault_refs"] == []
+    assert out["validation"]["valid"] is False
+    _begrensd(out["validation"]["findings"])
+    assert {f["code"] for f in out["validation"]["findings"]} == {"vault_ref_not_allowed", "te_veel_meldingen"}
+    assert out["ready_for_install"] is False and out["executed"] is False and out["translation"] is None
     assert len(resp.content) < ANTWOORD_GRENS, len(resp.content)
 
 

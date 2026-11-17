@@ -239,8 +239,9 @@ def test_schema_errors_are_capped_before_they_are_sorted() -> None:
 
 
 def _vault_teksten(aantal: int) -> dict[str, Any]:
-    """Een GELDIG catalogusmanifest zonder geheimen met ``aantal`` letterlijke vault-teksten in ``values``: de
-    validator laat het door, de vertaling geeft per tekst ``vault_ref_not_allowed``."""
+    """Een catalogusmanifest zonder geheimen met ``aantal`` letterlijke vault-teksten in ``values``. Sinds ADR-0023
+    (besluit 3) weigert de validator het al; de vertaling geeft per tekst ``vault_ref_not_allowed`` en wordt hier buiten
+    de validator om getoetst (``Manifest.model_validate``)."""
     data = load_fixture("valid-catalog.manifest.yaml")
     data["values"]["l"] = ["vault://x"] * aantal
     return data
@@ -253,20 +254,23 @@ def test_translate_stops_at_the_maximum_without_payload() -> None:
     """De vertaling is een eigen rapport (ook in ``POST /catalog/v1/preview``, ook met een los manifest): 3000
     vault-teksten gaven op 3227fe1 3001 meldingen; nu de eerste 1000 en ``te_veel_meldingen``, zonder payload,
     ``preview_hash`` of ``vault_refs``."""
-    model = _model(_vault_teksten(3000))
+    report, model = validate_data(_vault_teksten(3000))
+    assert model is None
+    _begrensd(report.findings)  # ADR-0023: ook de validator weigert, binnen dezelfde grens
+    model = Manifest.model_validate(_vault_teksten(3000))
     for vertrouwd in (True, False):
         result = translate(model, _FOTO_PARAMS, CATALOG_TARGET, trusted_app_id=vertrouwd)
         _begrensd(result.findings)
         assert result.payload is None and result.preview_hash is None and result.vault_refs == []
         assert not result.ready_for_install and result.compatibility.status in ("ok", "unknown")
-    klein = translate(_model(_vault_teksten(3)), _FOTO_PARAMS, CATALOG_TARGET, trusted_app_id=True)
+    klein = translate(Manifest.model_validate(_vault_teksten(3)), _FOTO_PARAMS, CATALOG_TARGET, trusted_app_id=True)
     assert TOO_MANY not in {f.code for f in klein.findings}
     assert [f.code for f in klein.blocking()] == ["vault_ref_not_allowed"] * 3
 
 
 def test_translate_peak_stays_small_with_many_findings_under_deep_keys() -> None:
     """Dezelfde vertaling onder de 28 geneste sleutels, zo veel vault-teksten als in 256 KiB past: piek onder 50 MiB."""
-    model = _model(_vol("l", "vault://x", fixture="valid-catalog.manifest.yaml"))
+    model = Manifest.model_validate(_vol("l", "vault://x", fixture="valid-catalog.manifest.yaml"))  # ADR-0023
     piek, result = _piek_mib(lambda: translate(model, _FOTO_PARAMS, CATALOG_TARGET, trusted_app_id=True))
     _begrensd(result.findings)
     assert result.payload is None

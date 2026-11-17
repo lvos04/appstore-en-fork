@@ -17,8 +17,10 @@ import copy
 from typing import Any
 
 import pytest
+import yaml
 
 from appstore.manifest import validate_data
+from appstore.manifest.cli import main
 from appstore.manifest.findings import Finding, Severity
 from appstore.manifest.model import Manifest
 from appstore.manifest.rules import ACCOUNT_WORDS, LOGIN_NAMES, is_account_name
@@ -238,3 +240,61 @@ def test_variant_b_is_only_for_custom_app_envs() -> None:
     report, model = validate_data(met_waarden({"x": {"param": "db_password"}}))
     assert report.valid and model is not None, report.as_text()
     assert _secret_codes(report.findings, "values.voorbeeld.x") == ["secret_in_form"]
+
+
+# ---------------------------------------------------------------------------------------------- besluit 3 (vault)
+VREEMD = "vault://app/andere-app/geheim"
+
+
+def _met_ref(plek: str) -> tuple[dict[str, Any], str]:
+    if plek == "env":
+        return met_env({"name": "OTHER", "value": VREEMD}), "custom_app.env[2].value"
+    if plek == "waarde":
+        return met_waarden({"x": VREEMD}), "values.voorbeeld.x"
+    if plek == "midden_in_tekst":
+        return met_waarden({"x": f"zie {VREEMD.upper()} hier"}), "values.voorbeeld.x"
+    if plek == "sleutel":
+        return met_waarden({VREEMD: "y"}), "values.voorbeeld"
+    if plek == "default":
+        data = custom_basis()
+        data["parameters"].append(
+            {
+                "name": "x",
+                "type": "string",
+                "source": "default",
+                "default": VREEMD,
+                "required": True,
+                "description_nl": "Proef.",
+            }
+        )
+        return data, "parameters[6].default"
+    data = custom_basis()
+    data["description_nl"] = f"Beschrijving met {VREEMD} erin."
+    return data, "description_nl"
+
+
+@pytest.mark.parametrize("plek", ["env", "waarde", "midden_in_tekst", "sleutel", "default", "beschrijving"])
+def test_a_vault_reference_in_a_manifest_is_refused_by_validate(plek: str) -> None:
+    """Proef p5 van de review van S-P2-C12: eerst "GELDIG" bij ``validate --strict``; nu ``vault_ref_not_allowed``,
+    met het pad en zonder de verwijzing."""
+    data, pad = _met_ref(plek)
+    report, model = validate_data(data)
+    assert not report.valid and model is None, report.as_text()
+    assert ("vault_ref_not_allowed", Severity.ERROR) in {(f.code, f.severity) for f in report.findings if f.path == pad}
+    uitvoer = report.as_text() + report.model_dump_json()
+    assert "andere-app" not in uitvoer and "ANDERE-APP" not in uitvoer
+
+
+def test_a_vault_reference_is_refused_also_when_the_schema_fails() -> None:
+    data, pad = _met_ref("waarde")
+    data["onbekend_veld"] = 1
+    report, _ = validate_data(data)
+    assert {"unknown_field", "vault_ref_not_allowed"} <= set(report.codes())
+    assert ("vault_ref_not_allowed", pad) in {(f.code, f.path) for f in report.findings}
+
+
+def test_the_cli_refuses_a_vault_reference(tmp_path: Any) -> None:
+    data, _ = _met_ref("env")
+    pad = tmp_path / "p5.manifest.yaml"
+    pad.write_text(yaml.safe_dump(data), encoding="utf-8")
+    assert main(["validate", "--strict", str(pad)]) == 1
