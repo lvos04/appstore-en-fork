@@ -849,6 +849,14 @@ def filled_value_findings(
                     hub_at,
                     filled_by.get(at),
                 )
+                if finding is None and ref_at.get(at) == env.get("value") and not is_secret_name(env["name"]):
+                    # ADR-0023 besluit 4 (variant B): een geheim van de Hub alleen onder een geheimnaam
+                    finding = error(
+                        "secret_in_form",
+                        finding_path(at),
+                        "Een geheim dat de Hub maakt, staat hier onder een naam die geen geheimnaam is; dan is niet "
+                        "uit te sluiten dat het de aanmelding van een beheerder of dienstaccount is (ADR-0023).",
+                    )
                 out.extend([finding] if finding is not None else [])
         return out
     first: list[tuple[Any, PathNode, Place]] = [(values, PathNode(None, "values"), Place())]

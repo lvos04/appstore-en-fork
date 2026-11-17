@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from appstore.manifest import validate_data
-from appstore.manifest.findings import Finding
+from appstore.manifest.findings import Finding, Severity
 from appstore.manifest.model import Manifest
 from appstore.manifest.rules import ACCOUNT_WORDS, LOGIN_NAMES, is_account_name
 from appstore.manifest.translate import Target, translate
@@ -199,3 +199,42 @@ def test_no_test_value_in_the_reports() -> None:
         report, _ = validate_data(data)
         for waarde in TESTWAARDEN:
             assert waarde not in report.model_dump_json()
+
+
+# ---------------------------------------------------------------------------------------------- besluit 4 (variant B)
+@pytest.mark.parametrize("naam", ["APP_KEY", "X", "X_WAARDE", "PHPMYADMIN_DB", "GEDEELD"])
+def test_a_hub_secret_in_a_custom_app_env_under_a_name_that_is_no_secret_name_is_refused(naam: str) -> None:
+    """Fail-closed: de validator kan onder zo'n naam niet uitsluiten dat het een aanmelding is. Fout ``secret_in_form``,
+    ook met ``accepted_findings``; de vertaling geeft dan geen payload."""
+    data = met_env({"name": naam, "value_from": {"param": "toegang"}}, hub_geheim("toegang"), accepted=ACC)
+    report, model = validate_data(data)
+    assert not report.valid and model is None, report.as_text()
+    errors = [f for f in report.findings if f.severity is Severity.ERROR]
+    assert _secret_codes(errors, ENV) == ["secret_in_form"]
+
+    def change(d: dict[str, Any]) -> None:
+        d["parameters"].append(hub_geheim("toegang"))
+        d["custom_app"]["env"].append({"name": naam, "value_from": {"param": "toegang"}})
+
+    result = translate(_forged(custom_basis(), change), PARAMS, TARGET, trusted_app_id=True)
+    assert result.payload is None and result.vault_refs == [] and not result.ready_for_install
+    assert ("values.envs[2].value", "secret_in_form") in _blocking(result)
+
+
+@pytest.mark.parametrize("naam", ["APP_API_KEY", "APP_SECRET", "DB_PASSWORD", "WEBPASSWORD", "apiKeyValue"])
+def test_a_hub_secret_under_a_secret_name_without_account_word_keeps_the_acceptable_warning(naam: str) -> None:
+    """De tweede uitzondering van §3.1 blijft onder een geheimnaam die geen accountnaam is (``WEBPASSWORD`` ook: die
+    aanmeldnaam staat niet in de lijst; daar blijft de review de controle)."""
+    data = met_env({"name": naam, "value_from": {"param": "toegang"}}, hub_geheim("toegang"), accepted=ACC)
+    report, model = validate_data(data)
+    assert report.valid and report.strict_valid and model is not None, report.as_text()
+    assert [(f.code, f.accepted) for f in report.findings if f.path == ENV] == [("secret_in_form", True)]
+    result = translate(model, PARAMS, TARGET, trusted_app_id=True)
+    assert result.ready_for_install and [v.path for v in result.vault_refs] == ["values.envs[2].value"]
+
+
+def test_variant_b_is_only_for_custom_app_envs() -> None:
+    """In de ``values`` van een catalogusapp (§3.1 a) legt de app van iX de sleutels vast; daar verandert niets."""
+    report, model = validate_data(met_waarden({"x": {"param": "db_password"}}))
+    assert report.valid and model is not None, report.as_text()
+    assert _secret_codes(report.findings, "values.voorbeeld.x") == ["secret_in_form"]

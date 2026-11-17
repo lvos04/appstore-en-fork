@@ -89,7 +89,9 @@ Oude manifesten blijven tijdens de overgang **geldig**; de nieuwe eisen geven wa
 - **Geheimen die de Hub maakt:** `source: generated` + `secret: true` (contract 1.3 §3.1 a). De waarde staat nooit in
   het manifest (geen `default` of `example`, anders `secret_literal_forbidden`); in het formulier of de `values` geeft
   dat de **waarschuwing** `secret_in_form` (te accepteren) in plaats van een fout, behalve onder de naam van een
-  beheerder of dienstaccount (dan de fout `account_gegevens_verboden`, zie hieronder). `secret: true` met een andere
+  beheerder of dienstaccount (dan de fout `account_gegevens_verboden`, zie hieronder) en, in een omgevingsvariabele
+  van een Custom App, onder een naam die geen geheimnaam is (dan de fout `secret_in_form`; ADR-0023, zie "Geheimen in
+  de vertaling"). `secret: true` met een andere
   `source` dan `generated`/`secret` → `secret_param_invalid`. De vertaling zet voor een geheim alleen een verwijzing
   naar de vault van de Hub, nooit een waarde (P2, C1.3-ASF-14; zie "Geheimen in de vertaling" hieronder).
 - **`accepted_findings: [{code, reden_nl}]`** — alleen `backup_db_export_none`, `secret_in_form` (alleen bij een
@@ -153,8 +155,12 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
   geen autorisatie: de Hub bindt de `app_id` aan de catalogusversie en aan het doel van de actie.
 - **Waar:** in de `values` van een catalogusapp, en in een omgevingsvariabele van een Custom App
   (`custom_app.env[].value_from`) alleen naar een geheim dat de Hub maakt (`source: generated` + `secret: true`;
-  besluit van de gebruiker van 2026-11-11, dat afwijkt van contract 1.3 §3.1 "nooit geheimen in het Custom
-  App-formulier" — de contractwijziging volgt in ai-server-manager). Een geheim op een plek die een getypte waarde vraagt
+  besluit van de gebruiker van 2026-11-11; sinds de aanvulling C-12 de tweede uitzondering van contract 1.3 §3.1,
+  nooit voor een beheerder of dienstaccount). Daar alleen onder een geheimnaam die geen accountnaam is
+  (`APP_API_KEY`, `DB_PASSWORD`): onder een andere naam (`APP_KEY`, `X`) kan de validator niet uitsluiten dat het een
+  aanmelding is, en dat is de fout `secret_in_form` in `validate` en in de vertaling, zonder payload (fail-closed,
+  ADR-0023 besluit 4). In de `values` van een catalogusapp geldt die regel niet: daar legt de app van iX de sleutels
+  vast. Een geheim op een plek die een getypte waarde vraagt
   (hostpoort, hostpad, tijdzone, GPU) of van een ander type dan `string`/`secret_ref` blijft geweigerd
   (`parameter_value_not_allowed`), net als een verwijzing onder een sleutel met `.`, `[` of `]` (dubbelzinnig pad) of
   onder een sleutel `image`, `images`, `TZ`, `notes` of `labels` (openbaar of gelogd).
@@ -261,12 +267,13 @@ Naamregels (per plek één code):
 | Code | Wanneer |
 |---|---|
 | `secret_literal_forbidden` (N1) | een geheimplek met een letterlijke waarde, ook een accountplek: `custom_app.env[].value`, een sleutel of naam/waarde-paar in `values` (ook wat eronder ligt), en een parameter met een geheimnaam zonder geheimmarkering met een `default` of `example` |
-| `secret_in_form` (N2, fout) | een geheimplek die geen accountplek is en haar waarde krijgt via `value_from` of `{param}` van een gewone parameter, of een gewone parameter met een geheimnaam die ergens wordt gebruikt |
+| `secret_in_form` (N2, fout) | een geheimplek die geen accountplek is en haar waarde krijgt via `value_from` of `{param}` van een gewone parameter, of een gewone parameter met een geheimnaam die ergens wordt gebruikt; en (ADR-0023, variant B) een omgevingsvariabele van een Custom App waarvan de naam geen geheimnaam is en die een geheim krijgt dat de Hub maakt |
 | `account_gegevens_verboden` (N3, fout, niet te accepteren) | een accountplek (ook via een voorouder) die haar waarde krijgt via `value_from` of `{param}`, van welke parameter ook, dus ook van een geheim dat de Hub maakt, of een gebruikte parameter met een accountnaam, of een parameter met een geheimnaam (ADR-0019) of met een geheimmarkering (ADR-0021) op een plek waarvan de eigen naam of een voorouder een accountwoord heeft, of een gebruikte parameter met een geheimmarkering en een accountwoord als heel naamdeel in de eigen naam, op elke plek (ADR-0022); op dat pad geen `secret_in_form` |
 
 Geen fout: een geheimnaam die geen accountnaam is, naar een geheim dat de Hub maakt (zoals `db_password` en
 `secret_key` van Authentik) zonder accountwoord als heel naamdeel in de naam van de parameter, op een plek zonder
-accountwoord in de eigen naam of een voorouder; daar blijft de te accepteren waarschuwing `secret_in_form`.
+accountwoord in de eigen naam of een voorouder; daar blijft de te accepteren waarschuwing `secret_in_form`. In een
+omgevingsvariabele van een Custom App moet die naam bovendien een geheimnaam zijn (ADR-0023, variant B).
 
 Tekstregels (`account_gegevens_verboden`, fout; een sleutel valt onder de naamregels, alleen een sleutel in `values`
 krijgt daarnaast T1):

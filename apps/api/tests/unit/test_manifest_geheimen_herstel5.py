@@ -446,7 +446,7 @@ def test_marked_secret_without_an_account_word_as_a_whole_part_keeps_the_accepta
     result = translate(model, CATALOG_PARAMS, CATALOG_TARGET, trusted_app_id=True)
     assert result.ready_for_install, [f.as_text() for f in result.blocking()]
     assert pad in {v.path for v in result.vault_refs}
-    env, _ = _met_plek("custom", "X", hub_geheim(naam))
+    env, _ = _met_plek("custom", "X_TOKEN", hub_geheim(naam))  # ADR-0023 variant B: een geheimnaam
     report, model = validate_data(env)
     assert report.valid and report.strict_valid and model is not None, report.as_text()
     result = translate(model, PARAMS, TARGET, trusted_app_id=True)

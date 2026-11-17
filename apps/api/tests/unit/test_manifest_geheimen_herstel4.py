@@ -457,7 +457,9 @@ def test_marked_secret_on_a_place_with_an_account_word_gives_no_payload(
 def test_marked_secret_without_an_account_word_keeps_the_acceptable_warning() -> None:
     """Bewakers bij R-TECH-9: een accountwoord als deel van een woord telt niet (``phpmyadmin.x``,
     ``PHPMYADMIN_DB``), en een gewone parameter onder ``admin`` is geen geheim. Die blijven geldig; het Hub-geheim gaat
-    als vault-verwijzing mee met de te accepteren waarschuwing ``secret_in_form``."""
+    als vault-verwijzing mee met de te accepteren waarschuwing ``secret_in_form``. ADR-0023 (variant B): onder
+    ``PHPMYADMIN_DB`` (geen geheimnaam) is dat sindsdien de fout ``secret_in_form``, maar nog steeds geen
+    ``account_gegevens_verboden``: het accountwoord binnen een woord telt daar nog altijd niet."""
     data = met_waarden({"phpmyadmin": {"x": {"param": "begin_waarde"}}}, hub_geheim("begin_waarde"))
     report, model = validate_data(data)
     assert report.valid and report.strict_valid and model is not None, report.as_text()
@@ -469,9 +471,7 @@ def test_marked_secret_without_an_account_word_keeps_the_acceptable_warning() ->
     env = met_env(
         {"name": "PHPMYADMIN_DB", "value_from": {"param": "begin_waarde"}}, hub_geheim("begin_waarde"), accepted=ACC
     )
-    report, model = validate_data(env)
-    assert report.valid and report.strict_valid and model is not None, report.as_text()
-    assert _at(report.findings, ENV) == ["secret_in_form"]
+    assert _at(_refused(env), ENV) == ["secret_in_form"]
 
     gewoon = met_waarden({"admin": {"x": {"param": "w"}}}, wizard("w"))
     report, model = validate_data(gewoon)
@@ -507,15 +507,21 @@ def test_account_word_before_the_last_capital_of_a_run_counts(voorouder: str) ->
 
 def test_account_word_inside_a_longer_word_does_not_count_for_an_env_name() -> None:
     """R-TECH-11 (3): ook bij een omgevingsvariabele telt een accountwoord alleen als heel naamdeel:
-    ``PHPMYADMIN_DB`` naar een Hub-geheim met een geheimnaam blijft geldig met de te accepteren waarschuwing."""
+    ``PHPMYADMIN_DB`` naar een Hub-geheim met een geheimnaam geeft geen ``account_gegevens_verboden``. Sinds ADR-0023
+    (variant B) is het wel de fout ``secret_in_form``, want ``PHPMYADMIN_DB`` is geen geheimnaam; ook de vertaling
+    geeft dan ``secret_in_form`` en geen payload."""
     data = met_env(
         {"name": "PHPMYADMIN_DB", "value_from": {"param": "db_password"}}, hub_geheim("db_password"), accepted=ACC
     )
-    report, model = validate_data(data)
-    assert report.valid and report.strict_valid and model is not None, report.as_text()
-    assert _at(report.findings, ENV) == ["secret_in_form"]
-    result = translate(model, PARAMS, TARGET, trusted_app_id=True)
-    assert result.ready_for_install and [v.path for v in result.vault_refs] == ["values.envs[2].value"]
+    assert _at(_refused(data), ENV) == ["secret_in_form"]
+
+    def change(d: dict[str, Any]) -> None:
+        d["parameters"].append(hub_geheim("db_password"))
+        d["custom_app"]["env"].append({"name": "PHPMYADMIN_DB", "value_from": {"param": "db_password"}})
+
+    result = translate(_forged(custom_basis(), change), PARAMS, TARGET, trusted_app_id=True)
+    assert result.payload is None and result.vault_refs == []
+    assert [(f.path, f.code) for f in result.blocking()] == [("values.envs[2].value", "secret_in_form")]
 
 
 def test_vault_ref_finding_hides_a_key_that_can_carry_a_value() -> None:

@@ -1742,6 +1742,15 @@ class _Rules:
                 elif param is not None and marked_account_param(param):
                     # ADR-0022: een geheimmarkering met een accountwoord in de eigen naam, ook onder een gewone naam (X)
                     self.account_value(path, shown_key(param.name))
+                elif param is not None and param.hub_generated_secret and not is_secret_name(env.name):
+                    # ADR-0023 besluit 4 (variant B): alleen onder een geheimnaam kan de validator een aanmelding uitsluiten
+                    self.err(
+                        "secret_in_form",
+                        path,
+                        f"{env.name} krijgt een geheim dat de Hub maakt ({param.name!r}), maar de naam is geen geheimnaam; "
+                        "dan kan de validator niet uitsluiten dat het de aanmelding van een beheerder of dienstaccount is "
+                        "(fail-closed, ADR-0023). Kies een naam met een geheimwoord en zonder accountwoord.",
+                    )
                 elif param is not None and param.hub_generated_secret:
                     # contract 1.3 §3.1 a: de Hub maakt het geheim (vault) en geeft het alleen in de values mee
                     self.warn(

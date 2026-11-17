@@ -185,7 +185,7 @@ def test_secret_name_parameter_with_default_or_example_is_refused() -> None:
     with_example["parameters"].append({**wizard("api_token"), "example": PROEFSLEUTEL})
     errors = _errors(with_example)
     assert _at(errors, f"parameters[{EXTRA_PARAM}].example") == ["secret_literal_forbidden"]
-    marked = met_env({"name": "X_WAARDE", "value_from": {"param": "api_token"}}, hub_geheim("api_token"))
+    marked = met_env({"name": "X_TOKEN", "value_from": {"param": "api_token"}}, hub_geheim("api_token"))
     report, _ = validate_data(marked)
     assert report.valid, report.as_text()
 
@@ -414,7 +414,7 @@ def test_translation_refuses_a_secret_name_from_a_plain_parameter() -> None:
 
 
 def test_translation_refuses_an_account_name_even_as_vault_reference() -> None:
-    data = met_env({"name": "APP_KEY", "value_from": {"param": "api_key"}}, hub_geheim("api_key"))
+    data = met_env({"name": "APP_API_KEY", "value_from": {"param": "api_key"}}, hub_geheim("api_key"))
 
     def change(d: dict[str, Any]) -> None:
         d["custom_app"]["env"][2]["name"] = "ADMIN_PASSWORD"

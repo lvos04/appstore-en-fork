@@ -215,7 +215,7 @@ def test_preview_of_a_loose_manifest_never_gets_a_vault_reference(linked: TestCl
             "description_nl": "Geheim dat de Hub maakt.",
         }
     )
-    data["custom_app"]["env"].append({"name": "EXFIL", "value_from": {"param": "db_password"}})
+    data["custom_app"]["env"].append({"name": "EXFIL_TOKEN", "value_from": {"param": "db_password"}})
     inventory = {"observed_at": datetime.now(UTC).isoformat(), "source": "simulator", "apps": []}
     resp = linked.post(
         "/catalog/v1/preview",

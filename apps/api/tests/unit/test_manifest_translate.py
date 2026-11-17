@@ -295,7 +295,7 @@ def _with_env_secret(custom_manifest: dict[str, Any], **param: Any) -> dict[str,
             **param,
         }
     )
-    custom_manifest["custom_app"]["env"].append({"name": "APP_KEY", "value_from": {"param": "api_key"}})
+    custom_manifest["custom_app"]["env"].append({"name": "APP_API_KEY", "value_from": {"param": "api_key"}})
     return custom_manifest
 
 
@@ -421,7 +421,7 @@ def test_custom_app_env_hub_secret_becomes_only_a_vault_reference(custom_manifes
     )
     assert result.ready_for_install, [f.as_text() for f in result.findings]
     assert result.payload is not None
-    assert result.payload.values["envs"][2] == {"name": "APP_KEY", "value": "vault://app/voorbeeld-web/api_key"}
+    assert result.payload.values["envs"][2] == {"name": "APP_API_KEY", "value": "vault://app/voorbeeld-web/api_key"}
     assert [r.model_dump() for r in result.vault_refs] == [
         {"path": "values.envs[2].value", "parameter": "api_key", "ref": "vault://app/voorbeeld-web/api_key"}
     ]

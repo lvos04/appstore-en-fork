@@ -106,7 +106,7 @@ def test_generated_secret_in_custom_app_env_is_a_warning_not_an_error() -> None:
             "description_nl": "Sleutel die de Hub maakt.",
         }
     )
-    data["custom_app"]["env"].append({"name": "APP_KEY", "value_from": {"param": "api_key"}})
+    data["custom_app"]["env"].append({"name": "APP_API_KEY", "value_from": {"param": "api_key"}})
     report, _ = validate_data(data)
     assert report.valid and report.codes() == ["secret_in_form"]
     data["accepted_findings"] = [{"code": "secret_in_form", "reden_nl": "De Hub maakt deze sleutel in zijn vault."}]
