@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -245,6 +246,37 @@ def test_checklist_rules_reject_wrong_documents(change: Any, code: str) -> None:
     change(data)
     report = validate_checklist_data(data)
     assert not report.valid and code in report.codes(), report.as_text()
+
+
+def _validatie_tabel_paragraaf_11() -> set[str]:
+    """De waarden uit de tabel van contract §11 (zoals ``test_evidence_contract``)."""
+    text = (REPO_ROOT / "docs" / "platform-v2" / "PLATFORM_CONTRACTEN.md").read_text(encoding="utf-8")
+    begin = text.index("## 11. Bewijs en Excel")
+    waarden: set[str] = set()
+    for raw in text[begin : text.index("## 12.", begin)].splitlines():
+        if raw.strip().startswith("| `"):
+            waarden.update(re.findall(r"`([^`]+)`", raw.strip().split(" | ")[0]))
+    return waarden
+
+
+def test_checklist_validatie_nu_follows_the_table_of_section_11() -> None:
+    """B-6 (contract C12-6, ADR-0023 besluit 6): elke waarde van ``validatie_nu`` staat in de tabel van §11, en de
+    ``NIET GEVALIDEERD (…)``-waarden zijn precies die van §11, dus ook ``NIET GEVALIDEERD (echte Hub)``. Een waarde
+    erbij in het contract zonder de lijst (of omgekeerd) is rood."""
+    lijst = set(checklist_schema()["$defs"]["Stap"]["properties"]["validatie_nu"]["items"]["enum"])
+    tabel = _validatie_tabel_paragraaf_11()
+    assert lijst <= tabel, sorted(lijst - tabel)
+    niet = {w for w in tabel if w.startswith("NIET GEVALIDEERD (")}
+    assert len(niet) >= 5 and {w for w in lijst if w.startswith("NIET GEVALIDEERD (")} == niet
+    assert "NIET GEVALIDEERD (echte Hub)" in lijst
+
+
+def test_checklist_step_may_carry_not_validated_real_hub() -> None:
+    data = yaml.safe_load(CHECKLIST.read_text(encoding="utf-8"))
+    data["stappen"][0]["validatie_nu"] = ["Sim-getest", "NIET GEVALIDEERD (echte Hub)"]
+    assert validate_checklist_data(data).valid
+    data["stappen"][0]["validatie_nu"] = ["Sim-getest", "NIET GEVALIDEERD (echte Hubs)"]
+    assert "invalid_value" in validate_checklist_data(data).codes()
 
 
 def test_checklist_schema_copies_are_byte_equal() -> None:

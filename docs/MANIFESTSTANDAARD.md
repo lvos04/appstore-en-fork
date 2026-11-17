@@ -114,7 +114,8 @@ Oude manifesten blijven tijdens de overgang **geldig**; de nieuwe eisen geven wa
   met een eigen schema ([`schemas/checklist-v1.schema.json`](../schemas/checklist-v1.schema.json), afgeleid van het
   formaat van jelly-leon-platform, met `kind` en `install` erbij). Valideren met `jl-manifest checklist`; de validator
   van manifest v1 weigert hem (`checklist_not_installable`). Regels: stap-ID's horen bij het document, besluiten van een
-  stap staan in `besluiten`, alleen-lezen TrueNAS-methoden, geen voorbeeldwaarden.
+  stap staan in `besluiten`, alleen-lezen TrueNAS-methoden, geen voorbeeldwaarden. `validatie_nu` van een stap volgt
+  de vaste lijst van contract §11, dus sinds de aanvulling C-12 ook `NIET GEVALIDEERD (echte Hub)` (ADR-0023).
 
 ## Beheerder en dienstaccount (`accounts`; aanvulling C-12, ADR-0016 W1, ADR-0023)
 
