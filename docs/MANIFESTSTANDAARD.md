@@ -49,6 +49,7 @@ de laagste rol 126 112 meldingen: een antwoord van 281 MiB en ongeveer 2 GiB ext
 | `healthcheck` | `http` (pad + poort), `tcp` (poort) of `builtin` (HEALTHCHECK van de image) + `monitor` (monitorplan) |
 | `backup` | `db_export.method` (`pg_dump, sqlite_backup, app_native, stopped_snapshot, none`), `snapshot_datasets`, `rpo`/`rto` (ISO-8601 of parameter, D16) |
 | `accepted_findings`, `post_install_checks` | geaccepteerde waarschuwingen uit de vaste lijst; taken voor de beheerder na installatie (contract 1.3) |
+| `accounts` | optioneel (aanvulling C-12): welke beheerder of welk dienstaccount er moet komen, met rol, aanmaakwijze, afnemer, rechten en controle; nooit een waarde (zie "Beheerder en dienstaccount (`accounts`)") |
 | `dependencies`, `sso`, `risk` (≥ R2), `upgrade` (`migrations`, `tag_only_rollback_safe`), `decisions_required` (D01–D18), `docs`, `validation_status`, `compatibility`, `provenance` | beheer en herkomst |
 
 ## Wijzigingen in contract 1.2 (overgang, ADR-0008)
@@ -112,6 +113,31 @@ Oude manifesten blijven tijdens de overgang **geldig**; de nieuwe eisen geven wa
   formaat van jelly-leon-platform, met `kind` en `install` erbij). Valideren met `jl-manifest checklist`; de validator
   van manifest v1 weigert hem (`checklist_not_installable`). Regels: stap-ID's horen bij het document, besluiten van een
   stap staan in `besluiten`, alleen-lezen TrueNAS-methoden, geen voorbeeldwaarden.
+
+## Beheerder en dienstaccount (`accounts`; aanvulling C-12, ADR-0016 W1, ADR-0023)
+
+Een account gaat nooit door het manifest, het formulier of Git (ADR-0016, besluit 1). Het optionele veld `accounts`
+(hooguit 16) verklaart alleen wat er moet bestaan; het heeft geen veld voor een waarde. Ontbreekt het, dan verandert er
+niets. De vertaling zet niets uit `accounts` in de payload, en het staat niet in de eisen van de catalogus
+(`requirements`) of in een antwoordmodel; het volledige manifest blijft leesbaar via `GET /catalog/v1/versions/{id}`.
+
+| Veld | Verplicht | Regel |
+|---|---|---|
+| `id` | ja | naam (`^[a-z][a-z0-9_-]{0,62}$`), uniek binnen `accounts` (anders `duplicate_name`); een naam, geen aanmeldgegeven |
+| `rol` | ja | `beheerder` of `dienst`; hooguit één `beheerder` |
+| `aanmaak` | ja | `eerste_gebruik` (alleen bij `beheerder`: de beheerder zet zijn wachtwoord in het eerste-gebruik-venster van de app) of `door_beheerder` (alleen bij `dienst`: de beheerder maakt het account na zijn eigen aanmelding en voert de aanmelding één keer in bij de afnemer) |
+| `afnemer` | alleen bij `dienst` | de vaste `app_id` van de app die de aanmelding gebruikt, niet de eigen `app_id` |
+| `rechten` | alleen bij `dienst` | 1 tot 32 unieke rechten in de app (`^[a-z][a-z0-9_.:-]{0,63}$`; geen `*`); een beheerder heeft geen lijst |
+| `controle` | ja | een `id` uit `post_install_checks` (meer accounts mogen dezelfde noemen); haar `beschrijving_nl` zegt wat de beheerder doet, bij een `dienst` met de afnemer en een verwijzing naar `rechten`, en is hooguit 500 tekens |
+| `beschrijving_nl` | ja | 10 tot 1000 tekens: wat de beheerder doet, zonder waarde |
+
+Codes (fout, nooit te accepteren): `account_ongeldig` (een combinatie die de tabel verbiedt, een tweede `beheerder`,
+`afnemer` gelijk aan de eigen `app_id`, of een `dienst` zonder `beheerder` in hetzelfde manifest),
+`account_controle_ontbreekt` (`controle` noemt geen bestaande controle) en `account_controle_te_lang` (de controle die
+een account noemt, heeft een beschrijving van meer dan 500 tekens: de grens van het beleid van de Hub; dezelfde tekst
+bij een controle zonder account blijft geldig). Een melding of schemafout onder `accounts` noemt het pad, nooit de
+waarde. Het wachtwoord of token van een dienstaccount is minstens 32 willekeurige tekens uit een generator; dat toetst
+de afnemer, niet deze validator (contract §9).
 
 ## Geheimen in de vertaling (C1.3-ASF-14, ADR-0015)
 
@@ -428,6 +454,9 @@ iets mee geïnstalleerd of herinstalleerd. Een app via *Install via YAML* (compo
 | `reserved_env` | HUB_* is gereserveerd voor het koppelen en geen parameter of omgevingsvariabele. |
 | `interpolation_forbidden` | Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan. |
 | `decision_not_listed` | Besluit ontbreekt in decisions_required. |
+| `account_ongeldig` | Account met een combinatie die de standaard verbiedt: `dienst` zonder `afnemer` of `rechten`, `beheerder` met `afnemer` of `rechten`, de verkeerde `aanmaak`, een tweede `beheerder`, `afnemer` gelijk aan de eigen `app_id`, of een `dienst` zonder `beheerder` (ADR-0016 W1). |
+| `account_controle_ontbreekt` | Account noemt een controle die niet in `post_install_checks` staat. |
+| `account_controle_te_lang` | Controle die een account noemt, heeft een beschrijving van meer dan 500 tekens (de grens van het beleid van de Hub). |
 | `risk_below_policy_minimum` | Risicoklasse lager dan het platformminimum. |
 | `tag_only_rollback_with_migrations` | Tag-only rollback met databasemigraties is onveilig. |
 | `backup_unknown_dataset` | Back-up verwijst naar onbekende opslag. |

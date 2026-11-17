@@ -203,6 +203,10 @@ CODES: dict[str, str] = {
     "reserved_env": "HUB_* is gereserveerd voor het koppelen en geen parameter of omgevingsvariabele.",
     "interpolation_forbidden": "Variabele-interpolatie ($VAR, ${…}, $(…)) is niet toegestaan.",
     "decision_not_listed": "Besluit ontbreekt in decisions_required.",
+    # accounts (aanvulling C-12, ADR-0016 W1, ADR-0023)
+    "account_ongeldig": "Account met een combinatie die de standaard verbiedt (rol, aanmaak, afnemer, rechten, beheerder).",
+    "account_controle_ontbreekt": "Account noemt een controle die niet in post_install_checks staat.",
+    "account_controle_te_lang": "Controle die een account noemt, heeft een beschrijving van meer dan 500 tekens.",
     # beheer
     "risk_below_policy_minimum": "Risicoklasse lager dan het platformminimum.",
     "tag_only_rollback_with_migrations": "Tag-only rollback met databasemigraties is onveilig.",

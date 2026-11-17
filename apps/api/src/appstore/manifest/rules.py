@@ -1217,6 +1217,9 @@ def recognised_secret(data: Any, segments: tuple[str | int, ...], instance: Any)
 #: contract 1.3 §9: restrisico dat een upstream-image als Custom App in ``privilege_reason`` noemt
 NNP_RISK_NL = "zonder no-new-privileges kan een setuid-programma binnen de container root worden"
 _HUB_RESERVED = re.compile(r"^hub_", re.I)
+#: ADR-0016 W1: de grens van ``validate_manifest_meta`` in het beleid van de Hub voor de tekst van een controle die een
+#: account noemt (het schema laat 1000 toe). Vervalt zodra contract en beleid dezelfde grens hebben.
+ACCOUNT_CHECK_MAX = 500
 
 
 class _Rules:
@@ -1318,6 +1321,7 @@ class _Rules:
         self.risk_and_upgrade()
         self.meta()
         self.contract_1_3()
+        self.accounts()
         for name, param in self.params.items():
             if name not in self.used_params and param.decision is None:
                 self.warn("parameter_unused", f"parameters[{name}]", f"Parameter {name!r} wordt nergens gebruikt.")
@@ -1393,6 +1397,66 @@ class _Rules:
                 "Geen monitorplan: geef healthcheck.monitor {pad, verwachte_status, timeout_s, interval_s}; de Hub maakt "
                 "er een monitorplan van dat de beheerder in Uptime Kuma overneemt.",
             )
+
+    # -- accounts (aanvulling C-12, ADR-0016 W1, ADR-0023 besluit 1)
+    def accounts(self) -> None:
+        """W1: de combinaties uit de tabel van ADR-0016, de genoemde controle en haar lengte. Een melding noemt het pad en
+        de regel, nooit de waarde van een veld (V-094)."""
+        accounts = self.m.accounts
+        checks = {c.id: idx for idx, c in enumerate(self.m.post_install_checks)}
+        has_admin = any(a.rol == "beheerder" for a in accounts)
+        ids: set[str] = set()
+        admin_seen = False
+        too_long: set[int] = set()
+        for idx, a in enumerate(accounts):
+            path = f"accounts[{idx}]"
+            bad: list[tuple[str, str]] = []
+            if a.id in ids:
+                self.err("duplicate_name", f"{path}.id", "Deze account-id staat al eerder in accounts.")
+            ids.add(a.id)
+            if a.rol == "beheerder":
+                if admin_seen:
+                    bad.append(("rol", "een manifest heeft hooguit één beheerder"))
+                admin_seen = True
+                if a.aanmaak != "eerste_gebruik":
+                    bad.append(("aanmaak", "een beheerder ontstaat alleen met aanmaak 'eerste_gebruik'"))
+                bad += [
+                    (f, f"een beheerder heeft geen {f} (hij heeft alle rechten)")
+                    for f in ("afnemer", "rechten")
+                    if getattr(a, f) is not None
+                ]
+            else:
+                if a.aanmaak != "door_beheerder":
+                    bad.append(("aanmaak", "een dienstaccount ontstaat alleen met aanmaak 'door_beheerder'"))
+                if a.afnemer is None:
+                    bad.append(
+                        ("afnemer", "een dienstaccount noemt zijn afnemer (de app_id die de aanmelding gebruikt)")
+                    )
+                elif a.afnemer == self.m.app_id:
+                    bad.append(("afnemer", "de afnemer is de app zelf; een dienstaccount is voor een andere app"))
+                if a.rechten is None:
+                    bad.append(("rechten", "een dienstaccount noemt zijn rechten in de app"))
+                if not has_admin:
+                    bad.append(("rol", "een dienstaccount vraagt een beheerder in hetzelfde manifest die het maakt"))
+            for field, why in bad:
+                self.err("account_ongeldig", f"{path}.{field}", f"Ongeldig account: {why} (ADR-0016 W1).")
+            check = checks.get(a.controle)
+            if check is None:
+                self.err(
+                    "account_controle_ontbreekt",
+                    f"{path}.controle",
+                    "Het account noemt een controle die niet in post_install_checks staat; die controle zegt de "
+                    "beheerder wat hij doet en houdt de app tot de bevestiging 'niet gezond' (ADR-0016 W1).",
+                )
+            elif len(self.m.post_install_checks[check].beschrijving_nl) > ACCOUNT_CHECK_MAX and check not in too_long:
+                too_long.add(check)
+                self.err(
+                    "account_controle_te_lang",
+                    f"post_install_checks[{check}].beschrijving_nl",
+                    f"Deze controle wordt door een account genoemd en haar beschrijving is langer dan {ACCOUNT_CHECK_MAX} "
+                    "tekens; het beleid van de Hub weigert dat (ADR-0016 W1). Verwijs naar de rechten in het manifest "
+                    "in plaats van ze op te sommen.",
+                )
 
     def accept(self) -> None:
         """``accepted_findings`` (contract 1.3 §9): alleen waarschuwingen uit de vaste lijst, alleen waar de voorwaarde
