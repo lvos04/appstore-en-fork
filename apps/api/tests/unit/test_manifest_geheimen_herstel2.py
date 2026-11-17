@@ -289,11 +289,12 @@ def test_no_name_rule_for_a_boolean_parameter() -> None:
     """R-TECH-7 (uitleg a: een geheim is nooit een boolean): de naamregels voor de naam van een parameter gelden niet
     voor type boolean. De regels voor de plek zelf blijven gelden."""
     gevallen = [
-        met_waarden({"login_aan": {"param": "password_login"}}, _bool_param("password_login")),
+        met_waarden({"aanmelden_aan": {"param": "password_login"}}, _bool_param("password_login")),
         met_waarden({"reset": {"param": "root_password_reset"}}, _bool_param("root_password_reset")),
         met_waarden({"admin": {"login": {"param": "password_login"}}}, _bool_param("password_login")),
         met_env(
-            {"name": "LOGIN_AAN", "value_from": {"param": "root_password_reset"}}, _bool_param("root_password_reset")
+            {"name": "AANMELDEN_AAN", "value_from": {"param": "root_password_reset"}},
+            _bool_param("root_password_reset"),
         ),
     ]
     for data in gevallen:
@@ -304,8 +305,11 @@ def test_no_name_rule_for_a_boolean_parameter() -> None:
         else:
             result = translate(model, dict(CATALOG_PARAMS, **params), CATALOG_TARGET, trusted_app_id=True)
         assert result.ready_for_install, [f.as_text() for f in result.blocking()]
-    tekst = met_waarden({"login_aan": {"param": "password_login"}}, wizard("password_login"))
-    assert _secret_codes(_refused(tekst), "values.voorbeeld.login_aan") == ["secret_in_form"]
+    tekst = met_waarden({"aanmelden_aan": {"param": "password_aan"}}, wizard("password_aan"))
+    assert _secret_codes(_refused(tekst), "values.voorbeeld.aanmelden_aan") == ["secret_in_form"]
+    # ADR-0023: LOGIN is een accountwoord, dus dezelfde naam als tekstparameter is een accountnaam (N3)
+    tekst = met_waarden({"aanmelden_aan": {"param": "password_login"}}, wizard("password_login"))
+    assert _secret_codes(_refused(tekst), "values.voorbeeld.aanmelden_aan") == [CODE]
     plek = met_waarden({"admin_password": {"param": "aan"}}, _bool_param("aan"))
     assert _secret_codes(_refused(plek), "values.voorbeeld.admin_password") == [CODE]
 

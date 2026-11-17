@@ -500,16 +500,16 @@ def test_the_sentence_about_secret_in_form_matches_the_code() -> None:
     """R-MANIFEST-6: elders is ``secret_in_form`` alleen te accepteren bij een geheim dat de Hub maakt. Een gemarkeerd
     geheim dat de Hub niet maakt (``source: secret``) geeft in ``values`` een NIET te accepteren waarschuwing en in een
     omgevingsvariabele een fout; de standaard zegt dat nu ook."""
-    geheim = {**_geheim("init_value", source="secret")}
+    geheim = {**_geheim("begin_waarde", source="secret")}
     data, pad = _met_plek("catalogus", "x", geheim)
     report, _ = validate_data(data)
     assert report.valid and not report.strict_valid
     assert [(f.code, f.severity, f.accepted) for f in report.findings if f.path == pad] == [
         ("secret_in_form", Severity.WARNING, False)
     ]
-    env, _ = _met_plek("custom", "INIT_VALUE", geheim)
+    env, _ = _met_plek("custom", "BEGIN_WAARDE", geheim)
     assert _at(_refused(env), ENV) == ["secret_in_form"]
-    hub, pad = _met_plek("catalogus", "x", hub_geheim("init_value"))
+    hub, pad = _met_plek("catalogus", "x", hub_geheim("begin_waarde"))
     report, _ = validate_data(hub)
     assert [f.accepted for f in report.findings if f.path == pad] == [True]
     doc = " ".join((REPO_ROOT / "docs" / "MANIFESTSTANDAARD.md").read_text(encoding="utf-8").split())

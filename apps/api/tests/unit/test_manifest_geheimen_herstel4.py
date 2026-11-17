@@ -321,7 +321,7 @@ def test_long_keys_with_many_findings_stay_fast() -> None:
 # ---------------------------------------------------------------------------------------------- R-VEILIG-9, R-TECH-10
 _BOOLEAN_GEHEIMEN = [
     ("B1", "catalogus", "init", _geheim("admin_password", "boolean")),
-    ("B2", "custom", "INIT_VALUE", _geheim("admin_password", "boolean")),
+    ("B2", "custom", "BEGIN_WAARDE", _geheim("admin_password", "boolean")),
     ("B3", "catalogus", "init", _geheim("beheer_wachtwoord", "boolean")),
     ("B4", "catalogus", "init", _geheim("root_token", "boolean", "secret")),
     ("B5", "catalogus", "admin.x", _geheim("db_password2", "boolean")),
@@ -383,7 +383,7 @@ def test_boolean_without_a_secret_marking_keeps_the_exception() -> None:
     """Bewaker (keuze van de regisseur): een gewone boolean uit de wizard met een geheimwoord in de naam
     (``password_login``) blijft geldig en wordt vertaald."""
     param = {**wizard("password_login", "boolean"), "required": False}
-    model = _model(met_waarden({"login_aan": {"param": "password_login"}}, param))
+    model = _model(met_waarden({"aanmelden_aan": {"param": "password_login"}}, param))
     result = translate(model, dict(CATALOG_PARAMS, password_login=True), CATALOG_TARGET, trusted_app_id=True)
     assert result.ready_for_install, [f.as_text() for f in result.blocking()]
 
@@ -391,13 +391,13 @@ def test_boolean_without_a_secret_marking_keeps_the_exception() -> None:
 # ---------------------------------------------------------------------------------------------- R-TECH-9
 _GEMARKEERD_OP_ACCOUNTPLEK = [
     ("env ADMIN_PW <- admin_pw", "custom", "ADMIN_PW", hub_geheim("admin_pw")),
-    ("env ADMIN <- init_value", "custom", "ADMIN", hub_geheim("init_value")),
+    ("env ADMIN <- begin_waarde", "custom", "ADMIN", hub_geheim("begin_waarde")),
     ("env BEHEERDER_PW <- beheerder_pw", "custom", "BEHEERDER_PW", hub_geheim("beheerder_pw")),
-    ("values admin.pw <- init_value", "catalogus", "admin.pw", hub_geheim("init_value")),
-    ("values admin <- init_value", "catalogus", "admin", hub_geheim("init_value")),
-    ("values administrator.login <- init_value", "catalogus", "administrator.login", hub_geheim("init_value")),
-    ("values setup.sleutel <- init_value", "catalogus", "setup.sleutel", hub_geheim("init_value")),
-    ("values admin.pw <- secret_ref", "catalogus", "admin.pw", {**_geheim("init_value", "secret_ref", "secret")}),
+    ("values admin.pw <- begin_waarde", "catalogus", "admin.pw", hub_geheim("begin_waarde")),
+    ("values admin <- begin_waarde", "catalogus", "admin", hub_geheim("begin_waarde")),
+    ("values administrator.login <- begin_waarde", "catalogus", "administrator.login", hub_geheim("begin_waarde")),
+    ("values setup.sleutel <- begin_waarde", "catalogus", "setup.sleutel", hub_geheim("begin_waarde")),
+    ("values admin.pw <- secret_ref", "catalogus", "admin.pw", {**_geheim("begin_waarde", "secret_ref", "secret")}),
 ]
 
 
@@ -420,8 +420,8 @@ def test_marked_secret_on_a_place_with_an_account_word_is_account_data(
 
 def test_marked_secret_in_a_name_value_pair_with_an_account_word() -> None:
     """Dezelfde regel bij een naam/waarde-paar in ``values`` (de naam staat onder ``name``)."""
-    extra = {"extra": [{"name": "ADMIN_PW", "value": {"param": "init_value"}}]}
-    fouten = _refused(met_waarden(extra, hub_geheim("init_value")))
+    extra = {"extra": [{"name": "ADMIN_PW", "value": {"param": "begin_waarde"}}]}
+    fouten = _refused(met_waarden(extra, hub_geheim("begin_waarde")))
     assert _secret_codes(fouten, "values.voorbeeld.extra[0].value") == [CODE]
 
 
@@ -458,7 +458,7 @@ def test_marked_secret_without_an_account_word_keeps_the_acceptable_warning() ->
     """Bewakers bij R-TECH-9: een accountwoord als deel van een woord telt niet (``phpmyadmin.x``,
     ``PHPMYADMIN_DB``), en een gewone parameter onder ``admin`` is geen geheim. Die blijven geldig; het Hub-geheim gaat
     als vault-verwijzing mee met de te accepteren waarschuwing ``secret_in_form``."""
-    data = met_waarden({"phpmyadmin": {"x": {"param": "init_value"}}}, hub_geheim("init_value"))
+    data = met_waarden({"phpmyadmin": {"x": {"param": "begin_waarde"}}}, hub_geheim("begin_waarde"))
     report, model = validate_data(data)
     assert report.valid and report.strict_valid and model is not None, report.as_text()
     assert _at(report.findings, "values.voorbeeld.phpmyadmin.x") == ["secret_in_form"]
@@ -467,7 +467,7 @@ def test_marked_secret_without_an_account_word_keeps_the_acceptable_warning() ->
     assert "values.voorbeeld.phpmyadmin.x" in {v.path for v in result.vault_refs}
 
     env = met_env(
-        {"name": "PHPMYADMIN_DB", "value_from": {"param": "init_value"}}, hub_geheim("init_value"), accepted=ACC
+        {"name": "PHPMYADMIN_DB", "value_from": {"param": "begin_waarde"}}, hub_geheim("begin_waarde"), accepted=ACC
     )
     report, model = validate_data(env)
     assert report.valid and report.strict_valid and model is not None, report.as_text()

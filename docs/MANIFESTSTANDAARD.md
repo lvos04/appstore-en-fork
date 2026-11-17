@@ -178,7 +178,7 @@ bewaart de waarde (contract 1.3 §3.1 a) en de executor vult haar in.
   ingevuld (`account_gegevens_verboden` of `secret_in_form`); een parameter met een geheimnaam op een plek waarvan de
   eigen naam of een voorouder een accountwoord heeft (`admin: {param: db_password}`, ook als vault-verwijzing) →
   `account_gegevens_verboden` (ADR-0019), net als een parameter met een geheimmarkering op zo'n plek (`admin.pw` naar
-  `init_value`; ADR-0021) en, op elke plek, een parameter met een geheimmarkering waarvan de eigen naam een accountwoord
+  `begin_waarde`; ADR-0021) en, op elke plek, een parameter met een geheimmarkering waarvan de eigen naam een accountwoord
   als heel naamdeel heeft (`x` of `X` naar `admin_pw`; ADR-0022); een `HUB_*`-naam die de vertaling niet zelf zette →
   `reserved_env`. Dan is er geen payload; de melding noemt het pad, nooit de waarde. Alleen de naam
   `HUB_ENROLLMENT_TOKEN` mag een geheim dragen (het eenmalige enrollment-token, contract 1.3 §3.1), en alleen als de
@@ -214,11 +214,15 @@ doet de grens van 1000 meldingen per rapport (ADR-0022, zie "Valideren").
   kies dan een andere naam).
 - **Accountnaam:** een geheimnaam waarin ook `BOOTSTRAP`, `DEFAULTUSER`, `DEFAULT_USER`, `ADMIN`, `ROOT`,
   `SUPERUSER`, `OWNER`, `INITIAL`, `SETUP`, `BEHEER`, `SERVICE_ACCOUNT`, `SERVICEACCOUNT` of `DIENST` staat, of
-  (ADR-0020) `ADMINISTRATOR`, `BEHEERDER`, `DIENSTACCOUNT`, `BEHEERACCOUNT`, `SUPERADMIN`, `ROOTUSER` of `ADMINUSER`
-  (vaste lijst), ergens in de naam (bij een sleutel met punten of `[n]` in het laatste deel, zoals bij Geheimnaam),
-  bijvoorbeeld `GOTIFY_DEFAULTUSER_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`, `ADMINISTRATOR_PASSWORD` of
-  `beheerwachtwoord`. De sleutel `phpmyadmin.password` (één sleutel met een punt) is dus geen accountnaam: het laatste
-  deel is `password` (ADR-0021); `phpmyadmin_password` is het wel.
+  (ADR-0020) `ADMINISTRATOR`, `BEHEERDER`, `DIENSTACCOUNT`, `BEHEERACCOUNT`, `SUPERADMIN`, `ROOTUSER` of `ADMINUSER`,
+  of (ADR-0023, contract §9 aanvulling C-12) `INIT`, `LOGIN` of `BASIC_AUTH` (vaste lijst), ergens in de naam (bij een
+  sleutel met punten of `[n]` in het laatste deel, zoals bij Geheimnaam), bijvoorbeeld `GOTIFY_DEFAULTUSER_PASS`,
+  `AUTHENTIK_BOOTSTRAP_PASSWORD`, `ADMINISTRATOR_PASSWORD`, `beheerwachtwoord`, `DOCKER_INFLUXDB_INIT_PASSWORD` of
+  `N8N_BASIC_AUTH_PASSWORD`. De sleutel `phpmyadmin.password` (één sleutel met een punt) is dus geen accountnaam: het
+  laatste deel is `password` (ADR-0021); `phpmyadmin_password` is het wel. Daarnaast zijn de aanmeldnamen
+  `JUPYTER_TOKEN` en `PASSWORD` een accountnaam als **hele naam** (hoofdletterongevoelig) van een omgevingsvariabele
+  (`custom_app.env[].name`, de `name` van een naam/waarde-paar) of van een parameter (ADR-0023). Een sleutel in
+  `values` (`db: {password: …}`) en het laatste deel van een naam met punten (`app.password`) tellen daarvoor niet.
 - **Accountwoord als heel naamdeel (ADR-0019):** in een voorouder-sleutel, en in een naam zonder geheimwoord (een
   sleutel, de `name` van een naam/waarde-paar of van een omgevingsvariabele), telt een woord uit die lijst alleen als
   heel naamdeel: de naam wordt gesplitst op elk teken dat geen letter of cijfer is (`_`, `-`, `.`, spatie), op een
@@ -240,7 +244,7 @@ doet de grens van 1000 meldingen per rapport (ADR-0022, zie "Valideren").
   gebruikt, geeft de fout `secret_in_form`. Op een plek waarvan de eigen naam of een voorouder een accountwoord heeft,
   telt ook de geheimmarkering van de parameter: een parameter met `secret: true`, `type: secret_ref` of `source:
   secret`/`generated` geeft daar `account_gegevens_verboden`, ook als zijn naam geen geheimwoord heeft (`admin_pw` naar
-  de omgevingsvariabele `ADMIN_PW`, `admin.pw` of `admin: {param: init_value}`; ADR-0021, binnen besluit C-12). En
+  de omgevingsvariabele `ADMIN_PW`, `admin.pw` of `admin: {param: begin_waarde}`; ADR-0021, binnen besluit C-12). En
   een parameter met een geheimmarkering waarvan de eigen naam een accountwoord als heel naamdeel heeft (`admin_pw`,
   `root_key`, `beheer_code`) telt als accountnaam: `account_gegevens_verboden` op elke plek, ook op een plek zonder
   accountwoord (`x: {param: admin_pw}`, de omgevingsvariabele `X` naar `admin_pw`; ADR-0022, binnen besluit C-12). Een
@@ -303,7 +307,9 @@ naamdeel in zijn eigen naam (ADR-0022), is dat een fout; elders `secret_in_form`
 dat de Hub maakt). De samenstellingen `administrator`, `beheerder`, `dienstaccount`, `beheeraccount`, `superadmin`, `rootuser` en
 `adminuser` staan sinds ADR-0020 in de lijst en tellen weer. De lijst blijft open voor nieuwe samenstellingen: een
 geheim van de Hub onder bijvoorbeeld `sysadmin`, `webadmin` of `rootaccount` geeft de te accepteren waarschuwing
-`secret_in_form`, tot de lijst met een nieuwe ADR is uitgebreid. Dan blijft de review van het manifest de controle
+`secret_in_form`, tot de lijst met een nieuwe ADR is uitgebreid. Hetzelfde geldt voor een aanmeldnaam die niet in de
+lijst staat maar wel een geheimnaam is (`WEBPASSWORD`, `basicAuthPassword`), en voor `PASSWORD` als sleutel in
+`values` of als laatste deel van een naam met punten (ADR-0023). Dan blijft de review van het manifest de controle
 (ADR-0016, "Wat dit ontwerp niet bewijst").
 
 Bekende valse treffers (fail-closed; de regels gelden voor elke app, niet alleen voor Node-RED). Kies dan een andere
@@ -319,6 +325,8 @@ naam, of buiten een geheimplek een parameter; er is geen uitzondering (ADR-0018,
   geheimplek (het object erft de naam, ADR-0018). `passwordPolicy: {minLength: 8}`, `tokenSettings: {ttl: 3600}` en
   `token: {ttl: 3600}` geven `secret_literal_forbidden`; een parameter helpt daar niet (een gewone parameter geeft
   `secret_in_form`). Dit is een geheimwoord, geen accountwoord, en het blijft strikt (ADR-0019);
+- `INIT` en `LOGIN` (ADR-0023) tellen, net als de andere woorden, ook binnen een woord van een geheimnaam:
+  `AFFINITY_TOKEN` en `CATALOGINDEX_SECRET` zijn accountnamen, net als `phpmyadmin_password`; kies dan een andere naam;
 - een accountwoord als heel naamdeel in een voorouder telt altijd (`setup`, `initialSync`, `admin_ui`): een geheim
   onder `setup.database.password`, `initialSync.api_key` of `admin_ui.db_password` is een accountplek
   (`account_gegevens_verboden`). Sinds ADR-0021 geldt dat ook voor een parameter met een geheimmarkering zonder

@@ -809,7 +809,8 @@ def _filled_children(
     if isinstance(value, dict):
         pair = name_value_pair(value)
         for key, sub in reversed(value.items()):
-            yield sub, PathNode(node, key), place.child(pair if pair is not None and key == "value" else str(key))
+            whole = pair is not None and key == "value"  # ADR-0023: de naam van een paar is een hele naam
+            yield sub, PathNode(node, key), place.child(pair if pair is not None and whole else str(key), whole=whole)
     else:
         for idx in range(len(value) - 1, -1, -1):
             yield value[idx], PathNode(node, idx, True), place
@@ -840,7 +841,7 @@ def filled_value_findings(
                 if _HUB_RESERVED.match(env["name"]) and at not in hub_at:
                     out.append(_reserved(finding_path(("values", "envs", idx, "name"))))
                 finding = _filled_place(
-                    Place().child(env["name"]),
+                    Place().child(env["name"], whole=True),
                     env.get("value"),
                     at,
                     partial(finding_path, at),

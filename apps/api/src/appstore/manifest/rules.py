@@ -572,8 +572,11 @@ def _param_refs(
             return
         pair_name = name_value_pair(value)
         for sub_key, sub in value.items():
-            name = pair_name if pair_name is not None and sub_key == "value" else str(sub_key)
-            yield from _param_refs(sub, f"{path}.{shown_key(str(sub_key))}", _nk(sub_key), place.child(name))
+            pair = pair_name is not None and sub_key == "value"
+            name = pair_name if pair and pair_name is not None else str(sub_key)
+            yield from _param_refs(
+                sub, f"{path}.{shown_key(str(sub_key))}", _nk(sub_key), place.child(name, whole=pair)
+            )
     elif isinstance(value, list):
         for idx, sub in enumerate(value):
             yield from _param_refs(sub, f"{path}[{idx}]", key, place)
@@ -600,7 +603,8 @@ SECRET_WORDS: tuple[str, ...] = (
 #: Woorden die van een geheimnaam een accountnaam maken (vaste lijst; een uitbreiding is een wijziging van de standaard).
 #: ADR-0020 (besluit BN-1 van de regisseur, aanvulling op ADR-0019) voegt de samenstellingen vanaf ``ADMINISTRATOR`` toe:
 #: als heel naamdeel in een voorouder tellen ze dan weer (``administrator``, ``beheerders``, ``rootuser``). De lijst
-#: blijft open: een nieuwe samenstelling (``sysadmin``) telt pas na een nieuwe uitbreiding.
+#: blijft open: een nieuwe samenstelling (``sysadmin``) telt pas na een nieuwe uitbreiding. ADR-0023 (contract §9,
+#: aanvulling C-12; besluit BN-490-1) voegt ``INIT``, ``LOGIN`` en ``BASIC_AUTH`` toe.
 ACCOUNT_WORDS: tuple[str, ...] = (
     "BOOTSTRAP",
     "DEFAULTUSER",
@@ -622,7 +626,14 @@ ACCOUNT_WORDS: tuple[str, ...] = (
     "SUPERADMIN",
     "ROOTUSER",
     "ADMINUSER",
+    "INIT",
+    "LOGIN",
+    "BASIC_AUTH",
 )
+#: ADR-0023 (contract §9, aanvulling C-12; besluit BN-490-1): aanmeldnamen van een app die alleen als **hele naam** een
+#: accountnaam zijn: de naam van een omgevingsvariabele, van een naam/waarde-paar of van een parameter. Een sleutel in
+#: ``values`` en het laatste deel van een naam met punten tellen niet (vervolgpunt; gemeten: 0 van 22 bestanden).
+LOGIN_NAMES: frozenset[str] = frozenset({"JUPYTER_TOKEN", "PASSWORD"})
 #: Sleutels van een gebruikerslijst: ``users`` (users.js van Node-RED) en de Nederlandse vorm.
 USER_LIST_KEYS = frozenset({"users", "gebruikers"})
 _KEY_PARTS = re.compile(r"[.\[\]]+")
@@ -763,8 +774,16 @@ def is_account_name(name: str) -> bool:
     (``ADMINISTRATOR_PASSWORD``, ``beheerwachtwoord``); bij een sleutel met punten of ``[n]`` in het laatste deel, zoals
     bij een geheimnaam (ADR-0021: ``phpmyadmin.password`` is geen accountnaam). ADR-0019 versmalt dit niet: alleen een
     accountwoord in een voorouder of in een naam zonder geheimwoord moet een heel naamdeel zijn
-    (:func:`has_account_word`)."""
-    return is_secret_name(name) and _account_word_inside(_last_part(name))
+    (:func:`has_account_word`). ADR-0023: ook een aanmeldnaam uit :data:`LOGIN_NAMES` als hele naam; roep dit alleen aan
+    met een hele naam (omgevingsvariabele of parameter), nooit met een sleutel in ``values``."""
+    return is_secret_name(name) and (_account_word_inside(_last_part(name)) or is_login_name(name))
+
+
+def is_login_name(name: str) -> bool:
+    """Is de hele naam een aanmeldnaam uit :data:`LOGIN_NAMES` (ADR-0023)? Hoofdletterongevoelig, zonder lengteverschil
+    (zoals :func:`is_secret_name`)."""
+    upper = name.upper()
+    return len(upper) == len(name) and upper in LOGIN_NAMES
 
 
 def param_name_counts(param: Parameter) -> bool:
@@ -782,7 +801,9 @@ class Place(NamedTuple):
     eigen naam of een voorouder een accountwoord als heel naamdeel heeft (``admin.password``, ``adminUser.password``,
     ``admin_password.x``; ADR-0019). De naam is een sleutel, of bij de ``value`` van een naam/waarde-paar de tekst
     onder ``name``. Elke naam wordt één keer getoetst (lineair, ook voor een naam die te lang is voor de cache;
-    ADR-0019); een naam van meer dan :data:`SHOWN_KEY_MAX` tekens wordt nooit getoond (ADR-0021)."""
+    ADR-0019); een naam van meer dan :data:`SHOWN_KEY_MAX` tekens wordt nooit getoond (ADR-0021). ``whole``: de naam is
+    de hele naam van een omgevingsvariabele (de ``name`` van een naam/waarde-paar of van ``values.envs``); dan telt ook
+    een aanmeldnaam uit :data:`LOGIN_NAMES` (ADR-0023), bij een sleutel niet."""
 
     #: de eigen naam van de plek
     name: str = ""
@@ -793,12 +814,15 @@ class Place(NamedTuple):
     #: ``secret_name`` zoals hij in een melding staat (:func:`shown_key`), één keer berekend
     shown_secret: str = ""
 
-    def child(self, name: str) -> Place:
+    def child(self, name: str, *, whole: bool = False) -> Place:
         secret = is_secret_name(name)
         return Place(
             name,
             name if secret else self.secret_name,
-            self.account_word or has_account_word(name) or (secret and _account_word_inside(_last_part(name))),
+            self.account_word
+            or has_account_word(name)
+            or (secret and _account_word_inside(_last_part(name)))
+            or (whole and is_login_name(name)),
             shown_key(name) if secret else self.shown_secret,
         )
 

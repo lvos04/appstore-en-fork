@@ -93,10 +93,15 @@ def _forged(data: dict[str, Any], change: Any) -> Manifest:
     return Manifest.model_validate(dumped)
 
 
+#: ADR-0023 (contract §9, aanvulling C-12; besluit BN-490-1): de drie woorden die stap S-P3-490 toevoegt.
+WOORDEN_ADR_0023 = ("INIT", "LOGIN", "BASIC_AUTH")
+
+
 def test_the_fixed_list_has_the_new_words_and_keeps_the_old_ones() -> None:
-    """ADR-0020: de lijst krijgt precies de zeven woorden van BN-1 erbij; niets van ADR-0016 verdwijnt."""
-    assert set(ACCOUNT_WORDS) == set(OUDE_WOORDEN) | set(NIEUWE_WOORDEN)
-    assert len(ACCOUNT_WORDS) == len(OUDE_WOORDEN) + len(NIEUWE_WOORDEN)
+    """ADR-0020: de lijst krijgt precies de zeven woorden van BN-1 erbij; niets van ADR-0016 verdwijnt. ADR-0023 voegt
+    er precies drie aan toe; verder verandert de lijst niet."""
+    assert set(ACCOUNT_WORDS) == set(OUDE_WOORDEN) | set(NIEUWE_WOORDEN) | set(WOORDEN_ADR_0023)
+    assert len(ACCOUNT_WORDS) == len(OUDE_WOORDEN) + len(NIEUWE_WOORDEN) + len(WOORDEN_ADR_0023)
 
 
 @pytest.mark.parametrize("voorouder", VOOROUDERS)
