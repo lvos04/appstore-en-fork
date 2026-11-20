@@ -21,17 +21,30 @@ cat > "$DOCKER_CONFIG/docker-credential-forgejo" <<'HELPER'
 exec jq -cn '{Username: env.REGISTRY_USER, Secret: env.REGISTRY_TOKEN}'
 HELPER
 chmod 700 "$DOCKER_CONFIG/docker-credential-forgejo"
-bouwer=$(docker buildx create --driver docker-container)
-trap 'docker buildx rm "$bouwer" >/dev/null; rm -rf "$DOCKER_CONFIG"' EXIT
-docker buildx build --builder "$bouwer" --file deploy/allinone/Dockerfile \
-    --build-arg "VERSION=$versie" --tag "$image:$versie" --push \
-    --provenance=mode=max --sbom=true --metadata-file "$RUNNER_TEMP/bouw.json" .
-digest=$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' "$RUNNER_TEMP/bouw.json")
+if docker buildx imagetools inspect "$image:$versie" --format '{{json .Manifest}}' \
+        > "$RUNNER_TEMP/versie.json" 2> "$RUNNER_TEMP/registerfout"; then
+    digest=$(jq -er '.digest | select(test("^sha256:[a-f0-9]{64}$"))' "$RUNNER_TEMP/versie.json")
+else
+    # Een storing of geweigerde toegang geeft geen toestemming om een versietag te overschrijven.
+    if ! grep -Eiq 'manifest unknown|name unknown|not found|404' "$RUNNER_TEMP/registerfout"; then
+        cat "$RUNNER_TEMP/registerfout" >&2
+        exit 1
+    fi
+    bouwer=$(docker buildx create --driver docker-container)
+    trap 'docker buildx rm "$bouwer" >/dev/null; rm -rf "$DOCKER_CONFIG"' EXIT
+    docker buildx build --builder "$bouwer" --file deploy/allinone/Dockerfile \
+        --build-arg "VERSION=$versie" --label "org.opencontainers.image.revision=$GITHUB_SHA" --tag "$image:$versie" \
+        --push --provenance=mode=max --sbom=true --metadata-file "$RUNNER_TEMP/bouw.json" .
+    digest=$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' "$RUNNER_TEMP/bouw.json")
+fi
+bouwtijd=$(docker buildx imagetools inspect "$image@$digest" --format '{{json .Image}}' |
+    jq -er --arg sha "$GITHUB_SHA" 'select(.config.Labels["org.opencontainers.image.revision"] == $sha) | .created')
 docker buildx imagetools inspect "$image@$digest" --format '{{json .SBOM}}' |
     jq -e '.SPDX | select(.spdxVersion | startswith("SPDX-"))' > release/sbom.spdx.json
-docker buildx imagetools inspect "$image@$digest" --format '{{json .Provenance}}' | jq -e '.SLSA.buildType' >/dev/null
-jq -n --arg repo "$image" --arg versie "$versie" --arg digest "$digest" --arg sha "$GITHUB_SHA" \
-  '{images:[{repository:$repo,tag:$versie,digest:$digest}],commit:$sha,built_at:(now | todateiso8601)}' > release/digests.json
+docker buildx imagetools inspect "$image@$digest" --format '{{json .Provenance}}' |
+    jq -e '.SLSA | .buildType // .buildDefinition.buildType' >/dev/null
+jq -n --arg repo "$image" --arg versie "$versie" --arg digest "$digest" --arg sha "$GITHUB_SHA" --arg tijd "$bouwtijd" \
+  '{images:[{repository:$repo,tag:$versie,digest:$digest}],commit:$sha,built_at:$tijd}' > release/digests.json
 
 # Het bouwbewijs hoort bij Forgejo. Alleen een in het installatieregister bevestigde digest mag naar de NAS.
 kandidaat="$RUNNER_TEMP/kandidaat.manifest.yaml"

@@ -27,7 +27,8 @@ for bestand in digests.json sbom.spdx.json appstore-en-fork.manifest.yaml; do
     asset=$(jq -r --arg naam "$bestand" '.assets[]? | select(.name==$naam) | .id' "$antwoord")
     url="https://git.medialeon.nl/leon/appstore-en-fork/releases/download/$tag/$bestand"
     if [[ -n "$asset" ]]; then
-        if api --fail --location "$url" -o "$RUNNER_TEMP/gelezen" && cmp -s "release/$bestand" "$RUNNER_TEMP/gelezen"; then
+        api --fail --location "$url" -o "$RUNNER_TEMP/gelezen"
+        if cmp -s "release/$bestand" "$RUNNER_TEMP/gelezen"; then
             continue
         fi
         [[ "$concept" == true ]]
