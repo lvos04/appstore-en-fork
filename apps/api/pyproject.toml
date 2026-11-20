@@ -26,6 +26,9 @@ dependencies = [
   "dulwich==1.2.21",
 ]
 
+[project.urls]
+Repository = "https://git.medialeon.nl/leon/appstore-en-fork"
+
 [project.optional-dependencies]
 dev = [
   "pytest==9.2.0",

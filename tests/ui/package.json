@@ -1,6 +1,11 @@
 {
   "name": "appstore-en-fork-statuspagina-ui",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://git.medialeon.nl/leon/appstore-en-fork.git",
+    "directory": "tests/ui"
+  },
   "description": "Statuspagina in Peil: axe-core, overloop (320 px), CSP, aanraakdoelen en schermafdrukken over de echte uitvoer van de app. Eerst: python tests/ui/genereer_toestanden.py",
   "scripts": {
     "test": "playwright test",

@@ -1,5 +1,7 @@
 # appstore-en-fork
 
+[![Linux-CI](https://git.medialeon.nl/leon/appstore-en-fork/badges/workflows/ci.yml/badge.svg?branch=ccr-c133d7a0-kuz1cv)](https://git.medialeon.nl/leon/appstore-en-fork/actions?workflow=ci.yml&branch=ccr-c133d7a0-kuz1cv)
+
 Appstore-catalogus van het **TrueNAS Home Platform V2**: B08-001 manifeststandaard, B08-002 bestaande apps importeren
 (inventaris via de Hub, herkennen zonder gokken, eigenaar bevestigen, beslisregister APP-01…APP-20 met
 decommission-plannen als voorbereiding) en later B08-005 forkbeheer. Zelfstandige API-dienst met alleen een kleine Nederlandse statuspagina; alle
@@ -40,6 +42,9 @@ via de TrueNAS-API, handmatig volgens [`deploy/truenas/CUSTOM_APP.md`](deploy/tr
 *Install via YAML*, `custom_compose_config` of docker compose. `deploy/dev/compose.yaml` is alleen voor ontwikkeling.
 
 ## Ontwikkelen
+
+De broncode en CI-runs staan in [Forgejo](https://git.medialeon.nl/leon/appstore-en-fork).
+Bij iedere push en pull request vergelijkt CI de contract- en Peil-kopieën met de gepinde commits en de bronbranch van `leon/ai-server-manager`.
 
 ```
 python3.12 -m venv .venv && .venv/bin/pip install -e "apps/api[dev]"

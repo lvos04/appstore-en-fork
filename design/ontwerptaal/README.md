@@ -13,8 +13,8 @@ en in de herkomstkop (eerste regel) van elk bestand.
 
 ```sh
 python3 tools/peil_kopie.py controleer                      # offline (ook in CI en in de unit-tests)
-python3 tools/peil_kopie.py vergelijk --online              # tegen GitHub (CI): drift faalt, nieuwe versie = waarschuwing
-python3 tools/peil_kopie.py vergelijk --bron ../ai-server-manager
+python3 tools/peil_kopie.py vergelijk --online              # openbare bron voor lokale ontwikkeling
+python3 tools/peil_kopie.py vergelijk --bron ../ai-server-manager  # CI gebruikt de broncheckout uit Forgejo
 python3 tools/peil_kopie.py bijwerken --bron ../ai-server-manager --commit <40 hex> --ref <branch>
 ```
 

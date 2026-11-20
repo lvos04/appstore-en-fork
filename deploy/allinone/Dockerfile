@@ -39,7 +39,7 @@ FROM ${PYTHON_IMAGE}
 ARG VERSION=0.1.0
 LABEL org.opencontainers.image.title="appstore-en-fork" \
       org.opencontainers.image.description="Appstore-catalogus TrueNAS Home Platform V2 — alles-in-één (PostgreSQL 16, API, worker)" \
-      org.opencontainers.image.source="https://github.com/lvos04/appstore-en-fork" \
+      org.opencontainers.image.source="https://git.medialeon.nl/leon/appstore-en-fork" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=pg /out/pg/lib /usr/lib/postgresql/16
 COPY --from=pg /out/pg/share /usr/share/postgresql/16
