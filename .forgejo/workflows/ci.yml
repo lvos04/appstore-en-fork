@@ -13,12 +13,45 @@ jobs:
   python:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: appstore-en-fork
     env:
       APPSTORE_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: appstore-en-fork
           persist-credentials: false
+      - name: Bronbranch van het platformcontract bepalen
+        id: bron
+        run: |
+          ref=$(jq -er .bron_ref docs/platform-v2/CONTRACT_HERKOMST.json)
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Privébron voor het platformcontract en Peil ophalen
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: leon/ai-server-manager
+          ref: ${{ steps.bron.outputs.ref }}
+          token: ${{ secrets.BRON_LEESTOKEN }}
+          path: ai-server-manager
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Contract 1.3 op de gepinde commit en de bronbranch vergelijken
+        run: python3 tools/contract_kopie.py vergelijk --bron ../ai-server-manager
+      - name: Peil met de bronbranch en de gepinde commit vergelijken
+        run: |
+          bron=../ai-server-manager
+          pin=design/ontwerptaal/HERKOMST.json
+          ref=$(jq -er .bron_ref "$pin")
+          git -C "$bron" checkout --quiet --detach "origin/$ref" || git -C "$bron" checkout --quiet --detach origin/main
+          python3 tools/peil_kopie.py vergelijk --bron "$bron"
+          commit=$(jq -er .bron_commit "$pin")
+          git -C "$bron" checkout --quiet --detach "$commit"
+          jq -er '.bestanden[] | "\(.sha256)  \(.bron_pad)"' "$pin" | (cd "$bron" && sha256sum --strict --check)
+          # De unit-tests vergelijken de renderer met de referentie op deze commit.
+          test -f "$bron/design/ontwerptaal/bouw/sjabloon.py"
       - name: Afzonderlijke PostgreSQL-testdatabase starten
         run: bash .forgejo/testdatabase.sh
       - name: Python 3.12 op de Linux-runner
@@ -32,25 +65,21 @@ jobs:
           python -m pip install --disable-pip-version-check ruff==0.17.4 mypy==2.4.1 pytest==9.2.0 \
             types-PyYAML==6.0.12.20261103 types-jsonschema==4.26.0.20261006 pip-audit==2.10.1
       - name: Ruff
-        working-directory: apps/api
+        working-directory: appstore-en-fork/apps/api
         run: |
           ruff check src tests alembic && ruff format --check src tests alembic
           ruff check ../../tests/e2e ../../tests/ui ../../deploy/allinone ../../tools
           ruff format --check ../../tests/ui ../../tools
       - name: Mypy
-        working-directory: apps/api
+        working-directory: appstore-en-fork/apps/api
         run: mypy
       - name: Manifest van deze app valideren (--strict, contract 1.3 §9)
         run: jl-manifest validate --strict --format json deploy/manifest/appstore-en-fork.manifest.yaml
       - name: Unit-tests
-        working-directory: apps/api
+        working-directory: appstore-en-fork/apps/api
         run: pytest -q tests/unit
-      - name: Herkomst en inhoud van de contract- en Peil-kopieën
-        run: |
-          python tools/contract_kopie.py controleer
-          python tools/peil_kopie.py controleer
       - name: Integratietests (PostgreSQL)
-        working-directory: apps/api
+        working-directory: appstore-en-fork/apps/api
         run: pytest -q tests/integration
       - name: Alembic up → down → up
         run: |
