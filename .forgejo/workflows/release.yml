@@ -1,0 +1,37 @@
+name: release
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Versie en bronmanifest controleren
+        run: |
+          version=$(cat VERSION)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$GITHUB_REF" == "refs/tags/v$version" ]]
+          python3.12 -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/venv/bin/pip" install --disable-pip-version-check --require-hashes -r apps/api/requirements.lock
+          "$RUNNER_TEMP/venv/bin/pip" install --disable-pip-version-check --no-deps -e apps/api
+          "$RUNNER_TEMP/venv/bin/jl-manifest" validate --strict deploy/manifest/appstore-en-fork.manifest.yaml
+      - name: Versie-image publiceren, attesten lezen en NAS-manifest toetsen
+        env:
+          REGISTRY_USER: ${{ vars.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: bash .forgejo/release-image.sh
+      - name: Forgejo-release met drie gecontroleerde bijlagen
+        env:
+          RELEASE_TOKEN: ${{ github.token }}
+        run: bash .forgejo/release-bijlagen.sh
