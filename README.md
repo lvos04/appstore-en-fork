@@ -44,9 +44,10 @@ via de TrueNAS-API, handmatig volgens [`deploy/truenas/CUSTOM_APP.md`](deploy/tr
 ## Ontwikkelen
 
 De broncode en CI-runs staan in [Forgejo](https://git.medialeon.nl/leon/appstore-en-fork).
-CI controleert bij iedere branchpush en pull request de vastgelegde hashes van het platformcontract en Peil.
-De handmatige workflow `bronvergelijking` toetst ook de gepinde commits en de actuele bronbranch.
-Daarvoor heeft `BRON_LEESTOKEN` alleen leesrecht op de code van `leon/ai-server-manager` nodig.
+Bij iedere branchpush en pull request vergelijkt de Python-job de kopieën van het platformcontract en Peil
+met hun gepinde commits en de actuele bronbranch. De Peil-tests vergelijken de renderer ook met de
+referentierenderer op de gepinde commit. Voor deze checkout gebruikt CI `BRON_LEESTOKEN` met leesrecht op
+`leon/ai-server-manager`.
 
 ```
 python3.12 -m venv .venv && .venv/bin/pip install -e "apps/api[dev]"
