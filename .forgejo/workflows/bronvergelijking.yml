@@ -1,0 +1,43 @@
+name: bronvergelijking
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  bronvergelijking:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Contractkopie en Peil-kopie offline controleren
+        run: |
+          python3 tools/contract_kopie.py controleer
+          python3 tools/peil_kopie.py controleer
+      - name: Gepinde bronbranch bepalen
+        id: bron
+        run: echo "ref=$(jq -er .bron_ref docs/platform-v2/CONTRACT_HERKOMST.json)" >> "$GITHUB_OUTPUT"
+      - name: Bron en geschiedenis voor de gepinde commits ophalen
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: leon/ai-server-manager
+          ref: ${{ steps.bron.outputs.ref }}
+          token: ${{ secrets.BRON_LEESTOKEN || github.token }}
+          path: .ci-bron
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Contract 1.3 op de gepinde commit en op de bronbranch vergelijken
+        run: |
+          ref=$(jq -er .bron_ref docs/platform-v2/CONTRACT_HERKOMST.json)
+          git -C .ci-bron checkout --quiet --detach "origin/$ref"
+          python3 tools/contract_kopie.py vergelijk --bron .ci-bron
+      - name: Peil op de gepinde commit en op de bronbranch vergelijken
+        run: |
+          pin=design/ontwerptaal/HERKOMST.json
+          git -C .ci-bron checkout --quiet --detach "$(jq -er .bron_commit "$pin")"
+          jq -r '.bestanden[] | "\(.sha256)  \(.bron_pad)"' "$pin" | (cd .ci-bron && sha256sum --strict --check)
+          ref=$(jq -er .bron_ref "$pin")
+          git -C .ci-bron checkout --quiet --detach "origin/$ref" || git -C .ci-bron checkout --quiet --detach origin/main
+          python3 tools/peil_kopie.py vergelijk --bron .ci-bron

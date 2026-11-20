@@ -13,7 +13,7 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 > volgt — de echte Hub heeft de 1.3-onderdelen voor de inventaris (scope, momentopname) inmiddels gebouwd; de vorm is
 > gelezen en gelijk (ADR-0014), niet tegen een draaiende Hub getest. Het koppelen volgens
 > 1.2 is eerder één keer lokaal tegen de echte Hub-code getest (ADR-0008 §5), niet tegen een op de NAS geïnstalleerde
-> Hub; de GHCR-image bestaat pas na de eerste release-tag. Zie `docs/platform-v2/EVIDENCE.json`.
+> Hub. De NAS-installatie wacht op een op GHCR bevestigde imagedigest. Zie `docs/platform-v2/EVIDENCE.json`.
 
 ## Wat zit erin
 
@@ -44,7 +44,9 @@ via de TrueNAS-API, handmatig volgens [`deploy/truenas/CUSTOM_APP.md`](deploy/tr
 ## Ontwikkelen
 
 De broncode en CI-runs staan in [Forgejo](https://git.medialeon.nl/leon/appstore-en-fork).
-Bij iedere push en pull request vergelijkt CI de contract- en Peil-kopieën met de gepinde commits en de bronbranch van `leon/ai-server-manager`.
+CI controleert bij iedere branchpush en pull request de vastgelegde hashes van het platformcontract en Peil.
+De handmatige workflow `bronvergelijking` toetst ook de gepinde commits en de actuele bronbranch.
+Daarvoor heeft `BRON_LEESTOKEN` alleen leesrecht op de code van `leon/ai-server-manager` nodig.
 
 ```
 python3.12 -m venv .venv && .venv/bin/pip install -e "apps/api[dev]"
@@ -56,7 +58,7 @@ make image image-e2e           # alles-in-één image bouwen en testen (Docker)
 make schermafdrukken           # afdrukken van 5 toestanden uit de vastgelegde antwoorden (CI-variant)
 PATH=/usr/lib/postgresql/16/bin:$PATH .venv/bin/python tests/ui/review_live.py --afdrukken docs/screenshots/peil/statuspagina
                                # ontwerpreview tegen de draaiende dienst: 18 toestanden, echte formulier-POST, afdrukken
-make peil-drift                # Peil-kopie tegen ai-server-manager (GitHub en de checkout ernaast)
-make contract-drift            # contractkopie 1.3 tegen de gepinde bron-commit (GitHub en de checkout ernaast)
+make peil-drift                # Peil-kopie tegen de openbare bron en de eventuele lokale checkout
+make contract-drift            # contractkopie 1.3 tegen de gepinde broncommit en de eventuele lokale checkout
 ```
 Variabelen: [`.env.example`](.env.example). Licentie: **GPL-3.0** (zie [`LICENSE`](LICENSE); besluit van de eigenaar, 2026-11-09).
