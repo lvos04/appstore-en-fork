@@ -13,20 +13,14 @@ jobs:
   python:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9
-        env:
-          POSTGRES_PASSWORD: ci-alleen-voor-tests
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      APPSTORE_TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-alleen-voor-tests@postgres:5432/postgres
       APPSTORE_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Afzonderlijke PostgreSQL-testdatabase starten
+        run: bash .forgejo/testdatabase.sh
       - name: Python 3.12 op de Linux-runner
         run: |
           python3.12 -m venv "$RUNNER_TEMP/venv"
@@ -55,9 +49,8 @@ jobs:
         working-directory: apps/api
         run: pytest -q tests/integration
       - name: Alembic up → down → up
-        env:
-          APPSTORE_DATABASE_URL: postgresql+psycopg://postgres:ci-alleen-voor-tests@postgres:5432/postgres
         run: |
+          export APPSTORE_DATABASE_URL="$APPSTORE_TEST_DATABASE_URL"
           appstore migrate && appstore migrate --down base && appstore migrate
           if appstore db-pending; then echo "migraties openstaand na upgrade" && exit 1; fi
       - name: OpenAPI-drift
@@ -68,6 +61,10 @@ jobs:
         run: pytest -q tests/e2e/test_service_e2e.py
       - name: pip-audit
         run: pip-audit -r apps/api/requirements.lock --require-hashes --disable-pip --progress-spinner off
+
+      - name: Eigen testdatabase opruimen
+        if: always()
+        run: bash .forgejo/testdatabase.sh stop
 
   bronvergelijking:
     runs-on: ubuntu-24.04
@@ -80,10 +77,22 @@ jobs:
         run: |
           python3 tools/contract_kopie.py controleer
           python3 tools/peil_kopie.py controleer
+      - name: Leesrecht op de bronbranch controleren
+        id: bron
+        env:
+          BRONTOKEN: ${{ github.token }}
+        run: |
+          ref=$(jq -er .bron_ref docs/platform-v2/CONTRACT_HERKOMST.json)
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          code=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            -H @<(printf 'Authorization: token %s\n' "$BRONTOKEN") \
+            "https://git.medialeon.nl/api/v1/repos/leon/ai-server-manager/branches/$ref")
+          echo "Forgejo-API voor de bronbranch: HTTP $code"
       - name: Bron en geschiedenis voor de gepinde commits ophalen
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: leon/ai-server-manager
+          ref: ${{ steps.bron.outputs.ref }}
           token: ${{ github.token }}
           path: .ci-bron
           fetch-depth: 0
@@ -107,19 +116,12 @@ jobs:
     # Chromium toetst axe-core = 0, geen overloop op 320–1440 px, CSP zonder JS, doelen ≥ 44 px, tekst ≥ 14 px, focus
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9
-        env:
-          POSTGRES_PASSWORD: ci-alleen-voor-tests
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
-    env:
-      APPSTORE_TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-alleen-voor-tests@postgres:5432/postgres
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Afzonderlijke PostgreSQL-testdatabase starten
+        run: bash .forgejo/testdatabase.sh
       - name: Python 3.12 op de Linux-runner
         run: |
           python3.12 -m venv "$RUNNER_TEMP/venv"
@@ -151,6 +153,10 @@ jobs:
             tests/ui/uit/
             tests/ui/peil-review/
           retention-days: 14
+
+      - name: Eigen testdatabase opruimen
+        if: always()
+        run: bash .forgejo/testdatabase.sh stop
 
   image:
     runs-on: ubuntu-24.04
