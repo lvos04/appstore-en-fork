@@ -2,6 +2,11 @@
 
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
+- **Catalogusbewijs voor de Hub** (contract 1.3 §8.1 M1; stap S-P2-050d-app): het ondertekende herkomstrecord
+  bevat nu `entry_id`, `version_id`, `source.subpath` en `publisher_key_sha256` (volledige SHA-256 over de ruwe
+  uitgeverssleutel, alleen bij `verified`). Een entry-ID staat alleen in het record van een toegelaten versie met
+  entry-versierelatie. `GET /catalog/v1/entries/{app_id}` en de versieweergaven geven `entry_id` (additief). Oudere
+  opgeslagen records zonder deze velden blijven verifieerbaar, maar geven de Hub geen vrijgave.
 - **Beheerder en dienstaccount zonder geheim in het formulier** (ADR-0023; stap S-P3-490; besluit C-12, C1.3-ASF-15):
   - Nieuw optioneel veld `accounts` in manifest v1 (ADR-0016 W1): welke beheerder of welk dienstaccount er moet komen,
     met rol, aanmaakwijze, afnemer, rechten en controle, nooit een waarde. Nieuwe fouten `account_ongeldig`,

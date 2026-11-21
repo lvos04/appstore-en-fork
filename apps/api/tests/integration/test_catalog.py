@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import uuid
@@ -17,7 +18,8 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from appstore.api.common import AppContext
-from appstore.manifest.provenance import b64url, raw_public, sign_data
+from appstore.manifest.canonical import sha256_digest
+from appstore.manifest.provenance import b64url, key_id, raw_public, sign_data, verify_data
 from appstore.models import ManifestVersion
 from appstore.worker import run_once, startup
 from tests.conftest import FIXTURES
@@ -493,9 +495,50 @@ def test_git_source_with_signatures(linked: TestClient, hub: FakeHub, worker_ctx
     assert src["last_sync"]["status"] == "ok" and src["last_sync"]["revision"] == commit
     entry = linked.get("/catalog/v1/entries/git-getekend", headers=hub.auth()).json()
     assert entry["latest_version"]["publisher_signature"] == "verified"
+    # contract 1.3 §8.1: het catalogusbewijs precies zoals de Hub (ai-server-manager) het controleert
+    version = linked.get(f"/catalog/v1/versions/{entry['latest_version']['id']}", headers=hub.auth()).json()
+    rec = version["provenance"]["record"]
+    assert set(rec) == {
+        "app_id",
+        "version",
+        "entry_id",
+        "version_id",
+        "manifest_sha256",
+        "schema_sha256",
+        "validator_version",
+        "source",
+        "fetched_at",
+        "publisher_signature",
+        "publisher_key_id",
+        "publisher_key_sha256",
+        "valid",
+        "errors",
+        "warnings",
+    }
+    assert set(rec["source"]) == {"source_id", "kind", "url", "ref", "commit", "path", "subpath"}
+    assert str(uuid.UUID(rec["entry_id"])) == rec["entry_id"] == entry["entry_id"] == version["entry_id"]
+    assert str(uuid.UUID(rec["version_id"])) == rec["version_id"] == version["id"]
+    assert rec["source"]["kind"] == "git" and rec["source"]["commit"] == commit and rec["source"]["subpath"] == "apps"
+    assert rec["source"]["path"] == "a.manifest.yaml" and rec["source"]["source_id"] == created.json()["id"]
+    assert rec["publisher_signature"] == "verified" and rec["valid"] is True
+    assert rec["publisher_key_sha256"] == "sha256:" + hashlib.sha256(raw_public(publisher.public_key())).hexdigest()
+    assert sha256_digest(version["manifest"]) == rec["manifest_sha256"]
+    store_key = worker_ctx.secrets.identity.public_key()
+    assert version["provenance"]["key_id"] == key_id(store_key) and version["provenance_verified"] is True
+    assert verify_data(store_key, rec, version["provenance"]["signature"])
+    bron = linked.get(f"/catalog/v1/sources/{rec['source']['source_id']}", headers=hub.auth()).json()
+    assert (bron["kind"], bron["enabled"], bron["require_signature"]) == ("git", True, True)
+    assert (bron["url"], bron["subpath"], bron["pinned_commit"]) == (
+        rec["source"]["url"],
+        rec["source"]["subpath"],
+        rec["source"]["commit"],
+    )
     assert linked.get("/catalog/v1/entries/git-ongetekend", headers=hub.auth()).status_code == 404
     rejected = linked.get("/catalog/v1/entries/git-ongetekend/versions", headers=hub.auth()).json()["items"]
     assert rejected[0]["valid"] is False
+    rejected_rec = linked.get(f"/catalog/v1/versions/{rejected[0]['id']}", headers=hub.auth()).json()
+    assert rejected_rec["entry_id"] is None and rejected_rec["provenance"]["record"]["entry_id"] is None
+    assert rejected_rec["provenance"]["record"]["publisher_key_sha256"] is None
     detail = linked.get(f"/catalog/v1/versions/{rejected[0]['id']}", headers=hub.auth()).json()
     assert "signature_missing" in [f["code"] for f in detail["report"]["findings"]]
     # vastgepinde commit klopt niet meer → mislukt, niets gewijzigd

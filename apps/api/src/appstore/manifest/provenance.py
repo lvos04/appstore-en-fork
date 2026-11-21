@@ -90,6 +90,8 @@ class SourceRef(BaseModel):
     ref: str | None
     commit: str | None
     path: str | None
+    # contract 1.3 §8.1; een default zodat oudere opgeslagen records (zonder dit veld) verifieerbaar blijven
+    subpath: str | None = None
 
 
 class ProvenanceRecord(BaseModel):
@@ -97,6 +99,9 @@ class ProvenanceRecord(BaseModel):
 
     app_id: str | None
     version: str | None
+    # contract 1.3 §8.1 (catalogusbewijs): alleen gezet bij een toegelaten versie met entry-versierelatie
+    entry_id: str | None = None
+    version_id: str | None = None
     manifest_sha256: str
     schema_sha256: str
     validator_version: str
@@ -104,6 +109,8 @@ class ProvenanceRecord(BaseModel):
     fetched_at: datetime
     publisher_signature: Literal["verified", "not_required", "absent"]
     publisher_key_id: str | None
+    # contract 1.3 §8.1: volledige SHA-256 over de 32 ruwe uitgeverssleutelbytes, alleen bij ``verified``
+    publisher_key_sha256: str | None = None
     valid: bool
     errors: int
     warnings: int
@@ -118,15 +125,24 @@ class SignedProvenance(BaseModel):
     alg: Literal["EdDSA"] = "EdDSA"
 
 
+def _signed_view(record: ProvenanceRecord) -> dict[str, Any]:
+    """Wat getekend wordt: alleen gezette velden, zodat een ouder record zonder de §8.1-velden byte-gelijk blijft."""
+    return record.model_dump(mode="json", exclude_unset=True)
+
+
+def publisher_key_sha256(key: Ed25519PublicKey) -> str:
+    return "sha256:" + hashlib.sha256(raw_public(key)).hexdigest()
+
+
 def sign_provenance(identity: Ed25519PrivateKey, record: ProvenanceRecord) -> SignedProvenance:
     return SignedProvenance(
         record=record,
-        signature=sign_data(identity, record.model_dump(mode="json")),
+        signature=sign_data(identity, _signed_view(record)),
         key_id=key_id(identity.public_key()),
     )
 
 
 def verify_provenance(public_key: Ed25519PublicKey, signed: SignedProvenance) -> bool:
     return signed.key_id == key_id(public_key) and verify_data(
-        public_key, signed.record.model_dump(mode="json"), signed.signature
+        public_key, _signed_view(signed.record), signed.signature
     )

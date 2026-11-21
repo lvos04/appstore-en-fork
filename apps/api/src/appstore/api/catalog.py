@@ -143,6 +143,7 @@ def source_out(s: CatalogSource) -> dict[str, Any]:
 def version_summary(v: ManifestVersion) -> dict[str, Any]:
     return {
         "id": str(v.id),
+        "entry_id": str(v.entry_id) if v.entry_id else None,  # contract 1.3 §8.1
         "app_id": v.app_id,
         "version": v.app_version,
         "manifest_sha256": v.manifest_sha256,
@@ -159,6 +160,7 @@ def version_summary(v: ManifestVersion) -> dict[str, Any]:
 
 def entry_out(e: CatalogEntry, latest: ManifestVersion | None, source: CatalogSource | None) -> dict[str, Any]:
     return {
+        "entry_id": str(e.id),  # contract 1.3 §8.1
         "app_id": e.app_id,
         "name": e.name,
         "category": e.category,

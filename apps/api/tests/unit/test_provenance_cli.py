@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from appstore.manifest.cli import main
 from appstore.manifest.provenance import (
     ProvenanceRecord,
+    SignedProvenance,
     SourceRef,
     b64url,
     key_id,
@@ -67,6 +68,55 @@ def test_provenance_signed_and_tamper_evident() -> None:
     tampered = signed.model_copy(update={"record": record.model_copy(update={"valid": False})})
     assert not verify_provenance(identity.public_key(), tampered)
     assert not verify_provenance(Ed25519PrivateKey.generate().public_key(), signed)
+
+
+def test_catalogusbewijs_velden_getekend_en_oud_record_blijft_verifieerbaar() -> None:
+    """Contract 1.3 §8.1: de nieuwe velden zitten in de handtekening; een opgeslagen record van vóór §8.1 blijft geldig."""
+    identity = Ed25519PrivateKey.generate()
+    oud = {
+        "app_id": "voorbeeld-web",
+        "version": "1.27.3",
+        "manifest_sha256": "sha256:" + "a" * 64,
+        "schema_sha256": "sha256:" + "b" * 64,
+        "validator_version": "0.1.0",
+        "source": {
+            "source_id": "s1",
+            "kind": "git",
+            "url": "https://x.test/r.git",
+            "ref": None,
+            "commit": "c" * 40,
+            "path": "a.manifest.yaml",
+        },
+        "fetched_at": "2026-11-09T00:00:00Z",
+        "publisher_signature": "verified",
+        "publisher_key_id": "d" * 16,
+        "valid": True,
+        "errors": 0,
+        "warnings": 0,
+    }
+    signed_oud = SignedProvenance.model_validate(
+        {"record": oud, "signature": sign_data(identity, oud), "key_id": key_id(identity.public_key())}
+    )
+    assert verify_provenance(identity.public_key(), signed_oud)
+
+    nieuw = ProvenanceRecord.model_validate(
+        {
+            **oud,
+            "entry_id": "e" * 8 + "-0000-4000-8000-" + "0" * 12,
+            "version_id": "f" * 8 + "-0000-4000-8000-" + "0" * 12,
+            "publisher_key_sha256": "sha256:" + "1" * 64,
+            "source": {**oud["source"], "subpath": "apps"},
+        }
+    )
+    signed = sign_provenance(identity, nieuw)
+    opgeslagen = signed.model_dump(mode="json")
+    assert {"entry_id", "version_id", "publisher_key_sha256"} <= set(opgeslagen["record"])
+    assert opgeslagen["record"]["source"]["subpath"] == "apps"
+    # de Hub verifieert over het opgeslagen record zelf
+    assert verify_data(identity.public_key(), opgeslagen["record"], signed.signature)
+    for veld, waarde in (("entry_id", None), ("version_id", None), ("publisher_key_sha256", "sha256:" + "2" * 64)):
+        tampered = signed.model_copy(update={"record": nieuw.model_copy(update={veld: waarde})})
+        assert not verify_provenance(identity.public_key(), tampered), veld
 
 
 def test_cli_validate_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:

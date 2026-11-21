@@ -17,7 +17,15 @@ from ..config import Settings
 from ..events import emit, record_evidence
 from ..manifest.findings import Finding, Severity, error
 from ..manifest.model import Manifest, ParamRef
-from ..manifest.provenance import ProvenanceRecord, SourceRef, key_id, load_public_key, sign_provenance, verify_data
+from ..manifest.provenance import (
+    ProvenanceRecord,
+    SourceRef,
+    key_id,
+    load_public_key,
+    publisher_key_sha256,
+    sign_provenance,
+    verify_data,
+)
 from ..manifest.validator import ValidationReport, build_report, validate_text
 from ..models import CatalogEntry, CatalogSource, ManifestVersion
 from ..secrets_store import Secrets
@@ -146,9 +154,16 @@ def record_manifest(
     if existing is not None:
         return "unchanged", existing, report
     now = utcnow()
+    # §8.1: de ID's staan in het getekende record; een entry-ID alleen als deze versie aan het item wordt gekoppeld.
+    accepted = manifest is not None and report.valid
+    version_id = uuid.uuid4()
+    entry_id = (entry.id if entry is not None else uuid.uuid4()) if accepted else None
+    publisher_key = source.trusted_public_key if signature_status == "verified" else None
     record = ProvenanceRecord(
         app_id=report.app_id,
         version=report.version,
+        entry_id=str(entry_id) if entry_id else None,
+        version_id=str(version_id),
         manifest_sha256=sha,
         schema_sha256=report.schema_sha256,
         validator_version=__version__,
@@ -159,17 +174,19 @@ def record_manifest(
             ref=source.ref,
             commit=revision,
             path=file.path,
+            subpath=source.subpath or None,
         ),
         fetched_at=now,
         publisher_signature="absent" if signature_status == "invalid" else signature_status,
-        publisher_key_id=source.trusted_key_id if signature_status == "verified" else None,
+        publisher_key_id=source.trusted_key_id if publisher_key else None,
+        publisher_key_sha256=publisher_key_sha256(load_public_key(publisher_key)) if publisher_key else None,
         valid=report.valid,
         errors=report.errors,
         warnings=report.warnings,
     )
     signed = sign_provenance(secrets.identity, record)
     version = ManifestVersion(
-        id=uuid.uuid4(),
+        id=version_id,
         app_id=report.app_id,
         source_id=source.id,
         file_path=file.path,
@@ -185,7 +202,7 @@ def record_manifest(
     )
     db.add(version)
     db.flush()
-    if manifest is None or not report.valid:
+    if manifest is None or not accepted:
         emit(
             db,
             "catalog.manifest.rejected",
@@ -202,7 +219,7 @@ def record_manifest(
         return "rejected", version, report
     if entry is None:
         entry = CatalogEntry(
-            id=uuid.uuid4(),
+            id=entry_id,
             app_id=manifest.app_id,
             name=manifest.name,
             category=manifest.category,
