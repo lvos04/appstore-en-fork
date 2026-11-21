@@ -187,7 +187,7 @@ class Review:
         print(f"── {toestand} ({actie} {pad}, verwacht HTTP {status})", flush=True)
         for poging in (1, 2):
             run = subprocess.run(
-                ["npx", "playwright", "test", "-c", "playwright.live.config.ts"],
+                ["node", "node_modules/@playwright/test/cli.js", "test", "-c", "playwright.live.config.ts"],
                 check=False,
                 cwd=UI,
                 env=env,
