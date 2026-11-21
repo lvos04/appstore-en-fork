@@ -162,3 +162,6 @@ jobs:
         env:
           APPSTORE_E2E_IMAGE: appstore-en-fork:ci-${{ github.run_id }}-${{ github.run_attempt }}
         run: bash .forgejo/image-e2e.sh
+      - name: Eigen proefcontainers opruimen
+        if: always()
+        run: bash .forgejo/image-e2e.sh ruim
