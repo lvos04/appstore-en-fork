@@ -31,9 +31,9 @@ EVIDENCE = DOCS / "EVIDENCE.json"
 CONTRACT = DOCS / "PLATFORM_CONTRACTEN.md"
 CONFORMITY = DOCS / "CONTRACT_1.3_CONFORMITEIT.md"
 #: bron-commit in lvos04/ai-server-manager (branch ccr-c133d7a0-kuz1cv) waarop beide kopieën zijn genomen
-SOURCE_COMMIT = "bc1746e88e7b742fa8dae270ef94c34cbbc3fc4a"
+SOURCE_COMMIT = "cfc816328ea2789b30e0db97e28dbfd9ec654ecf"
 #: sha256 van docs/platform-v2/PLATFORM_CONTRACTEN.md (contracts 1.3) op SOURCE_COMMIT
-CONTRACT_SHA256 = "e3a8f6cdd11e6460708fdfae5fd6c44da05f62a8670bfebce951824d6aa46c0a"
+CONTRACT_SHA256 = "3ef1bcdc5cd5e35e9d54dc0274434d6766aa6f777e3897e3dbc1c7d9421dd40b"
 #: sha256 van docs/platform-v2/CONTRACT_1.3_CONFORMITEIT.md op SOURCE_COMMIT
 CONFORMITY_SHA256 = "b5ebba073a8fe8beb715d58e6760feae38e33ad445956d107e64840133dd7924"
 
