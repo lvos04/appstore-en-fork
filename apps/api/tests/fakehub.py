@@ -242,8 +242,8 @@ class ServiceToken:
 
 @dataclass
 class FakeHub:
-    key: Ed25519PrivateKey = field(default_factory=Ed25519PrivateKey.generate)
-    policy_key: Ed25519PrivateKey = field(default_factory=Ed25519PrivateKey.generate)
+    key: Ed25519PrivateKey = field(default_factory=Ed25519PrivateKey.generate)  # gitleaks:allow - testfabriek
+    policy_key: Ed25519PrivateKey = field(default_factory=Ed25519PrivateKey.generate)  # gitleaks:allow - testfabriek
     grants: dict[str, Grant] = field(default_factory=dict)  # sha256(token | genormaliseerde code) → grant
     tokens: dict[str, ServiceToken] = field(default_factory=dict)  # service-token → registratie
     service_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -319,7 +319,7 @@ class FakeHub:
         aud: str | list[str] = APP_ID,
         ttl: int = 60,
         iat: int | None = None,
-        key: Ed25519PrivateKey | None = None,
+        key: Ed25519PrivateKey | None = None,  # gitleaks:allow - typeannotatie
         iss: str = "hub",
         token_use: str | None = "user",
         jti: str | None = "auto",

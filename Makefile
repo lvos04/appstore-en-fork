@@ -39,7 +39,7 @@ schermafdrukken:
 peil-drift:
 	python3 tools/peil_kopie.py vergelijk --online $$( [ -d ../ai-server-manager/design/ontwerptaal ] && echo --bron ../ai-server-manager )
 
-# byte-gelijke kopie van het platformcontract 1.3 tegen de gepinde bron-commit (GitHub en de checkout ernaast)
+# byte-gelijke kopie van het platformcontract 1.3 tegen de gepinde bron-commit (Forgejo en de checkout ernaast)
 contract-drift:
 	python3 tools/contract_kopie.py vergelijk --online $$( [ -d ../ai-server-manager/docs/platform-v2 ] && echo --bron ../ai-server-manager )
 

@@ -12,14 +12,18 @@ EVIDENCE.json:
   een eigen regel hebben, met de statussen van het blad Werkpakketten.
 
 Kopieën (kop van het contract, C1.3-ALG-01): ``PLATFORM_CONTRACTEN.md`` en ``CONTRACT_1.3_CONFORMITEIT.md`` zijn
-byte-gelijk aan de bron ``lvos04/ai-server-manager`` op een vaste bron-commit; nooit lokaal aanpassen.
+byte-gelijk aan de bron ``leon/ai-server-manager`` op een vaste bron-commit; nooit lokaal aanpassen.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
+import urllib.parse
+import urllib.request
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -30,7 +34,7 @@ DOCS = REPO_ROOT / "docs" / "platform-v2"
 EVIDENCE = DOCS / "EVIDENCE.json"
 CONTRACT = DOCS / "PLATFORM_CONTRACTEN.md"
 CONFORMITY = DOCS / "CONTRACT_1.3_CONFORMITEIT.md"
-#: bron-commit in lvos04/ai-server-manager (branch ccr-c133d7a0-kuz1cv) waarop beide kopieën zijn genomen
+#: bron-commit in leon/ai-server-manager (branch ccr-c133d7a0-kuz1cv) waarop beide kopieën zijn genomen
 SOURCE_COMMIT = "d392f5277490ba391c346b4b72e7f7a6d9546bc0"
 #: sha256 van docs/platform-v2/PLATFORM_CONTRACTEN.md (contracts 1.3) op SOURCE_COMMIT
 CONTRACT_SHA256 = "5dbb601184f58d9f3af0cd76b1b23f516454768ec17ca70b26cfc00ee6631102"
@@ -214,20 +218,25 @@ def test_conformity_list_names_this_repo() -> None:
 def test_provenance_file_pins_the_same_source() -> None:
     """``CONTRACT_HERKOMST.json`` (gebruikt door ``tools/contract_kopie.py`` in CI) pint dezelfde commit en sha256."""
     pin = json.loads((DOCS / "CONTRACT_HERKOMST.json").read_text(encoding="utf-8"))
-    assert pin["bron_repo"] == "lvos04/ai-server-manager"
+    assert pin["bron_repo"] == "leon/ai-server-manager"
     assert pin["bron_commit"] == SOURCE_COMMIT
     assert pin["bestanden"]["PLATFORM_CONTRACTEN.md"]["sha256"] == CONTRACT_SHA256
     assert pin["bestanden"]["CONTRACT_1.3_CONFORMITEIT.md"]["sha256"] == CONFORMITY_SHA256
 
 
-def test_contract_copy_tool_detects_a_local_change(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Negatief: één gewijzigde byte in een kopie laat de offline controle falen."""
+def _contract_tool() -> Any:
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("contract_kopie", REPO_ROOT / "tools" / "contract_kopie.py")
     assert spec is not None and spec.loader is not None
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
+    return tool
+
+
+def test_contract_copy_tool_detects_a_local_change(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Negatief: één gewijzigde byte in een kopie laat de offline controle falen."""
+    tool = _contract_tool()
     docs = tmp_path / "docs"
     docs.mkdir()
     for name in ("PLATFORM_CONTRACTEN.md", "CONTRACT_1.3_CONFORMITEIT.md", "CONTRACT_HERKOMST.json"):
@@ -237,3 +246,43 @@ def test_contract_copy_tool_detects_a_local_change(tmp_path: Any, monkeypatch: p
     assert tool.controleer() == []
     (docs / "PLATFORM_CONTRACTEN.md").write_bytes(CONTRACT.read_bytes().replace(b"contracts 1.3", b"contracts 1.4", 1))
     assert any("PLATFORM_CONTRACTEN.md" in f for f in tool.controleer())
+
+
+@pytest.mark.parametrize("afwijking", [False, True])
+def test_online_contractcontrole_op_forgejo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, afwijking: bool) -> None:
+    config = tmp_path / "forgejo"
+    config.mkdir()
+    (config / "token").write_text(tmp_path.name, encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FORGEJO_TOKEN", raising=False)
+    toegang = tmp_path.name
+    if afwijking:
+        toegang += "-ci"
+        monkeypatch.setenv("FORGEJO_TOKEN", toegang)
+
+    docs = DOCS
+    pin = SOURCE_COMMIT
+    pins = dict.fromkeys(["PLATFORM_CONTRACTEN.md", "CONTRACT_1.3_CONFORMITEIT.md"], pin)
+    tak = "ccr-c133d7a0-kuz1cv"
+    gelezen = set()
+
+    def bron(verzoek: urllib.request.Request, timeout: int) -> io.BytesIO:
+        url = urllib.parse.urlsplit(verzoek.full_url)
+        naam = Path(url.path).name
+        assert url.scheme == "https" and url.netloc == "git.medialeon.nl"
+        assert url.path == f"/api/v1/repos/leon/ai-server-manager/raw/docs/platform-v2/{naam}"
+        assert verzoek.get_header("Authorization") == f"token {toegang}"
+        assert "Authorization" not in verzoek.headers  # leestoegang gaat niet mee bij een redirect
+        assert verzoek.get_header("User-agent")
+        assert timeout > 0
+        [ref] = urllib.parse.parse_qs(url.query)["ref"]
+        assert ref in (pins[naam], tak)
+        gelezen.add((naam, ref))
+        inhoud = (docs / naam).read_bytes()
+        return io.BytesIO(inhoud + b" " if afwijking and ref == pin else inhoud)
+
+    monkeypatch.setattr(urllib.request, "urlopen", bron)
+    assert _contract_tool().main(["vergelijk", "--online"]) == int(afwijking)
+    assert set(pins.items()) <= gelezen
+    if not afwijking:
+        assert {(naam, tak) for naam, ref in pins.items() if ref == pin} <= gelezen

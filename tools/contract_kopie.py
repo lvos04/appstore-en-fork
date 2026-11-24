@@ -2,13 +2,14 @@
 """Byte-gelijke kopieën van het platformcontract bewaken (contract 1.3, kop; C1.3-ALG-01).
 
 ``docs/platform-v2/PLATFORM_CONTRACTEN.md`` en ``CONTRACT_1.3_CONFORMITEIT.md`` zijn kopieën van
-``lvos04/ai-server-manager`` op een vaste bron-commit (``docs/platform-v2/CONTRACT_HERKOMST.json``).
+``leon/ai-server-manager`` op een vaste bron-commit (``docs/platform-v2/CONTRACT_HERKOMST.json``).
 
 * ``controleer`` — offline: sha256 van elke kopie gelijk aan de pin (ook in de unit-tests).
-* ``vergelijk --online`` — tegen GitHub: de bron op de gepinde commit heeft exact die sha256 (fout bij verschil). Een
+* ``vergelijk --online`` — tegen Forgejo: de bron op de gepinde commit heeft exact die sha256 (fout bij verschil). Een
   nieuwere versie op de bronbranch is alleen een waarschuwing: een nieuwe kopie overnemen is een bewuste stap.
 * ``vergelijk --bron <map>`` — tegen een lokale checkout van de bron (zelfde regels als online).
 
+Forgejo gebruikt FORGEJO_TOKEN of het bestand forgejo/token in de gebruikersconfiguratie.
 Alleen standaardbibliotheek. Uitgang 0 = in orde, 1 = drift of fout.
 """
 
@@ -17,18 +18,37 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs" / "platform-v2"
 HERKOMST = DOCS / "CONTRACT_HERKOMST.json"
-RAW = "https://raw.githubusercontent.com/{repo}/{ref}/{pad}"
+
+
+def forgejo_verzoek(repo: str, ref: str, pad: str) -> urllib.request.Request:
+    """Lees de privébron met de ingestelde Forgejo-leestoegang, ook buiten CI."""
+    url = (
+        f"https://git.medialeon.nl/api/v1/repos/{urllib.parse.quote(repo)}/raw/{urllib.parse.quote(pad)}"
+        f"?{urllib.parse.urlencode({'ref': ref})}"
+    )
+    verzoek = urllib.request.Request(url, headers={"User-Agent": "platform-contractcontrole/1.0"})
+    token = os.environ.get("FORGEJO_TOKEN")
+    if not token:
+        config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        tokenbestand = config / "forgejo" / "token"
+        if tokenbestand.is_file():
+            token = tokenbestand.read_text(encoding="utf-8").strip()
+    if token:
+        verzoek.add_unredirected_header("Authorization", f"token {token}")
+    return verzoek
 
 
 def sha256(data: bytes) -> str:
@@ -57,20 +77,24 @@ def controleer() -> list[str]:
     return fouten
 
 
-def haal(url: str) -> bytes | None:
+def haal(repo: str, ref: str, pad: str) -> bytes | None:
+    verzoek = forgejo_verzoek(repo, ref, pad)
     laatste: Exception | None = None
     for poging in range(4):
         try:
-            with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310 - vaste https-URL
+            with urllib.request.urlopen(verzoek, timeout=30) as resp:  # noqa: S310 - vaste Forgejo-bron
                 return bytes(resp.read())
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return None
+            if exc.code in (401, 403):
+                raise PermissionError(f"Forgejo weigert leestoegang (HTTP {exc.code}).") from exc
             laatste = exc
         except (urllib.error.URLError, TimeoutError) as exc:
             laatste = exc
-        time.sleep(2 ** (poging + 1))
-    raise RuntimeError(f"{url}: niet op te halen ({laatste})")
+        if poging < 3:
+            time.sleep(2 ** (poging + 1))
+    raise ConnectionError(f"{verzoek.full_url}: niet op te halen ({laatste})")
 
 
 def _git_show(bron: Path, ref: str, pad: str) -> bytes | None:
@@ -95,9 +119,17 @@ def vergelijk(bron: Path | None, online: bool) -> tuple[list[str], list[str]]:
         pad = str(regel["bron_pad"])
         bronnen: list[tuple[str, bytes | None, bytes | None]] = []
         if online:
-            bronnen.append(("GitHub", haal(RAW.format(repo=repo, ref=commit, pad=pad)), None))
-            if ref:
-                bronnen[-1] = ("GitHub", bronnen[-1][1], haal(RAW.format(repo=repo, ref=ref, pad=pad)))
+            try:
+                gepind = haal(repo, commit, pad)
+            except OSError as exc:
+                fouten.append(f"{naam}: gepinde Forgejo-bron niet te lezen ({exc})")
+            else:
+                try:
+                    actueel = haal(repo, ref, pad) if ref else None
+                except OSError as exc:
+                    waarschuwingen.append(f"{naam}: huidige Forgejo-bron niet te lezen ({exc})")
+                    actueel = None
+                bronnen.append(("Forgejo", gepind, actueel))
         if bron is not None:
             bronnen.append(
                 (str(bron), _git_show(bron, commit, pad), (bron / pad).read_bytes() if (bron / pad).is_file() else None)
@@ -120,7 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("controleer")
     v = sub.add_parser("vergelijk")
     v.add_argument("--bron", type=Path)
-    v.add_argument("--online", action="store_true")
+    v.add_argument(
+        "--online", action="store_true", help="vergelijk met Forgejo (FORGEJO_TOKEN of lokaal forgejo/token)"
+    )
     args = parser.parse_args(argv)
     waarschuwingen: list[str] = []
     if args.opdracht == "controleer":
