@@ -1,7 +1,6 @@
 # Manifest (manifeststandaard v1, platformcontract 1.3 §9) van appstore-en-fork zelf.
 # Installatie uitsluitend als standaard TrueNAS Custom App (één image + formulierwaarden); nooit compose/YAML.
-# De digest van de eigen GHCR-image vult de release-CI in (release/digests.json); tot dan is installeren niet gereed
-# (digest_pending_release, met reden geaccepteerd tot de eerste release).
+# De digest en broncommit komen uit digests.json bij GitHub-release v0.1.0.
 # Poorten staan alleen in network.ports (de vertaling bouwt daar de formulierpoorten uit); geen gedeeld Docker-netwerk.
 # Geen HUB_* in parameters of env: HUB_URL, HUB_ENROLLMENT_TOKEN en HUB_KEY_FINGERPRINT voegt de vertaling zelf toe
 # als de Hub koppelt (contract 1.3 §3.2).
@@ -20,7 +19,7 @@ install:
 image:
   repository: ghcr.io/lvos04/appstore-en-fork
   tag: "0.1.0"
-  digest: null
+  digest: "sha256:2b3109bd599ec35a4460183eca91f27199c5d62c69fd874f51ea797028cf9faf"
 custom_app:
   storage:
     - name: appdata
@@ -127,11 +126,6 @@ compatibility:
   ix_app_min_version: "1.2.0"
 provenance:
   source_repo: https://github.com/lvos04/appstore-en-fork
-  source_commit: null
+  source_commit: "5ff1864697be4c1bd09694739e998df7e5608b55"
   upstream_repo: null
   license: GPL-3.0
-accepted_findings:
-  - code: digest_pending_release
-    reden_nl: >-
-      Eigen image vóór de eerste release: de release-CI vult de digest in (release/digests.json). Tot dan blokkeert
-      de vertaling de installatie met digest_not_pinned.

@@ -214,10 +214,12 @@ def test_unverified_ix_app_version_warns_but_translates(custom_manifest: dict[st
     assert result.ready_for_install
 
 
-def test_own_image_without_digest_not_ready(own_manifest_text: str) -> None:
+def test_own_image_without_digest_not_ready(own_manifest_without_digest: str) -> None:
     from appstore.manifest import validate_text
 
-    report, model, _ = validate_text(own_manifest_text)
+    report, model, _ = validate_text(own_manifest_without_digest)
+    assert not report.strict_valid and report.codes() == ["digest_pending_release"]
+    assert not report.findings[0].accepted
     assert model is not None
     result = translate(
         model,
@@ -763,10 +765,10 @@ def test_digest_in_tag_with_readback_step(custom_manifest: dict[str, Any]) -> No
     assert rb.on_mismatch == "stop_en_incident" and "NIET GEVALIDEERD" in rb.note_nl
 
 
-def test_no_readback_without_digest(own_manifest_text: str) -> None:
+def test_no_readback_without_digest(own_manifest_without_digest: str) -> None:
     from appstore.manifest import validate_text
 
-    _, model, _ = validate_text(own_manifest_text)
+    _, model, _ = validate_text(own_manifest_without_digest)
     assert model is not None
     result = translate(model, {"appdata_path": "/mnt/p1/apps/appstore", "timezone": "Etc/UTC"}, TARGET)
     assert result.digest_readback is None and not result.ready_for_install

@@ -35,12 +35,13 @@ def test_valid_fixtures_have_no_findings() -> None:
         assert report.strict_valid
 
 
-def test_own_manifest_is_strict_valid_with_only_accepted_pending_digest(own_manifest_text: str) -> None:
-    """C1.3-ASF-13: geen HUB_*, healthcheck.monitor, digest_pending_release met reden geaccepteerd → --strict geldig."""
+def test_own_release_manifest_is_strict_valid(own_manifest_text: str) -> None:
+    """C1.3-ASF-13 voor de release met een vaste digest en zonder geaccepteerde bevindingen."""
     report, model, _ = validate_text(own_manifest_text)
     assert report.valid and report.strict_valid, report.as_text()
     assert model is not None and model.app_id == "appstore-en-fork"
-    assert report.codes() == ["digest_pending_release"] and report.findings[0].accepted
+    assert model.image is not None and model.image.digest is not None
+    assert model.accepted_findings == [] and report.findings == []
     assert model.healthcheck.monitor is not None and model.healthcheck.monitor.pad == "/readyz"
     assert not any(p.name.lower().startswith("hub_") for p in model.parameters)
     assert "platformcontract 1.3" in own_manifest_text.splitlines()[0]

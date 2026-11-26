@@ -134,7 +134,7 @@ def test_cli_validate_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:
 def test_cli_strict_and_missing_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     own = Path(__file__).resolve().parents[4] / "deploy" / "manifest" / "appstore-en-fork.manifest.yaml"
     assert main(["validate", str(own)]) == 0
-    assert main(["validate", "--strict", str(own)]) == 0  # contract 1.3: digest_pending_release met reden geaccepteerd
+    assert main(["validate", "--strict", str(own)]) == 0
     with pytest.raises(SystemExit) as exc:
         main(["validate", str(tmp_path / "bestaat-niet.yaml")])
     assert exc.value.code == 2

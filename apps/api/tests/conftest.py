@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,3 +33,9 @@ def catalog_manifest() -> dict[str, Any]:
 @pytest.fixture
 def own_manifest_text() -> str:
     return (REPO_ROOT / "deploy" / "manifest" / "appstore-en-fork.manifest.yaml").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def own_manifest_without_digest(own_manifest_text: str) -> str:
+    """Kopie van het releasemanifest waarin alleen de image-digest ontbreekt."""
+    return re.sub(r"^  digest: .+$", "  digest: null", own_manifest_text, count=1, flags=re.MULTILINE)

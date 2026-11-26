@@ -263,7 +263,7 @@ def test_preview_of_a_version_outside_the_catalog_gets_no_vault_reference(
     assert "vault://" not in resp.text
 
 
-def test_preview_ready_and_unknowns(linked: TestClient, hub: FakeHub) -> None:
+def test_preview_ready_and_unknowns(linked: TestClient, hub: FakeHub, own_manifest_without_digest: str) -> None:
     inventory = {
         "observed_at": datetime.now(UTC).isoformat(),
         "source": "simulator",
@@ -307,19 +307,23 @@ def test_preview_ready_and_unknowns(linked: TestClient, hub: FakeHub) -> None:
     }
     # viewer mag geen voorbeeld maken
     assert linked.post("/catalog/v1/preview", json=body, headers=hub.auth(roles=["viewer"])).status_code == 403
-    # eigen app zonder digest: voorbeeld wel, gereed niet
-    own = linked.post(
+    own_body = {
+        "parameters": {"appdata_path": "/mnt/p1/apps/appstore", "timezone": "Etc/UTC"},
+        "target": body["target"],
+        "inventory": inventory,
+    }
+    pinned = linked.post(
+        "/catalog/v1/preview", headers=hub.auth(roles=["operator"]), json={**own_body, "app_id": "appstore-en-fork"}
+    ).json()
+    assert pinned["ready_for_install"] is True and pinned["executed"] is False
+    assert pinned["translation"]["digest_readback"]["method"] == "app.image.query"
+    unpinned = linked.post(
         "/catalog/v1/preview",
         headers=hub.auth(roles=["operator"]),
-        json={
-            "app_id": "appstore-en-fork",
-            "parameters": {"appdata_path": "/mnt/p1/apps/appstore", "timezone": "Etc/UTC"},
-            "target": {"truenas_version": "25.10.1", "ix_app_version": "1.4.8"},
-            "inventory": inventory,
-        },
+        json={**own_body, "manifest_yaml": own_manifest_without_digest},
     ).json()
-    assert own["ready_for_install"] is False
-    assert "digest_not_pinned" in {f["code"] for f in own["translation"]["findings"]}
+    assert unpinned["ready_for_install"] is False and unpinned["executed"] is False
+    assert "digest_not_pinned" in {f["code"] for f in unpinned["translation"]["findings"]}
 
 
 def test_preview_contract_1_2_readback_gpu_and_unavailable_version(linked: TestClient, hub: FakeHub) -> None:
