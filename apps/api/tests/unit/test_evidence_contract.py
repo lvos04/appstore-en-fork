@@ -124,6 +124,39 @@ def test_ids_are_unique() -> None:
 
 
 @pytest.mark.parametrize(
+    ("bewijs_id", "afhankelijkheid"),
+    [
+        ("EX16", "account"),
+        ("B08-002", "account"),
+        ("APP-01", "hardware"),
+        ("APP-01", "account"),
+        ("APP-02", "hardware"),
+        ("APP-02", "account"),
+        ("APP-03", "account"),
+        ("APP-06", "account"),
+        ("APP-07", "account"),
+        ("APP-08", "account"),
+        ("APP-09", "hardware"),
+        ("APP-10", "account"),
+        ("APP-12", "account"),
+        ("APP-15", "account"),
+        ("APP-16", "account"),
+        ("APP-17", "account"),
+        ("APP-18", "hardware"),
+        ("APP-19", "account"),
+        ("APP-20", "hardware"),
+        ("C1.3-ALG-05", "echte NAS"),
+        ("C1.3-ASF-09", "account"),
+        ("REVIEW-appstore-en-fork-contract-1.3", "hardware"),
+    ],
+)
+def test_validatie_vermeldt_de_afhankelijkheid_van_de_praktijkproef(bewijs_id: str, afhankelijkheid: str) -> None:
+    """Ook een praktijkproef die de bron in gewone taal beschrijft, krijgt de bijbehorende markering."""
+    validatie = {regel["id"]: regel["validatie"] for regel in _items()}
+    assert f"NIET GEVALIDEERD ({afhankelijkheid})" in validatie[bewijs_id].split("; ")
+
+
+@pytest.mark.parametrize(
     ("change", "expected"),
     [
         ({"validatie": ""}, "lege validatie"),
