@@ -28,6 +28,7 @@ from appstore.models import HubLink, OutboxEvent
 from appstore.secrets_store import LEGACY_TOKEN_AAD
 from appstore.timeutil import iso, utcnow
 from appstore.worker import build_context, push_outbox, run_once, startup
+from tests.conftest import ACL_GEVALLEN, acl_dataset
 from tests.fakehub import HUB_URL, FakeHub, hub_jwk
 from tests.integration.conftest import pair
 
@@ -842,3 +843,18 @@ def test_invalid_event_is_dead_lettered_before_sending(ctx: AppContext, hub: Fak
         ev = db.query(OutboxEvent).filter(OutboxEvent.event_type == "catalog.Fout.x").one()
         assert ev.dead_letter and (ev.last_error or "").startswith("envelope_ongeldig")
     assert not any(e["event_type"] == "catalog.Fout.x" for e in hub.inbox)
+
+
+@pytest.mark.parametrize(("chmod", "herkend"), ACL_GEVALLEN)
+def test_env_token_on_an_acl_dataset(
+    env_settings: Settings, hub: FakeHub, monkeypatch: pytest.MonkeyPatch, chmod: str, herkend: bool
+) -> None:
+    """Dataset met preset Apps (NFSv4-ACL nagebootst): koppelen met het env-token slaagt, zonder bewaarde kopieën."""
+    acl_dataset(monkeypatch, chmod=chmod, herkend=herkend)
+    c = build_context(env_settings, hub.client_factory())
+    startup(c)
+    run_once(c)
+    st = c.store.read()
+    assert st.state == "gekoppeld" and st.confirmed_at and not st.unreadable
+    assert not [p for p in c.settings.secrets_dir.iterdir() if ".onleesbaar-" in p.name]
+    c.engine.dispose()

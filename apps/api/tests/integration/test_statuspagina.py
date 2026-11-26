@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from appstore.app import create_app
 from appstore.config import Settings
+from tests.conftest import ACL_GEVALLEN, acl_dataset
 from tests.fakehub import HUB_URL, FakeHub
 from tests.integration.conftest import melding_code, pair, pair_form, post_form
 
@@ -310,3 +311,57 @@ def test_input_is_checked_whole_never_truncated(client: TestClient, hub: FakeHub
     resp = post_form(client, **lang)
     assert resp.status_code == 422 and melding_code(resp) == "invoer_ongeldig"
     assert resp.text.count('aria-invalid="true"') == 3 and hub.enroll_requests == []
+
+
+# ------------------------------------------------------------------ koppelen op een TrueNAS-dataset met preset Apps
+def _koppel_op_lege_appdata(settings: Settings, hub: FakeHub) -> tuple[str, int, str]:
+    """Verse installatie (lege /appdata): app starten, formulier, koppelen. Geeft (uitkomst, status van /, html)."""
+    app = create_app(settings, http_factory=hub.client_factory())
+    try:
+        with TestClient(app) as c:
+            assert 'action="/koppelen"' in c.get("/").text
+            uitkomst = pair_form(c, code=hub.add_code(), fingerprint=hub.fingerprint())
+            resp = c.get("/")
+            return uitkomst, resp.status_code, resp.text
+    finally:
+        app.state.ctx.engine.dispose()
+
+
+def test_pairing_on_an_empty_appdata(settings: Settings, hub: FakeHub) -> None:
+    """De volledige koppelflow op een lege /appdata: formulier → Hub → gekoppeld en bevestigd, bestand 0600."""
+    assert not settings.data_dir.exists()
+    uitkomst, _, html = _koppel_op_lege_appdata(settings, hub)
+    assert uitkomst == "gekoppeld" and koppeltoestand(html) == ["gekoppeld"]
+    pad = settings.secrets_dir / "hub-link.json"
+    assert (pad.stat().st_mode & 0o777) == 0o600
+    assert '"confirmed_at": "' in pad.read_text()
+
+
+@pytest.mark.parametrize(("chmod", "herkend"), ACL_GEVALLEN)
+def test_pairing_on_an_acl_dataset(
+    settings: Settings, hub: FakeHub, monkeypatch: pytest.MonkeyPatch, chmod: str, herkend: bool
+) -> None:
+    """0.1.0 op een dataset met preset Apps: het net geschreven hub-link.json kreeg 0770 uit de ACL, werd als onleesbaar
+    teruggelezen en de dienst bleef "koppelstatus onleesbaar". Nu: fchmod 0600, en waar de ACL dat weigert of negeert
+    accepteert de leescontrole de rechten van de dataset."""
+    acl_dataset(monkeypatch, chmod=chmod, herkend=herkend)
+    uitkomst, _, html = _koppel_op_lege_appdata(settings, hub)
+    assert uitkomst == "gekoppeld" and koppeltoestand(html) == ["gekoppeld"], html[:2000]
+
+
+def test_pairing_that_cannot_be_saved_leaves_no_unreadable_file(
+    settings: Settings, hub: FakeHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """chmod geweigerd en de ACL niet herkenbaar: een nette 503 ``koppelbestand_niet_opgeslagen``, geen bestand, en
+    het formulier blijft (nooit "onleesbaar" achterlaten)."""
+    acl_dataset(monkeypatch, chmod="geweigerd", herkend=False)
+    app = create_app(settings, http_factory=hub.client_factory())
+    try:
+        with TestClient(app) as c:
+            resp = post_form(c, code=hub.add_code(), fingerprint=hub.fingerprint())
+            assert resp.status_code == 503 and melding_code(resp) == "koppelbestand_niet_opgeslagen"
+            assert not (settings.secrets_dir / "hub-link.json").exists()
+            html = c.get("/").text
+            assert koppeltoestand(html) == ["koppelformulier"]
+    finally:
+        app.state.ctx.engine.dispose()

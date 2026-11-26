@@ -18,8 +18,9 @@ from appstore import APP_ID
 from appstore.api.status_page import _Attempts
 from appstore.config import Settings, host_allowed_for_form, normalize_base_url, normalize_hub_url
 from appstore.hublink import HubLinkClient, InvalidResponseError, validate_enroll_response
-from appstore.hublink_store import ERROR_MESSAGES, HubLinkStore, LastError, LinkState, Pins
-from appstore.secrets_store import Secrets, ensure_secrets
+from appstore.hublink_store import ERROR_MESSAGES, HubLinkStore, LastError, LinkState, NotSavedError, Pins
+from appstore.secrets_store import IDENTITY_KEY, VAULT_KEY, Secrets, ensure_secrets
+from tests.conftest import ACL_GEVALLEN, acl_dataset
 from tests.fakehub import FakeHub
 
 ENROLL_FIELDS = {"app_id", "version", "base_url", "public_key_jwk"}
@@ -427,3 +428,96 @@ def test_no_secret_in_file_permissions_for_other_users(tmp_path: Path) -> None:
     mode = store.path.stat().st_mode
     assert not mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH)
     assert os.stat(store.path).st_uid == os.getuid()
+
+
+# ------------------------------------------------------------------ TrueNAS-dataset met preset Apps (NFSv4-ACL)
+@pytest.mark.parametrize(
+    ("mode", "acl", "leesbaar"),
+    [
+        (0o600, False, True),
+        (0o640, False, False),
+        (0o660, False, False),
+        (0o770, True, True),  # rechten uit de dataset-ACL: goed, en aangescherpt waar dat mag
+        (0o666, True, False),  # wereld-schrijfbaar blijft altijd onleesbaar
+        (0o602, True, False),
+    ],
+)
+def test_rights_rules_with_and_without_nfs4_acl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: int, acl: bool, leesbaar: bool
+) -> None:
+    from appstore import secrets_store
+
+    monkeypatch.setattr(secrets_store, "nfs4_acl", lambda fd: acl)
+    store = HubLinkStore(tmp_path)
+    _write_raw(store, GOOD, mode)
+    assert store.read().corrupt is not leesbaar
+    if leesbaar:
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+
+
+def test_symlink_and_other_owner_stay_unreadable_with_acl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from appstore import secrets_store
+
+    monkeypatch.setattr(secrets_store, "nfs4_acl", lambda fd: True)
+    doel = tmp_path / "doel.json"
+    doel.write_text(json.dumps(GOOD))
+    doel.chmod(0o600)
+    store = HubLinkStore(tmp_path)
+    store.path.symlink_to(doel)
+    assert store.read().corrupt  # ook een symlink naar een geldig bestand
+    store.path.unlink()
+    _write_raw(store, GOOD, 0o770)
+    real_geteuid = os.geteuid
+    monkeypatch.setattr(os, "geteuid", lambda: real_geteuid() + 1)
+    assert HubLinkStore(tmp_path).read().corrupt
+
+
+@pytest.mark.parametrize(("chmod", "herkend"), ACL_GEVALLEN)
+def test_store_on_an_acl_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chmod: str, herkend: bool) -> None:
+    """0.1.0 las het eigen, net geschreven bestand op zo'n dataset als onleesbaar terug (0770 uit de ACL)."""
+    acl_dataset(monkeypatch, chmod=chmod, herkend=herkend)
+    store = HubLinkStore(tmp_path / "secrets")
+    store.update(lambda s: s.model_copy(update={"hub_url": "http://hub.test:30400"}))
+    st = HubLinkStore(tmp_path / "secrets").read()
+    assert not st.corrupt and st.hub_url == "http://hub.test:30400"
+
+
+def test_unsaveable_write_keeps_the_previous_state_and_no_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """chmod geweigerd en geen herkenbare ACL: nooit een onleesbaar bestand neerzetten; vorige toestand blijft, en een
+    onleesbaar origineel krijgt geen bewaarde kopie per mislukte ronde (geen lus via ``replace_unreadable``)."""
+    store = HubLinkStore(tmp_path)
+    acl_dataset(monkeypatch, chmod="geweigerd", herkend=False)
+    with pytest.raises(NotSavedError):
+        store.update(lambda s: s.model_copy(update={"hub_url": "http://hub.test:30400"}))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["hub-link.lock"]  # geen bestand, geen restbestand
+    assert store.read().state == "nooit_gekoppeld" and not store.read().corrupt
+    monkeypatch.undo()
+    _write_raw(store, "{ kapot")
+    acl_dataset(monkeypatch, chmod="geweigerd", herkend=False)
+    for _ in range(2):
+        with pytest.raises(NotSavedError):
+            store.update(lambda s: s, replace_unreadable=True)
+    assert store.path.read_text() == "{ kapot" and store.read().corrupt
+    assert not [p for p in tmp_path.iterdir() if ".onleesbaar-" in p.name or p.name.startswith(".hub-link.")]
+
+
+def test_pairing_that_cannot_be_saved_is_reported_not_raised(
+    client: HubLinkClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acl_dataset(monkeypatch, chmod="geweigerd", herkend=False)
+    out = client.pair_with_code(
+        hub_url="http://hub.test:30400", pairing_code="ABCD-EFGH-JKMN", fingerprint="MEGG-8GFG-2E4Y-K2RQ", trace_id="t"
+    )
+    assert out.kind == "transient" and out.code == "koppelbestand_niet_opgeslagen"
+    assert not client.store.path.exists() and not client.store.read().corrupt
+
+
+@pytest.mark.parametrize("chmod", ["werkt", "geweigerd", "genegeerd"])
+def test_ensure_secrets_on_an_acl_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chmod: str) -> None:
+    """aclmode=restricted weigert chmod: de dienst mag dan niet crashen bij het aanmaken of herstarten."""
+    acl_dataset(monkeypatch, chmod=chmod, herkend=True)
+    assert sorted(ensure_secrets(tmp_path / "secrets")) == sorted([VAULT_KEY, IDENTITY_KEY])
+    assert ensure_secrets(tmp_path / "secrets") == []
+    Secrets.load(tmp_path / "secrets")

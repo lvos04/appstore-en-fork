@@ -14,6 +14,9 @@
   vervangt het, bij haar eerste schrijfactie en vóór het verzoek aan de Hub: eerst wordt het origineel bewaard als
   ``hub-link.json.onleesbaar-<UTC-tijd>`` (0600) en ``unreadable_replaced_at`` gezet. Zolang ``first_linked_at`` daarna
   leeg is, blijft de toestand voor de statuspagina "onleesbaar" (geen formulier, geen vertrouwen).
+* Rechten op een TrueNAS-dataset met NFSv4-ACL (preset *Apps*): zie :func:`appstore.secrets_store.own_secret`. Een
+  vervanging die na schrijven niet als eigen geheim terug te lezen is, komt er nooit (:class:`NotSavedError`): het
+  vorige bestand blijft staan en er blijft geen bewaarde kopie achter (geen lus bij elke worker-ronde).
 * De dienst schrijft ``schema_version: "1.3"``; een lezer accepteert elke ``1.x`` en bewaart onbekende extra velden.
 """
 
@@ -24,7 +27,6 @@ import fcntl
 import json
 import logging
 import os
-import stat
 import threading
 import uuid
 from collections.abc import Callable, Iterator
@@ -35,6 +37,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from . import APP_ID
+from .secrets_store import only_owner, own_secret
 
 log = logging.getLogger("appstore.hublink")
 
@@ -68,6 +71,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "gestuurd. Verbeter de waarde in de instellingen van de Custom App.",
     "hub_adres_ongeldig": "HUB_URL is geen geldig Hub-adres (http(s)://<NAS-adres>:<poort>, geen localhost); er is niets "
     "naar de Hub gestuurd. Verbeter de waarde in de instellingen van de Custom App.",
+    "koppelbestand_niet_opgeslagen": "De koppeling kon niet worden opgeslagen in /appdata/secrets (rechten van de "
+    "opslag); de vorige toestand blijft staan en er wordt niets van de Hub vertrouwd. Controleer de opslag van /appdata.",
     "koppelstatus_onleesbaar": "De koppelstatus van deze dienst is onleesbaar; de dienst vertrouwt niets van de Hub. "
     "Herstel gaat alleen met een nieuw koppeltoken uit de Hub.",
 }
@@ -95,6 +100,10 @@ class _Model(BaseModel):
 
 class UnreadableError(ValueError):
     """``hub-link.json`` is onleesbaar in de zin van §3.5."""
+
+
+class NotSavedError(OSError):
+    """De nieuwe ``hub-link.json`` zou onleesbaar zijn (rechten); de vorige toestand blijft staan."""
 
 
 class PublicJwk(_Model):
@@ -229,7 +238,7 @@ class HubLinkStore:
     # -------------------------------------------------------------- lezen
     def _load(self) -> tuple[tuple[int, ...] | None, LinkState]:
         try:
-            st = os.stat(self.path)
+            st = os.lstat(self.path)
         except FileNotFoundError:
             return None, LinkState()
         key = (st.st_ino, st.st_mtime_ns, st.st_size, st.st_mode, st.st_uid)
@@ -237,7 +246,7 @@ class HubLinkStore:
             if self._cache is not None and self._cache[0] == key:
                 return key, self._cache[1].model_copy(deep=True)
         try:
-            state = self._parse(st)
+            state = self._parse()
         except (OSError, ValueError, ValidationError) as exc:
             log.error("hub-link.json is onleesbaar (%s); niets wordt vertrouwd", _reason(exc))
             state = LinkState()
@@ -246,10 +255,11 @@ class HubLinkStore:
             self._cache = (key, state)
         return key, state.model_copy(deep=True)
 
-    def _parse(self, st: os.stat_result) -> LinkState:
-        if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o077:
-            raise UnreadableError("verkeerde eigenaar of rechten (eigenaar = dit proces, 0600)")
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+    def _parse(self) -> LinkState:
+        with os.fdopen(os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as fh:  # een symlink → OSError
+            if not own_secret(fh.fileno()):
+                raise UnreadableError("verkeerde eigenaar of rechten (eigenaar = dit proces, 0600 of de dataset-ACL)")
+            data = json.loads(fh.read().decode("utf-8"))
         if not isinstance(data, dict):
             raise UnreadableError("geen object")
         missing = [f for f in REQUIRED if data.get(f) in (None, "")]
@@ -294,9 +304,12 @@ class HubLinkStore:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             with os.fdopen(fd, "wb") as fh:
+                only_owner(fh.fileno())  # een ACL-dataset negeert de 0600 van open()
                 fh.write(payload)
                 fh.flush()
                 os.fsync(fh.fileno())
+                if not own_secret(fh.fileno()):  # nooit een bestand neerzetten dat we zelf als onleesbaar zien
+                    raise NotSavedError("hub-link.json zou onleesbaar zijn (rechten); vorige toestand blijft")
             os.replace(tmp, self.path)
         except BaseException:
             with contextlib.suppress(OSError):
@@ -324,11 +337,13 @@ class HubLinkStore:
             current = self._load()[1]
             base = current
             moved: Path | None = None
+            kept: Path | None = None
             if current.corrupt:
                 if not replace_unreadable:
                     return current
                 saved, was_moved = self._preserve_unreadable()
                 moved = self.dir / saved if was_moved else None
+                kept = None if was_moved else self.dir / saved
                 base = LinkState(unreadable_replaced_at=_now())
                 log.warning("onleesbaar hub-link.json vervangen voor een nieuwe koppelpoging; origineel: %s", saved)
             new = change(base.model_copy(deep=True))
@@ -342,6 +357,9 @@ class HubLinkStore:
                 if moved is not None:  # nooit een ontbrekend bestand achterlaten (dat zou "nooit gekoppeld" lijken)
                     with contextlib.suppress(OSError):
                         os.rename(moved, self.path)
+                if kept is not None:  # het origineel staat er nog: geen kopie per mislukte ronde
+                    with contextlib.suppress(OSError):
+                        kept.unlink()
                 raise
             result._corrupt = False  # het bestand is nu weer leesbaar
             return result

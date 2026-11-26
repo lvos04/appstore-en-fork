@@ -194,6 +194,13 @@ POGING: dict[str, tuple[str, str, int]] = {
         "niets naar de Hub gestuurd.",
         409,
     ),
+    "koppelbestand_niet_opgeslagen": (
+        "Koppelen is mislukt",
+        "De koppeling kon niet worden opgeslagen in /appdata/secrets (rechten van de opslag). De dienst staat weer "
+        "zoals vóór deze poging en vertrouwt de Hub niet. Controleer de opslag van /appdata en maak in de Hub een "
+        "nieuwe koppelcode.",
+        503,
+    ),
     "koppelen_bezig": (
         "Er loopt al een koppelpoging",
         "Wacht even en laad de pagina opnieuw. Er is niets naar de Hub gestuurd.",

@@ -23,6 +23,7 @@ Koppelen, ontkoppelen, intrekken en rotatie zijn geen ``action_id``'s (§8): ze 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import random
@@ -61,6 +62,7 @@ from .timeutil import iso, utcnow
 log = logging.getLogger("appstore.hublink")
 
 ENROLL_PATH = "/api/v1/services/enroll"
+NOT_SAVED = "koppelbestand_niet_opgeslagen"
 SELF_PATH = "/api/v1/services/self"
 ROTATE_PATH = "/api/v1/services/self/rotate"
 KEY_ROTATIONS_PATH = "/api/v1/auth/key-rotations"
@@ -363,8 +365,30 @@ class HubLinkClient:
     def attempt(
         self, *, hub_url: str, kind: str, credential: str, expected_fingerprint: str | None, trace_id: str
     ) -> EnrollOutcome:
-        """Eén enroll-poging (§3.6 stap 2–4). ``kind``: ``token`` (env) of ``koppelcode`` (statuspagina)."""
+        """Eén enroll-poging (§3.6 stap 2–4). ``kind``: ``token`` (env) of ``koppelcode`` (statuspagina).
+
+        Kan ``hub-link.json`` niet worden opgeslagen (bv. rechten op een ACL-dataset, :class:`NotSavedError`), dan
+        blijft het vorige bestand staan en is de uitkomst ``koppelbestand_niet_opgeslagen`` (tijdelijk: een env-token
+        wordt met backoff opnieuw geprobeerd; nooit een kale 500 of een onleesbaar bestand)."""
         digest = sha256_hex(credential)
+        try:
+            return self._attempt(hub_url, kind, credential, expected_fingerprint, trace_id, digest)
+        except OSError as exc:
+            log.error("koppelen (%s): hub-link.json kon niet worden opgeslagen (%s)", kind, type(exc).__name__)
+            if kind == "koppelcode":  # het geheim staat alleen in dit verzoek: de poging vrijgeven als dat kan
+                with contextlib.suppress(OSError):
+                    self._fail(NOT_SAVED, kind=kind, secret_digest=digest, definitive=False)
+            return EnrollOutcome("transient", NOT_SAVED)
+
+    def _attempt(
+        self,
+        hub_url: str,
+        kind: str,
+        credential: str,
+        expected_fingerprint: str | None,
+        trace_id: str,
+        digest: str,
+    ) -> EnrollOutcome:
         # de statuspagina schrijft per koppelcodepoging zelf één logregel (§3.7); hier dan alleen debug
         level = logging.DEBUG if kind == "koppelcode" else logging.WARNING
         claim = self._begin(kind, digest, hub_url)

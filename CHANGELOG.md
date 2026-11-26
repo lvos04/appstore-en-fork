@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+- **Koppelen op een TrueNAS-dataset met preset Apps** (NFSv4-ACL): de app las haar eigen, net geschreven
+  `hub-link.json` als onleesbaar terug (de ACL gaf het bestand groepsrechten) en bleef op "koppelstatus onleesbaar".
+  Nu: `fchmod 0600` direct na het aanmaken; bij het lezen zijn groeps- of overige-rechten alleen goed als het bestand
+  een NFSv4-ACL draagt (een andere eigenaar, een symlink en voor iedereen schrijfbaar blijven geweigerd). Een
+  vervanging die niet als eigen geheim terug te lezen is, wordt nooit neergezet: de vorige toestand blijft en de
+  statuspagina meldt `koppelbestand_niet_opgeslagen` (503); geen bewaarde kopie per worker-ronde. Het aanmaken van
+  `vault.key` en `identity.ed25519` crasht niet meer als de ACL `chmod` weigert.
+
 ## 0.1.0 — in ontwikkeling (nog niet uitgebracht)
 
 - **Catalogusbewijs voor de Hub** (contract 1.3 §8.1 M1; stap S-P2-050d-app): het ondertekende herkomstrecord

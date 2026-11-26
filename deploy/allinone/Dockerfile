@@ -36,7 +36,7 @@ RUN --mount=type=secret,id=ca_bundle,required=false \
 
 # ---------------------------------------------------------------- runtime
 FROM ${PYTHON_IMAGE}
-ARG VERSION=0.1.0
+ARG VERSION=0.1.1
 LABEL org.opencontainers.image.title="appstore-en-fork" \
       org.opencontainers.image.description="Appstore-catalogus TrueNAS Home Platform V2 — alles-in-één (PostgreSQL 16, API, worker)" \
       org.opencontainers.image.source="https://git.medialeon.nl/leon/appstore-en-fork" \
