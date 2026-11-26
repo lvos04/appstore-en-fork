@@ -39,6 +39,8 @@ jobs:
           tags: ghcr.io/lvos04/appstore-en-fork:${{ steps.v.outputs.version }}
           sbom: true
           provenance: mode=max
+      - name: Releasemap aanmaken
+        run: mkdir -p release
       - name: SBOM (SPDX)
         uses: anchore/sbom-action@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
         with:
