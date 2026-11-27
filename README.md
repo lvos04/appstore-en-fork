@@ -13,7 +13,7 @@ schermen staan in de Hub-UI van `ai-server-manager`.
 > volgt — de echte Hub heeft de 1.3-onderdelen voor de inventaris (scope, momentopname) inmiddels gebouwd; de vorm is
 > gelezen en gelijk (ADR-0014), niet tegen een draaiende Hub getest. Het koppelen volgens
 > 1.2 is eerder één keer lokaal tegen de echte Hub-code getest (ADR-0008 §5), niet tegen een op de NAS geïnstalleerde
-> Hub. De NAS-installatie wacht op een op GHCR bevestigde imagedigest. Zie `docs/platform-v2/EVIDENCE.json`.
+> Hub. Het installatiemanifest bevat de op GHCR bevestigde imagedigest van `0.1.1`. Zie `docs/platform-v2/EVIDENCE.json`.
 
 ## Wat zit erin
 

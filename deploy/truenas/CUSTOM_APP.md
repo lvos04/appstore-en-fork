@@ -14,12 +14,11 @@ PostgreSQL 16 op een unix-socket, API en worker) met één poort en één opslag
 
 ## 0. Voorwaarden
 
-- De image `ghcr.io/lvos04/appstore-en-fork:<versie>` bestaat pas nadat de release-workflow voor tag `v<versie>` is
-  gedraaid (`release/digests.json` in de GitHub-release noemt de digest). Zolang die release er niet is, kan deze app
-  niet worden geïnstalleerd.
-- **Publieke image (contract 1.3 §2.1, besluit 3):** na de scan van de volledige historie worden repo en GHCR-pakket
-  publiek; installeren gebruikt dan **geen** registry-login. Tot de zichtbaarheid echt is omgezet, is installeren op
-  een echte NAS NIET GEVALIDEERD (en voor een privé-pakket geblokkeerd).
+- De image `ghcr.io/lvos04/appstore-en-fork:0.1.1` is anoniem op te halen. Voor `v0.1.1` ontbreekt de GitHub-release
+  met de bijlage `digests.json`. De op GHCR gecontroleerde indexdigest staat in het
+  [installatiemanifest](../manifest/appstore-en-fork.manifest.yaml).
+- **Publieke image (contract 1.3 §2.1, besluit 3).** Laat de registry-login leeg voor deze image.
+  Het ophalen vanuit het Custom App-formulier is op een echte NAS NIET GEVALIDEERD.
 - *Alleen als terugvaloptie:* een registry-login in TrueNAS (Apps → Configuration → Manage Container Images /
   registry-instelling) met een token dat **alleen pakketten mag lezen**. Gedrag met GHCR-tokens is NIET GEVALIDEERD.
   Zo'n token is een geheim van jou in TrueNAS — nooit in het formulier van de app, een manifest, Git of een log.
@@ -36,7 +35,7 @@ eigen submappen (`postgres`, `secrets`, `backups`) en verder niets.
 |---|---|---|
 | — | Application Name | `appstore-en-fork` |
 | Image Configuration | Repository | `ghcr.io/lvos04/appstore-en-fork` |
-| | Tag | **`<versie>@sha256:<digest>`** uit `release/digests.json`, bv. `0.1.0@sha256:…` (64 hex) — zo draait precies de geteste image (contract 1.3 §2.2). Weigert het formulier het `@`-teken, vul dan alleen de exacte versie in (bv. `0.1.0`); de Hub controleert de digest na installatie (NIET GEVALIDEERD op een echte NAS). **Nooit `latest`.** |
+| | Tag | `0.1.1@sha256:79e642d2b2a0736282f7c8022ee1b6f178783a19f6fcaa5baa5a23be9e6789b3` (contract 1.3 §2.2). Weigert het formulier het `@`-teken, vul dan `0.1.1` in. De Hub controleert de digest na installatie (NIET GEVALIDEERD op een echte NAS). **Nooit `latest`.** |
 | | Pull Policy | *Pull the image if it is not already present on the host* (`missing`) |
 | Container Configuration | Hostname, Entrypoint, Command | leeg laten |
 | | Timezone | jouw tijdzone (uit de keuzelijst) |
@@ -116,7 +115,7 @@ ongewijzigd. Dat is nooit een intrekking van de koppeling.
 | `oude postmaster.pid ... verwijderd` | Geen fout: de vorige stop was onverwacht; de database start gewoon. |
 | `back-up vóór de databasemigratie is mislukt` | Maak ruimte vrij op de dataset of zet de vorige tag terug; de database is niet aangeraakt. |
 | Poort bezet bij opslaan | Kies een andere vrije Host Port (Container Port blijft `30430`). |
-| Image ophalen mislukt (`denied`) | Het GHCR-pakket is nog privé (stap 0) of de release bestaat nog niet. |
+| Image ophalen mislukt (`denied`) | Controleer de repository en de tag uit stap 2. Het GHCR-pakket voor deze versie is publiek (stap 0). |
 | Formulier weigert de tag met `@sha256:` | Vul alleen de exacte versie in; de Hub leest de digest na installatie terug. |
 | Statuspagina: "De sleutelset-vingerafdruk van de Hub klopt niet" | De ingevulde vingerafdruk (of `HUB_KEY_FINGERPRINT`) past niet bij de Hub op dat adres: controleer het adres en neem de vingerafdruk opnieuw over uit de Hub-UI. Er is niets opgeslagen. |
 | Statuspagina: "Het token is na 60 minuten niet gelukt" of "onbekend, verlopen of al gebruikt" | Maak in de Hub een nieuw koppeltoken (enrollment-token) en zet het in `HUB_ENROLLMENT_TOKEN`; een gebruikt of geweigerd token wordt nooit opnieuw geprobeerd. |

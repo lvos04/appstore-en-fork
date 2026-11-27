@@ -14,7 +14,7 @@ from appstore.manifest import validate_data
 from appstore.manifest.model import Manifest
 from appstore.manifest.translate import Target, TranslationResult, VaultRef, translate
 from appstore.manifest.truenas import AppCreatePayload
-from tests.conftest import FIXTURES, load_fixture
+from tests.conftest import FIXTURES, RELEASE_VERSION, load_fixture
 
 FIELDS = json.loads((FIXTURES / "truenas" / "ix-app-1.4.8.fields.json").read_text())["fields"]
 PARAMS = {
@@ -230,7 +230,7 @@ def test_own_image_without_digest_not_ready(own_manifest_without_digest: str) ->
     assert "digest_not_pinned" in [f.code for f in result.findings]
     assert result.payload is not None  # preview mag, installeren niet
     assert not result.ready_for_install
-    assert result.payload.values["image"]["tag"] == "0.1.0"
+    assert result.payload.values["image"]["tag"] == RELEASE_VERSION
 
 
 def test_catalog_app_translation(catalog_manifest: dict[str, Any]) -> None:

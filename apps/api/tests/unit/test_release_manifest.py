@@ -10,7 +10,7 @@ from types import ModuleType
 import pytest
 
 from appstore.manifest import validate_text
-from tests.conftest import REPO_ROOT
+from tests.conftest import RELEASE_VERSION, REPO_ROOT
 
 DIGEST = "sha256:" + "ab" * 32
 COMMIT = "c" * 40
@@ -37,10 +37,11 @@ def prerelease_manifest(own_manifest_without_digest: str) -> str:
 def test_release_manifest_is_strict_valid_without_pending_acceptance(prerelease_manifest: str) -> None:
     before, _, _ = validate_text(prerelease_manifest)
     assert before.strict_valid and before.codes() == ["digest_pending_release"] and before.findings[0].accepted
-    text = _tool().make_release_manifest(prerelease_manifest, version="0.1.0", digest=DIGEST, commit=COMMIT)
+    text = _tool().make_release_manifest(prerelease_manifest, version=RELEASE_VERSION, digest=DIGEST, commit=COMMIT)
     report, model, _ = validate_text(text)
     assert report.strict_valid and report.findings == [], report.as_text()
     assert model is not None and model.image is not None and model.image.digest == DIGEST
+    assert model.version == model.image.tag == RELEASE_VERSION
     assert model.provenance.source_commit == COMMIT
     assert model.accepted_findings == [] and "accepted_findings:" not in text
     assert "# Manifest (manifeststandaard v1" in text  # commentaar blijft
@@ -55,7 +56,7 @@ def test_without_removing_the_acceptance_strict_would_fail(prerelease_manifest: 
 
 @pytest.mark.parametrize(
     ("version", "digest", "commit"),
-    [("9.9.9", DIGEST, COMMIT), ("0.1.0", "sha256:kort", COMMIT), ("0.1.0", DIGEST, "x")],
+    [("9.9.9", DIGEST, COMMIT), (RELEASE_VERSION, "sha256:kort", COMMIT), (RELEASE_VERSION, DIGEST, "x")],
 )
 def test_wrong_input_is_refused(prerelease_manifest: str, version: str, digest: str, commit: str) -> None:
     with pytest.raises(ValueError):
@@ -64,7 +65,7 @@ def test_wrong_input_is_refused(prerelease_manifest: str, version: str, digest: 
 
 def test_other_acceptances_stay(prerelease_manifest: str) -> None:
     src = prerelease_manifest + "  - code: backup_db_export_none\n    reden_nl: Alleen een test van het knippen.\n"
-    out = _tool().make_release_manifest(src, version="0.1.0", digest=DIGEST, commit=COMMIT)
+    out = _tool().make_release_manifest(src, version=RELEASE_VERSION, digest=DIGEST, commit=COMMIT)
     _, model, _ = validate_text(out)
     assert model is not None and [a.code for a in model.accepted_findings] == ["backup_db_export_none"]
     assert "accepted_findings:\n  - code: backup_db_export_none" in out and "- code: digest_pending_release" not in out

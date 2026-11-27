@@ -15,6 +15,7 @@ import yaml
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parents[3]
+RELEASE_VERSION = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def acl_dataset(monkeypatch: pytest.MonkeyPatch, *, chmod: str, herkend: bool) -> None:
